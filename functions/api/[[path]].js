@@ -232,6 +232,18 @@ on('POST', '/me/onboarding', async ({ db, settings, request, user }) => {
   return { ok: true };
 });
 
+on('PUT', '/me/password', async ({ db, request, user }) => {
+  requireUser(user);
+  const b = await readJson(request);
+  const row = await one(db, 'SELECT password_hash FROM users WHERE id = ?', user.id);
+  if (!(await verifyPassword(String(b.current || ''), row.password_hash))) throw bad('지금 비밀번호가 맞지 않습니다');
+  if (String(b.next || '').length < 8) throw bad('새 비밀번호는 8자 이상이어야 합니다');
+  await run(db, 'UPDATE users SET password_hash = ? WHERE id = ?', await hashPassword(String(b.next)), user.id);
+  const t = getCookie(request, COOKIE);
+  await run(db, 'DELETE FROM sessions WHERE user_id = ? AND token <> ?', user.id, t || '');
+  return { ok: true };
+});
+
 on('PUT', '/me/profile', async ({ db, request, user }) => {
   requireUser(user);
   const b = await readJson(request);
@@ -579,6 +591,16 @@ async function contributionDraft(db, c, members, agreement) {
   const sum = rows.reduce((a, r) => a + r.raw, 0) || 1;
   return rows.map(r => ({ ...r, auto_share: Math.round((r.raw / sum) * 10000) / 10000 }));
 }
+
+on('POST', '/groups/:id/milestones/:mid', async ({ db, settings, request, user, params }) => {
+  const { c } = await groupCtx(db, settings, user, params.id, { leader: true });
+  const m = await one(db, 'SELECT * FROM milestones WHERE id = ? AND challenge_id = ?', params.mid, c.id);
+  if (!m) throw notfound('마일스톤이 없습니다');
+  const b = await readJson(request);
+  if (b.done) await run(db, "UPDATE milestones SET done_at = datetime('now'), evidence = ? WHERE id = ?", str(b.evidence, 500), m.id);
+  else await run(db, 'UPDATE milestones SET done_at = NULL WHERE id = ?', m.id);
+  return { ok: true };
+});
 
 on('POST', '/groups/:id/done-logs', async ({ db, settings, request, user, params }) => {
   const { c } = await groupCtx(db, settings, user, params.id, { write: true });
@@ -1149,8 +1171,15 @@ on('POST', '/admin/users/:id', async ({ db, request, user, params }) => {
   if (b.role) { if (!['member', 'staff'].includes(b.role)) throw bad('role 오류'); if (target.id === user.id && b.role !== 'staff') throw bad('자기 자신의 운영진 권한은 해제할 수 없습니다'); await run(db, 'UPDATE users SET role = ? WHERE id = ?', b.role, target.id); }
   if (b.badge) { if (!BADGE_NAMES[b.badge]) throw bad('배지 코드 오류'); await grantBadge(db, target.id, b.badge, user.id, str(b.evidence, 300)); if (b.badge === 'first_sale') { const s = await getSettings(db); await addPoints(db, s, target.id, 'first_sale', 'badge', null); } await notify(db, target.id, `${BADGE_NAMES[b.badge]} 배지가 부여됐습니다`, str(b.evidence, 200), '#/me'); }
   if (b.revoke_badge_id) await run(db, "UPDATE badges SET revoked_at = datetime('now') WHERE id = ? AND user_id = ?", Number(b.revoke_badge_id), target.id);
-  await audit(db, user.id, 'user.update', 'users:' + target.id, b);
-  return { ok: true };
+  let temp_password = null;
+  if (b.temp_password) {
+    temp_password = 'mc' + randomToken(4);
+    await run(db, 'UPDATE users SET password_hash = ? WHERE id = ?', await hashPassword(temp_password), target.id);
+    await run(db, 'DELETE FROM sessions WHERE user_id = ?', target.id);
+    await notify(db, target.id, '임시 비밀번호가 발급됐습니다', '로그인한 뒤 내 정보에서 비밀번호를 바꿔 주세요.', '#/me');
+  }
+  await audit(db, user.id, 'user.update', 'users:' + target.id, { ...b, temp_password: b.temp_password ? 'issued' : undefined });
+  return { ok: true, temp_password };
 });
 
 on('GET', '/admin/promotions', async ({ db, settings, user }) => {

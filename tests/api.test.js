@@ -127,6 +127,11 @@ eq([card.can_see_logs, card.proposal === undefined], [false, true], 'L1 sees car
 // 포인트: B = 완료기록 2건(하루 상한 2) ×5 + 체크인 2회 중 하루 상한 1 → 20 = 30
 const bpts = await expectOk(c.get('/me/points', { as: 'b' }));
 eq(bpts.totals.total, 30, 'B points with daily caps');
+// 마일스톤 완료 체크
+const ms = (await expectOk(c.get(`/groups/${prop.id}`, { as: 'a' }))).milestones;
+await expectFail(c.post(`/groups/${prop.id}/milestones/${ms[0].id}`, { done: true }, { as: 'b' }), 403, 'only leader marks milestone');
+await expectOk(c.post(`/groups/${prop.id}/milestones/${ms[0].id}`, { done: true, evidence: 'https://example.com/plan' }, { as: 'a' }));
+ok((await expectOk(c.get(`/groups/${prop.id}`, { as: 'a' }))).milestones[0].done_at, 'milestone done');
 console.log('실행·열람 ok');
 
 // 6. 장부
@@ -257,6 +262,15 @@ eq(solo.stage, 'active', 'solo starts immediately');
 await expectFail(c.post(`/challenges/${solo.id}/apply`, { note: 'x' }, { as: 'b' }), 400, 'cannot apply to solo');
 await expectOk(c.post(`/challenges/${solo.id}/stage`, { stage: 'stopped' }, { as: 'e' }));
 eq((await c.get('/public/stats')).data.closed.stopped, 1);
+// 비밀번호 변경 · 임시 비밀번호
+await expectFail(c.put('/me/password', { current: 'wrong', next: 'newpass123' }, { as: 'c' }), 400, 'wrong current password');
+await expectOk(c.put('/me/password', { current: 'password1', next: 'newpass123' }, { as: 'c' }));
+await expectFail(c.post('/auth/login', { email: 'c@test.kr', password: 'password1' }, { as: 'c2' }), 401, 'old password rejected');
+await expectOk(c.post('/auth/login', { email: 'c@test.kr', password: 'newpass123' }, { as: 'c2' }));
+const tp = await expectOk(c.post(`/admin/users/${C.id}`, { temp_password: true }, { as: 'admin' }));
+ok(/^mc[0-9a-f]{8}$/.test(tp.temp_password), 'temp password issued');
+await expectFail(c.get('/me', { as: 'c2' }), 401, 'sessions cleared after temp password');
+await expectOk(c.post('/auth/login', { email: 'c@test.kr', password: tp.temp_password }, { as: 'c3' }));
 console.log('중단·솔로 ok');
 
 console.log('\nAPI 전체 흐름 테스트 통과 ✔');

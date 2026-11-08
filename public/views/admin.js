@@ -108,8 +108,9 @@ const handlers = {
           <div class="form-cols">${field('운영진 권한', select('role', [['', '변경 없음'], ['staff', '운영진'], ['member', '일반 회원']]))}${field('배지 부여', select('badge', [['', '없음'], ...Object.entries(BADGES)]))}</div>
           ${field('사유 / 증빙 (알림으로 전달)', input('reason', { placeholder: '예: 11/3 스마트스토어 첫 주문 증빙 확인' }))}
           ${u.badges.length ? field('배지 회수', select('revoke_badge_id', [['', '없음'], ...u.badges.map(b => [b.id, `${BADGES[b.code] || b.code} (${fmtDate(b.created_at)})`])])) : ''}
+          ${check('temp_password', '임시 비밀번호 발급 (비밀번호를 잊은 회원)')}
           <div class="btn-row"><button class="btn primary" type="submit">저장</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`,
-          { onMount(m) { bindForms(m, { async u(d) { const body = {}; if (d.level) body.level = d.level; if (d.status) body.status = d.status; if (d.role) body.role = d.role; if (d.badge) body.badge = d.badge; if (d.revoke_badge_id) body.revoke_badge_id = d.revoke_badge_id; body.reason = d.reason; body.evidence = d.reason; await post(`/admin/users/${u.id}`, body); closeModal(); toast('저장했습니다'); reload(); } }); } });
+          { onMount(m) { bindForms(m, { async u(d) { const body = {}; if (d.level) body.level = d.level; if (d.status) body.status = d.status; if (d.role) body.role = d.role; if (d.badge) body.badge = d.badge; if (d.revoke_badge_id) body.revoke_badge_id = d.revoke_badge_id; body.reason = d.reason; body.evidence = d.reason; if (d.temp_password) body.temp_password = true; const r = await post(`/admin/users/${u.id}`, body); closeModal(); if (r.temp_password) { modal(`<h3>임시 비밀번호</h3><p>${esc(u.nickname)}님에게 아래 비밀번호를 전해 주세요. 로그인 후 내 정보에서 바꾸도록 안내합니다.</p><pre class="json" style="font-size:1.1rem">${esc(r.temp_password)}</pre><button class="btn primary" data-close-modal>닫기</button>`); } else { toast('저장했습니다'); reload(); } } }); } });
       } });
     } };
   },

@@ -59,7 +59,7 @@ export async function me({ me: cached }) {
   const me = await api('/me'); state.me = me;
   const prog = me.progress;
   const html = `<div class="wrap page">
-    ${pageHead(esc(me.nickname), `${lvChip(me.level)} · ${esc(me.email)} · 가입 ${fmtDate(me.created_at)}`, `<button class="btn" data-act="edit">프로필 수정</button><button class="btn ghost" data-act="logout">로그아웃</button>`)}
+    ${pageHead(esc(me.nickname), `${lvChip(me.level)} · ${esc(me.email)} · 가입 ${fmtDate(me.created_at)}`, `<button class="btn" data-act="edit">프로필 수정</button><button class="btn" data-act="pw">비밀번호 변경</button><button class="btn ghost" data-act="logout">로그아웃</button>`)}
     <div class="grid grid-4">${stat('총 포인트', num(me.points.total))}${stat('이번 분기', num(me.points.quarter), true)}${stat('배지', num(me.badges.length))}${stat('참여 챌린지', num(me.groups.filter(g => g.member_status === 'active').length))}</div>
     <div class="grid grid-2" style="margin-top:14px">
       <div class="stack">
@@ -74,6 +74,7 @@ export async function me({ me: cached }) {
       </div>
     </div></div>`;
   return { html, mount(root) { bindActions(root, {
+    pw() { modal(`<h3>비밀번호 변경</h3><form class="form" data-form="pw">${field('지금 비밀번호', input('current', { type: 'password', required: true }))}${field('새 비밀번호 (8자 이상)', input('next', { type: 'password', required: true }))}<div class="btn-row"><button class="btn primary" type="submit">변경</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`, { onMount(m) { bindForms(m, { async pw(d) { await put('/me/password', d); closeModal(); toast('비밀번호를 바꿨습니다. 다른 기기의 로그인은 해제됐습니다'); } }); } }); },
     async logout() { await post('/auth/logout'); state.me = null; await state.refreshMe(); go('#/'); },
     edit() {
       modal(`<h3>프로필 수정</h3><form class="form" data-form="prof">${field('닉네임', input('nickname', { value: me.nickname }))}${field('연락처', input('phone', { value: me.phone || '' }))}${field('관심 분야', `<div class="row">${Object.entries(FIELDS).map(([k, v]) => check('interests[]', v, (me.interests || '').includes(k), k)).join('')}</div>`)}${field('소개', textarea('bio', { value: me.bio || '', rows: 3 }))}${check('has_business', '사업자등록이 있습니다', !!me.has_business)}<div class="btn-row"><button class="btn primary" type="submit">저장</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`,

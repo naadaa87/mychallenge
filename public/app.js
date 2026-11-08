@@ -85,8 +85,13 @@ async function route() {
   try {
     const out = await m.view({ params: m.params, query, me, path });
     if (seq !== renderSeq) return;
-    if (typeof out === 'string') root.innerHTML = out;
-    else { root.innerHTML = out.html; if (out.mount) await out.mount(root); }
+    // 화면마다 새 컨테이너에 그린다. 이전 화면의 클릭 처리기가 남아 겹치지 않게 하기 위함
+    const view = document.createElement('div');
+    view.className = 'view';
+    if (typeof out === 'string') view.innerHTML = out;
+    else view.innerHTML = out.html;
+    root.replaceChildren(view);
+    if (typeof out !== 'string' && out.mount) await out.mount(view);
     window.scrollTo({ top: 0 });
     navActive();
   } catch (e) {

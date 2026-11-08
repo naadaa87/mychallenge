@@ -92,7 +92,7 @@ export async function levels() {
         <div class="card soft"><h3>배분 순서</h3><p class="small">매출 − 비용 = 순수익 → 그룹원 분담금 회수 → 운영본부 선지원 회수 → (정산 대행 시 수수료) → 운영본부 몫 → 그룹장 몫 → 그룹원 풀(기여율대로).</p></div>
         <div class="card soft"><h3>기본형 프리셋</h3><p class="small">운영본부 10% · 그룹장 30% · 그룹원 풀 60%. 리더주도형(10/45/45), 균등형(10/20/70, 그룹장도 풀에 포함), 오피셜형(55/15/30)도 있습니다. 프리셋에서 ±10%p 안에서 조정합니다.</p></div>
         <div class="card soft"><h3>정산 조건</h3><p class="small">정산 가능 금액이 10만 원 미만이면 다음 라운드로 이월합니다. 프로젝트 페이퍼가 승인되어야 지급됩니다. 지급액에는 3.3% 원천징수 참고액을 함께 표시합니다.</p></div>
-        <div class="card soft"><h3>소유권</h3><p class="small">A형(그룹장 소유, 마챌에 사례 공개권), B형(그룹 공동 소유), C형(마챌 소유, 오피셜 챌린지)을 합의서에서 고릅니다. 합의 없이 시작한 챌린지는 없습니다.</p></div>
+        <div class="card soft"><h3>소유권</h3><p class="small">A형(그룹 공동 소유), B형(그룹장 소유 + 마챌 사례 사용권), C형(마챌 소유, 오피셜 챌린지)을 합의서에서 고릅니다. 합의 없이 시작한 챌린지는 없습니다.</p></div>
       </div>
     </div>
     ${state.me ? '' : `<div class="cta-band" style="margin-top:20px"><h2>함께해 볼까요?</h2><p>지원서를 쓰고, 승인되면 초대 코드로 가입합니다.</p><a class="btn lg" href="#/apply">가입 신청하기</a></div>`}
