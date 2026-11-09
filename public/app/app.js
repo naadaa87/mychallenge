@@ -7,8 +7,8 @@ import * as admin from './views/admin.js';
 import { state, api, esc, toast, navActive, closeModal } from './core.js';
 
 const routes = [
-  // 공개
-  ['/', pub.landing, 'any'], ['/levels', pub.levels, 'any'], ['/apply', pub.apply, 'any'], ['/apply/done', pub.applyDone, 'any'],
+  // 공개 소개 페이지는 사이트(/, /levels/, /apply/ …)로 옮겼다. 회원 공간은 /app/ 아래에서만 돈다.
+  ['/', pub.home, 'any'], ['/levels', pub.toSite('/levels/'), 'any'], ['/apply', pub.toSite('/apply/'), 'any'], ['/apply/done', pub.toSite('/apply/'), 'any'],
   ['/login', pub.login, 'guest'], ['/register', pub.register, 'guest'], ['/setup', pub.setup, 'any'],
   // 회원
   ['/onboarding', member.onboarding, 'user'], ['/dashboard', member.dashboard, 'user'], ['/me', member.me, 'user'], ['/me/points', member.points, 'user'], ['/me/asset', member.assetDiag, 'user'], ['/notifications', member.notifications, 'user'],
@@ -56,8 +56,8 @@ function renderChrome() {
     user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
   };
   if (!me) {
-    nav.innerHTML = `<a href="#/">소개</a><a href="#/levels">등급과 라운드</a><a href="#/papers">프로젝트 페이퍼</a>`;
-    right.innerHTML = `<a class="btn sm" href="#/login">로그인</a><a class="btn sm primary" href="#/apply">가입 신청</a>`;
+    nav.innerHTML = `<a href="/about/">마챌 소개</a><a href="/how-it-works/">운영 방식</a><a href="/levels/">등급</a><a href="/papers/">프로젝트 페이퍼</a><a href="/guide/">가이드</a>`;
+    right.innerHTML = `<a class="btn sm" href="#/login">로그인</a><a class="btn sm primary" href="/apply/">가입 신청</a>`;
     bottom.innerHTML = '';
   } else {
     nav.innerHTML = `<a href="#/dashboard">홈</a><a href="#/challenges">챌린지</a><a href="#/community">커뮤니티</a><a href="#/papers">페이퍼</a><a href="#/events">일정</a>${me.role === 'staff' ? '<a href="#/admin">운영</a>' : ''}`;
@@ -74,7 +74,7 @@ async function route() {
   const m = matchRoute(path);
   const root = document.getElementById('app');
   const seq = ++renderSeq;
-  if (!m) { root.innerHTML = `<div class="wrap page"><div class="empty"><strong>페이지를 찾을 수 없습니다</strong><a href="#/">처음으로</a></div></div>`; return; }
+  if (!m) { root.innerHTML = `<div class="wrap page"><div class="empty"><strong>페이지를 찾을 수 없습니다</strong><a href="#/">회원 홈으로</a> · <a href="/">마이챌린지 홈으로</a></div></div>`; return; }
   if (state.me === undefined) { root.innerHTML = `<div class="loading"><div class="spinner"></div>불러오는 중</div>`; await loadMe(); renderChrome(); }
   const me = state.me;
   if (m.auth === 'user' && !me) { sessionStorage.setItem('machal_after_login', location.hash); location.hash = '#/login'; return; }

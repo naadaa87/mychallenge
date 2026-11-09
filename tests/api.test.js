@@ -16,15 +16,17 @@ eq([admin.level, admin.role], ['L5', 'staff'], 'admin is L5 staff');
 // 1. 가입 신청 → 승인 → 초대 코드 → 가입 → 온보딩
 async function join(key, name, level) {
   const email = `${key}@test.kr`;
-  await expectOk(c.post('/apply', { name, email, interests: 'S-01,S-02', consent_public: true, experience: '없음' }), 'apply ' + key);
-  await expectFail(c.post('/apply', { name, email }), 400, 'duplicate application');
+  await expectFail(c.post('/apply', { name, email, interests: 'S-01', consent_public: true }), 400, 'apply needs privacy consent');
+  await expectOk(c.post('/apply', { name, email, interests: 'S-01,S-02', consent_public: true, consent_privacy: true, experience: '없음' }), 'apply ' + key);
+  await expectFail(c.post('/apply', { name, email, consent_public: true, consent_privacy: true }), 400, 'duplicate application');
   const apps = await expectOk(c.get('/admin/applications?status=pending', { as: 'admin' }));
   const app = apps.find(a => a.email === email);
   const dec = await expectOk(c.post(`/admin/applications/${app.id}`, { decision: 'approve' }, { as: 'admin' }));
   ok(/^MC-[A-Z0-9]{6}$/.test(dec.invite_code), 'invite code format ' + dec.invite_code);
-  await expectFail(c.post('/auth/register', { invite_code: 'MC-WRONG0', email, password: 'password1', name, nickname: name }, { as: key }), 400, 'bad code');
-  await expectOk(c.post('/auth/register', { invite_code: dec.invite_code.toLowerCase(), email, password: 'password1', name, nickname: name }, { as: key }), 'register ' + key);
-  await expectFail(c.post('/auth/register', { invite_code: dec.invite_code, email, password: 'password1', name, nickname: name }, { as: key + '2' }), 400, 'code reuse blocked');
+  await expectFail(c.post('/auth/register', { invite_code: 'MC-WRONG0', email, password: 'password1', name, nickname: name, agree_terms: true, agree_privacy: true }, { as: key }), 400, 'bad code');
+  await expectFail(c.post('/auth/register', { invite_code: dec.invite_code, email, password: 'password1', name, nickname: name }, { as: key }), 400, 'register needs terms consent');
+  await expectOk(c.post('/auth/register', { invite_code: dec.invite_code.toLowerCase(), email, password: 'password1', name, nickname: name, agree_terms: true, agree_privacy: true }, { as: key }), 'register ' + key);
+  await expectFail(c.post('/auth/register', { invite_code: dec.invite_code, email, password: 'password1', name, nickname: name, agree_terms: true, agree_privacy: true }, { as: key + '2' }), 400, 'code reuse blocked');
   let me = await expectOk(c.get('/me', { as: key }));
   eq([me.level, me.onboarded], ['L0', 0], 'new member L0');
   await expectFail(c.get('/challenges', { as: key }), 403, 'L0 cannot see board');
@@ -272,5 +274,48 @@ ok(/^mc[0-9a-f]{8}$/.test(tp.temp_password), 'temp password issued');
 await expectFail(c.get('/me', { as: 'c2' }), 401, 'sessions cleared after temp password');
 await expectOk(c.post('/auth/login', { email: 'c@test.kr', password: tp.temp_password }, { as: 'c3' }));
 console.log('중단·솔로 ok');
+
+// 12. v1.1 — 동의 기록 · 로그인 시도 제한 · CSV 내려받기 · 회원 탈퇴
+const consentRows = db.db.prepare("SELECT subject_type, kind, COUNT(*) AS c FROM consents GROUP BY subject_type, kind ORDER BY subject_type, kind").all().map(r => `${r.subject_type}:${r.kind}:${r.c}`);
+eq(consentRows, ['application:privacy:6', 'application:public_results:6', 'user:privacy:6', 'user:terms:6'], 'consents recorded');
+for (let i = 0; i < 10; i++) await expectFail(c.post('/auth/login', { email: 'f@test.kr', password: 'nope' + i }, { as: 'rl' }), 401, 'wrong pw ' + i);
+await expectFail(c.post('/auth/login', { email: 'f@test.kr', password: 'password1' }, { as: 'rl' }), 429, 'rate limited after 10 failures');
+db.db.exec("UPDATE login_attempts SET created_at = datetime('now','-20 minutes')");
+await expectOk(c.post('/auth/login', { email: 'f@test.kr', password: 'password1' }, { as: 'rl' }), 'login allowed after window');
+eq(db.db.prepare("SELECT COUNT(*) AS c FROM login_attempts WHERE email = 'f@test.kr'").get().c, 0, 'attempts cleared on success');
+const loginRes = await (await import('../functions/api/[[path]].js')).onRequest({ request: new Request('http://localhost/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'f@test.kr', password: 'password1' }) }), env: { DB: db }, params: {}, waitUntil() {} });
+const cookies = loginRes.headers.getSetCookie();
+ok(cookies.some(x => x.startsWith('machal_session=') && x.includes('HttpOnly')) && cookies.some(x => x.startsWith('machal_in=1') && !x.includes('HttpOnly')), 'session + marker cookies');
+await expectFail(c.get('/admin/export?table=users', { as: 'b' }), 403, 'export staff only');
+await expectFail(c.get('/admin/export?table=sessions', { as: 'admin' }), 400, 'export unknown table');
+{
+  const mod = await import('../functions/api/[[path]].js');
+  const req = new Request('http://localhost/api/admin/export?table=users', { headers: { cookie: 'machal_session=' + c.jar.admin.replace('machal_session=', '') } });
+  const res = await mod.onRequest({ request: req, env: { DB: db }, params: {}, waitUntil() {} });
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const text = new TextDecoder().decode(bytes);
+  ok(res.status === 200 && res.headers.get('content-type').startsWith('text/csv') && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF, 'csv with BOM');
+  ok(text.split('\r\n')[0].includes('email') && !text.includes('password_hash'), 'csv columns safe');
+}
+// 탈퇴: 진행 중인 챌린지가 있으면 막고, 없으면 익명화
+await expectFail(c.post('/me/withdraw', { password: 'wrong' }, { as: 'f' }), 400, 'withdraw wrong password');
+const fUser = await expectOk(c.get('/me', { as: 'f' }));
+await expectOk(c.post('/me/withdraw', { password: 'password1' }, { as: 'f' }), 'withdraw');
+await expectFail(c.get('/me', { as: 'f' }), 401, 'withdrawn session gone');
+await expectFail(c.post('/auth/login', { email: 'f@test.kr', password: 'password1' }, { as: 'f2' }), 401, 'withdrawn cannot login');
+const ghost = db.db.prepare('SELECT email, name, nickname, phone, status FROM users WHERE id = ?').get(fUser.id);
+ok(ghost.email.endsWith('@deleted.invalid') && ghost.name === '탈퇴회원' && ghost.status === 'removed' && ghost.phone === null, 'anonymized');
+eq(db.db.prepare("SELECT COUNT(*) AS c FROM applications WHERE email = 'f@test.kr'").get().c, 0, 'application anonymized');
+await expectFail(c.post('/me/withdraw', { password: 'adminpass1' }, { as: 'admin' }), 400, 'last staff cannot withdraw');
+// 오래된 미가입 신청서 파기
+await expectOk(c.post('/apply', { name: '미가입자', email: 'nojoin@test.kr', consent_public: true, consent_privacy: true }));
+const nj = (await expectOk(c.get('/admin/applications?status=pending', { as: 'admin' }))).find(a => a.email === 'nojoin@test.kr');
+await expectOk(c.post(`/admin/applications/${nj.id}`, { decision: 'approve' }, { as: 'admin' }));
+db.db.exec(`UPDATE applications SET decided_at = datetime('now','-7 months') WHERE id = ${nj.id}`);
+await expectOk(c.get('/admin/dashboard', { as: 'admin' }));
+const purged = db.db.prepare('SELECT name, email, status, invite_code FROM applications WHERE id = ?').get(nj.id);
+ok(purged.status === 'purged' && purged.email.endsWith('@deleted.invalid') && purged.invite_code === null, 'old application purged');
+eq(db.db.prepare("SELECT COUNT(*) AS c FROM consents WHERE subject_type = 'application' AND subject_id = ? AND ip IS NOT NULL", ).get(nj.id).c, 0, 'consent ip cleared');
+console.log('v1.1 동의·로그인 제한·내보내기·탈퇴·파기 ok');
 
 console.log('\nAPI 전체 흐름 테스트 통과 ✔');

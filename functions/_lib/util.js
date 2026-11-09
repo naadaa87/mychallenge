@@ -73,6 +73,17 @@ export function sessionCookie(token, maxAgeSec = 60 * 60 * 24 * 30) {
   return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${maxAgeSec}`;
 }
 export function clearCookie() { return `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`; }
+// 공개 페이지(정적 HTML)가 API를 부르지 않고도 "로그인한 상태"를 알 수 있게 두는 표시용 쿠키. 값에는 아무 정보도 없다.
+export const MARK_COOKIE = 'machal_in';
+export function markCookie(on, maxAgeSec = 60 * 60 * 24 * 30) {
+  return on ? `${MARK_COOKIE}=1; Path=/; SameSite=Lax; Secure; Max-Age=${maxAgeSec}` : `${MARK_COOKIE}=; Path=/; SameSite=Lax; Secure; Max-Age=0`;
+}
+// 세션 쿠키와 표시 쿠키를 함께 내려보내는 JSON 응답
+export function jsonWithCookies(data, cookies, status = 200) {
+  const h = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+  for (const c of cookies) h.append('set-cookie', c);
+  return new Response(JSON.stringify(data), { status, headers: h });
+}
 
 export async function currentUser(db, request) {
   const token = getCookie(request, COOKIE);

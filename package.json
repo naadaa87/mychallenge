@@ -1,11 +1,15 @@
 {
   "name": "machal-web",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "마이챌린지(마챌) 커뮤니티 홈페이지 — Cloudflare Pages + Functions + D1",
+  "description": "마이챌린지(마챌) 홈페이지 — 공개 사이트(SEO) + 회원 공간, Cloudflare Pages + Functions + D1",
   "type": "module",
   "scripts": {
     "test": "node tests/settlement.test.js && node tests/api.test.js",
+    "build": "node scripts/build-site.mjs",
+    "og": "node scripts/render-og.mjs",
+    "serve": "node tests/serve.js",
+    "check:seo": "node tests/seo-audit.js",
     "dev": "npx wrangler pages dev public --d1=DB=machal-db --local",
     "db:local": "npx wrangler d1 execute machal-db --local --file=schema.sql",
     "db:remote": "npx wrangler d1 execute machal-db --remote --file=schema.sql"

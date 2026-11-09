@@ -290,3 +290,7 @@ pre.json { background: var(--bg-2); border: 1px solid var(--line); border-radius
 .locked { color: var(--muted); font-style: italic; }
 .print-only { display: none; }
 @media print { .topbar, .bottomnav, .footer, .btn, .toast { display: none !important; } .app { padding: 0; } .print-only { display: block; } }
+
+/* v1.1 */
+.consent-box { display: grid; gap: 8px; padding: 12px; border-radius: 10px; background: var(--bg-2); }
+.consent-box .check { font-size: .9rem; }

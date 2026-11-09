@@ -1,4 +1,4 @@
--- 마이챌린지(마챌) D1 스키마 v1.0
+-- 마이챌린지(마챌) D1 스키마 v1.1
 -- Cloudflare D1 콘솔 또는 `wrangler d1 execute machal-db --remote --file=schema.sql` 로 실행
 
 CREATE TABLE IF NOT EXISTS users (
@@ -366,3 +366,26 @@ CREATE TABLE IF NOT EXISTS view_logs (
   target_id INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ---------- v1.1 추가 ----------
+-- 약관·개인정보 동의 기록 (지원서 제출, 가입 시점)
+CREATE TABLE IF NOT EXISTS consents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_type TEXT NOT NULL,                -- application | user
+  subject_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,                        -- terms | privacy | public_results
+  version TEXT NOT NULL,                     -- 동의한 문서의 시행일
+  ip TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_consents_subject ON consents(subject_type, subject_id);
+
+-- 로그인 실패 기록 (15분 안에 같은 이메일 10회, 같은 IP 30회 실패하면 잠시 막는다)
+CREATE TABLE IF NOT EXISTS login_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  ip TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts(email, created_at);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip, created_at);

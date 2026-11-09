@@ -6,8 +6,9 @@ import {
   one, all, run, insert, getSettings, hashPassword, verifyPassword, randomToken, inviteCode,
   sessionCookie, clearCookie, currentUser, requireUser, requireStaff, requireLevel, isStaff, lvlAtLeast,
   addPoints, pointsOf, maybeAutoPromote, setLevel, grantBadge, badgeCount, notify, notifyStaff, audit,
-  str, must, intv, getCookie, COOKIE,
+  str, must, intv, getCookie, COOKIE, HttpError as HttpErr, markCookie, jsonWithCookies,
 } from '../_lib/util.js';
+import { POLICY_VERSION } from '../_site/config.js';
 import { LEVELS, LEVEL_NAMES, FIELDS, ROLES, ROLE_WEIGHTS, BADGE_NAMES, levelIndex, quarterOf } from '../_lib/rules.js';
 import { computeSettlement, buildPayouts, RULE_VERSION } from '../_lib/settlement.js';
 
@@ -101,15 +102,23 @@ on('GET', '/public/papers', async ({ db }) => {
 const KST_NOW = "datetime('now','+9 hours')";
 on('GET', '/public/events', async ({ db }) => all(db, `SELECT id, type, title, starts_at, location, min_level FROM events WHERE starts_at >= ${KST_NOW} ORDER BY starts_at LIMIT 10`));
 
+const clientIp = request => request.headers.get('cf-connecting-ip') || null;
+async function recordConsents(db, request, subjectType, subjectId, kinds) {
+  for (const k of kinds) await run(db, 'INSERT INTO consents (subject_type, subject_id, kind, version, ip) VALUES (?,?,?,?,?)', subjectType, subjectId, k, POLICY_VERSION, clientIp(request));
+}
+
 on('POST', '/apply', async ({ db, request }) => {
   const b = await readJson(request);
   must(b.name, '이름'); must(b.email, '이메일');
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(b.email)) throw bad('이메일 형식을 확인해 주세요');
+  if (!b.consent_privacy) throw bad('개인정보 수집·이용에 동의해야 신청할 수 있습니다');
+  if (!b.consent_public) throw bad('결과 공개 원칙에 동의해야 신청할 수 있습니다');
   const dup = await one(db, "SELECT id FROM applications WHERE email = ? AND status = 'pending'", b.email.toLowerCase());
   if (dup) throw bad('이미 접수된 신청이 있습니다. 운영본부의 연락을 기다려 주세요');
   const form = {};
-  for (const k of ['job', 'years', 'hours_weekday', 'hours_weekend', 'experience', 'interests', 'why_group', 'share_opinion', 'side_job_check', 'consent_public', 'can_attend', 'give', 'referrer']) form[k] = str(b[k], 1000);
+  for (const k of ['job', 'years', 'hours_weekday', 'hours_weekend', 'experience', 'interests', 'why_group', 'share_opinion', 'side_job_check', 'consent_public', 'can_attend', 'give', 'referrer', 'question']) form[k] = str(b[k], 1000);
   const id = await insert(db, 'INSERT INTO applications (name, email, phone, form) VALUES (?,?,?,?)', str(b.name, 50), b.email.toLowerCase(), str(b.phone, 30), J(form));
+  await recordConsents(db, request, 'application', id, ['privacy', 'public_results']);
   await notifyStaff(db, '새 가입 신청', `${b.name}님이 지원했습니다.`, '#/admin/applications');
   return { ok: true, id };
 });
@@ -135,13 +144,14 @@ async function login(db, userId) {
   const exp = new Date(Date.now() + 30 * 86400000).toISOString().replace('T', ' ').slice(0, 19);
   await run(db, 'INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,?)', token, userId, exp);
   await run(db, "UPDATE users SET last_seen_at = datetime('now') WHERE id = ?", userId);
-  return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) });
+  return jsonWithCookies({ ok: true }, [sessionCookie(token), markCookie(true)]);
 }
 
 on('POST', '/auth/register', async ({ db, request }) => {
   const b = await readJson(request);
   must(b.invite_code, '초대 코드'); must(b.email, '이메일'); must(b.password, '비밀번호'); must(b.name, '이름'); must(b.nickname, '닉네임');
   if (String(b.password).length < 8) throw bad('비밀번호는 8자 이상이어야 합니다');
+  if (!b.agree_terms || !b.agree_privacy) throw bad('이용약관과 개인정보 수집·이용에 동의해야 가입할 수 있습니다');
   const app = await one(db, "SELECT * FROM applications WHERE invite_code = ? AND status = 'approved'", String(b.invite_code).trim().toUpperCase());
   if (!app) throw bad('초대 코드가 올바르지 않거나 이미 사용됐습니다');
   if (app.email !== String(b.email).toLowerCase()) throw bad('지원서에 적은 이메일로 가입해 주세요');
@@ -150,6 +160,7 @@ on('POST', '/auth/register', async ({ db, request }) => {
   const form = parseJ(app.form, {});
   const id = await insert(db, "INSERT INTO users (email, password_hash, name, nickname, phone, level, interests) VALUES (?,?,?,?,?,'L0',?)", app.email, await hashPassword(b.password), str(b.name, 50), str(b.nickname, 30), str(b.phone || app.phone, 30), str(form.interests, 200));
   await run(db, "UPDATE applications SET status = 'joined' WHERE id = ?", app.id);
+  await recordConsents(db, request, 'user', id, ['terms', 'privacy']);
   await run(db, "INSERT INTO level_history (user_id, from_level, to_level, reason) VALUES (?, NULL, 'L0', '가입')", id);
   if (form.referrer) {
     const ref = await one(db, 'SELECT id FROM users WHERE nickname = ? OR email = ?', form.referrer, form.referrer);
@@ -158,18 +169,57 @@ on('POST', '/auth/register', async ({ db, request }) => {
   return login(db, id);
 });
 
+const LOGIN_WINDOW = "datetime('now','-15 minutes')";
 on('POST', '/auth/login', async ({ db, request }) => {
   const b = await readJson(request);
-  const u = await one(db, 'SELECT id, password_hash, status FROM users WHERE email = ?', String(b.email || '').toLowerCase());
-  if (!u || !(await verifyPassword(String(b.password || ''), u.password_hash))) throw unauth('이메일 또는 비밀번호가 맞지 않습니다');
+  const email = String(b.email || '').trim().toLowerCase();
+  const ip = clientIp(request);
+  const byEmail = (await one(db, `SELECT COUNT(*) AS c FROM login_attempts WHERE email = ? AND created_at >= ${LOGIN_WINDOW}`, email))?.c || 0;
+  const byIp = ip ? ((await one(db, `SELECT COUNT(*) AS c FROM login_attempts WHERE ip = ? AND created_at >= ${LOGIN_WINDOW}`, ip))?.c || 0) : 0;
+  if (byEmail >= 10 || byIp >= 30) throw new HttpErr(429, '로그인 시도가 너무 많습니다. 15분 뒤에 다시 시도해 주세요');
+  const u = await one(db, 'SELECT id, password_hash, status FROM users WHERE email = ?', email);
+  if (!u || !(await verifyPassword(String(b.password || ''), u.password_hash))) {
+    await run(db, 'INSERT INTO login_attempts (email, ip) VALUES (?,?)', email, ip);
+    await run(db, "DELETE FROM login_attempts WHERE created_at < datetime('now','-1 day')");
+    throw unauth('이메일 또는 비밀번호가 맞지 않습니다');
+  }
   if (u.status === 'removed') throw forbid('이용이 제한된 계정입니다');
+  await run(db, 'DELETE FROM login_attempts WHERE email = ?', email);
   return login(db, u.id);
 });
 
 on('POST', '/auth/logout', async ({ db, request }) => {
   const t = getCookie(request, COOKIE);
   if (t) await run(db, 'DELETE FROM sessions WHERE token = ?', t);
-  return json({ ok: true }, 200, { 'set-cookie': clearCookie() });
+  return jsonWithCookies({ ok: true }, [clearCookie(), markCookie(false)]);
+});
+
+// 회원 탈퇴: 개인정보는 지우고, 다른 사람과 함께 만든 기록(합의서·장부·정산)은 이름 없이 남긴다
+on('POST', '/me/withdraw', async ({ db, request, user }) => {
+  requireUser(user);
+  const b = await readJson(request);
+  const row = await one(db, 'SELECT password_hash, email FROM users WHERE id = ?', user.id);
+  if (!(await verifyPassword(String(b.password || ''), row.password_hash))) throw bad('비밀번호가 맞지 않습니다');
+  const busy = await one(db, "SELECT c.title FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = ? AND gm.status IN ('active','applied') AND c.stage IN ('recruiting','agreement','active','settling') LIMIT 1", user.id);
+  if (busy) throw bad(`참여 중인 챌린지(${busy.title})가 있어 지금은 탈퇴할 수 없습니다. 그룹장 또는 운영본부와 먼저 정리해 주세요`);
+  const leading = await one(db, "SELECT title FROM challenges WHERE leader_id = ? AND stage IN ('proposed','review','recruiting','agreement','active','settling') LIMIT 1", user.id);
+  if (leading) throw bad(`그룹장으로 이끄는 챌린지(${leading.title})가 끝나지 않았습니다. 종료 또는 중단 처리 뒤에 탈퇴할 수 있습니다`);
+  const unpaid = await one(db, "SELECT COUNT(*) AS c FROM settlement_payouts WHERE user_id = ? AND status IN ('pending','held')", user.id);
+  if ((unpaid?.c || 0) > 0) throw bad('아직 지급이 끝나지 않은 정산이 있습니다. 지급을 받은 뒤 탈퇴해 주세요');
+  if (user.role === 'staff') {
+    const staff = await one(db, "SELECT COUNT(*) AS c FROM users WHERE role = 'staff' AND status = 'active'");
+    if ((staff?.c || 0) <= 1) throw bad('마지막 운영진 계정은 탈퇴할 수 없습니다. 다른 운영진을 먼저 지정해 주세요');
+  }
+  const ghostEmail = `withdrawn-${user.id}-${randomToken(4)}@deleted.invalid`;
+  await run(db, "UPDATE users SET email = ?, name = '탈퇴회원', nickname = ?, phone = NULL, bio = NULL, asset_diag = NULL, interests = NULL, password_hash = ?, status = 'removed', role = 'member' WHERE id = ?", ghostEmail, '탈퇴회원' + user.id, await hashPassword(randomToken(16)), user.id);
+  const apps = await all(db, 'SELECT id FROM applications WHERE email = ?', row.email);
+  await run(db, "UPDATE applications SET name = '탈퇴회원', email = ?, phone = NULL, form = '{}' WHERE email = ?", ghostEmail, row.email);
+  await run(db, "UPDATE consents SET ip = NULL WHERE subject_type = 'user' AND subject_id = ?", user.id);
+  for (const a of apps) await run(db, "UPDATE consents SET ip = NULL WHERE subject_type = 'application' AND subject_id = ?", a.id);
+  await run(db, 'DELETE FROM sessions WHERE user_id = ?', user.id);
+  await run(db, 'DELETE FROM notifications WHERE user_id = ?', user.id);
+  await audit(db, user.id, 'user.withdraw', 'users:' + user.id);
+  return jsonWithCookies({ ok: true }, [clearCookie(), markCookie(false)]);
 });
 
 async function meSummary(db, settings, u) {
@@ -1120,8 +1170,18 @@ on('GET', '/leaderboard', async ({ db, user }) => {
 // =====================================================================
 // 관리자
 // =====================================================================
+// 가입하지 않은 신청서는 처리 후 6개월이 지나면 파기한다(개인정보처리방침 2항). 운영 화면을 열 때마다 정리한다.
+async function purgeOldApplications(db) {
+  const old = await all(db, "SELECT id FROM applications WHERE status IN ('rejected','approved') AND decided_at IS NOT NULL AND decided_at < datetime('now','-6 months') AND email NOT LIKE '%@deleted.invalid'");
+  for (const a of old) {
+    await run(db, "UPDATE applications SET name = '파기', email = ?, phone = NULL, form = '{}', invite_code = NULL, status = 'purged' WHERE id = ?", `purged-${a.id}@deleted.invalid`, a.id);
+    await run(db, "UPDATE consents SET ip = NULL WHERE subject_type = 'application' AND subject_id = ?", a.id);
+  }
+  return old.length;
+}
 on('GET', '/admin/dashboard', async ({ db, user }) => {
   requireStaff(user);
+  await purgeOldApplications(db);
   const byLevel = await all(db, "SELECT level, COUNT(*) AS c FROM users WHERE status = 'active' GROUP BY level");
   const q = async sql => (await one(db, sql))?.c || 0;
   const activeGroups = await q("SELECT COUNT(*) AS c FROM challenges WHERE stage IN ('active','settling') AND type <> 'solo'");
@@ -1233,3 +1293,32 @@ on('PUT', '/admin/settings', async ({ db, request, user }) => {
   return { ok: true };
 });
 on('GET', '/admin/audit', async ({ db, user, query }) => { requireStaff(user); return all(db, 'SELECT a.*, u.nickname FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_id ORDER BY a.created_at DESC LIMIT ?', Math.min(Number(query.limit || 100), 500)); });
+
+
+// ----- 데이터 내려받기 (CSV, 엑셀용 UTF-8 BOM) -----
+const EXPORTS = {
+  users: "SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, created_at, last_seen_at FROM users ORDER BY id",
+  applications: "SELECT id, name, email, phone, status, invite_code, created_at, decided_at, note, form FROM applications ORDER BY id",
+  challenges: "SELECT c.id, c.type, c.title, c.field_code, c.stage, u.nickname AS leader, c.round_id, c.created_at, c.updated_at FROM challenges c JOIN users u ON u.id = c.leader_id ORDER BY c.id",
+  ledger: "SELECT l.id, l.challenge_id, c.title AS challenge, l.kind, l.entry_date, l.amount, l.is_external, l.channel, l.category, l.payer_type, l.payer_id, l.evidence, l.note, l.entered_by, l.confirmed_by, l.created_at FROM ledger_entries l JOIN challenges c ON c.id = l.challenge_id ORDER BY l.id",
+  settlements: "SELECT s.id, s.challenge_id, c.title AS challenge, s.status, s.period_start, s.period_end, s.created_at FROM settlements s JOIN challenges c ON c.id = s.challenge_id ORDER BY s.id",
+  payouts: "SELECT p.id, p.settlement_id, p.user_id, COALESCE(u.nickname, '운영본부') AS nickname, u.name, p.kind, p.gross, p.withholding_rate, p.withholding, p.net, p.status, p.paid_at FROM settlement_payouts p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.id",
+  papers: "SELECT p.id, p.challenge_id, c.title AS challenge, p.status, p.publish_scope, p.submitted_at, p.published_at FROM papers p JOIN challenges c ON c.id = p.challenge_id ORDER BY p.id",
+  points: "SELECT p.id, p.user_id, u.nickname, p.action, p.points, p.ref_type, p.ref_id, p.quarter, p.created_at FROM points_ledger p JOIN users u ON u.id = p.user_id ORDER BY p.id",
+  consents: "SELECT id, subject_type, subject_id, kind, version, created_at FROM consents ORDER BY id",
+};
+function toCsv(rows) {
+  if (!rows.length) return '';
+  const cols = Object.keys(rows[0]);
+  const cell = v => { if (v == null) return ''; const t = String(v); return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  return [cols.join(','), ...rows.map(r => cols.map(c => cell(r[c])).join(','))].join('\r\n');
+}
+on('GET', '/admin/export', async ({ db, user, query }) => {
+  requireStaff(user);
+  const sql = EXPORTS[query.table];
+  if (!sql) throw bad('내려받을 수 없는 표입니다. users, applications, challenges, ledger, settlements, payouts, papers, points, consents 중에서 고르세요');
+  const rows = await all(db, sql);
+  await audit(db, user.id, 'export', 'table:' + query.table, { rows: rows.length });
+  const name = `machal-${query.table}-${today()}.csv`;
+  return new Response('\uFEFF' + toCsv(rows), { headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="${name}"`, 'cache-control': 'no-store' } });
+});
