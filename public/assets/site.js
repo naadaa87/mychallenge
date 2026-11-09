@@ -45,6 +45,9 @@
   const statsSec = $('[data-live="stats"]');
   if (statsSec) {
     getJson('/public/stats').then(s => {
+      const c0 = s.closed || {};
+      // 진행 중이거나 끝난 챌린지, 공개 페이퍼가 하나라도 생기기 전에는 0만 늘어선 화면을 보여 주지 않는다
+      if (!(s.active_challenges || s.papers || c0.with_sales || c0.without_sales || c0.stopped)) return;
       for (const k of ['members', 'active_challenges', 'first_sales', 'papers']) { const el = $(`[data-stat="${k}"]`, statsSec); if (el) el.textContent = num(s[k]); }
       const c = s.closed || {}; const total = (c.with_sales || 0) + (c.without_sales || 0) + (c.stopped || 0);
       const note = $('[data-stat="closed_note"]', statsSec);

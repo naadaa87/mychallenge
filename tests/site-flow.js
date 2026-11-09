@@ -48,7 +48,7 @@ ok((await ev('location.hash')) === '#/dashboard', '/app/ 첫 화면은 로그인
 // 4. 홈 숫자, 등급 기준값 반영
 await send('Network.clearBrowserCookies');
 await go(BASE + '/');
-ok(await ev(`!document.querySelector('[data-live=stats]').hidden && /\\d/.test(document.querySelector('[data-stat=members]').textContent)`), '홈의 실제 숫자 섹션이 채워진다');
+ok(await ev(`!document.querySelector('[data-live=stats]').hidden && /\\d/.test(document.querySelector('[data-stat=members]').textContent)`), '홈의 실제 숫자 섹션이 채워진다(챌린지 기록이 있을 때)');
 await go(BASE + '/levels/');
 ok((await ev(`document.querySelector('[data-rule="L2.points"]').textContent`)) === '30', '등급 페이지가 운영본부 설정값(테스트 DB: 30점)을 반영한다');
 await go(BASE + '/app/');
