@@ -40,8 +40,8 @@ docs/                   ← 기획 문서와 SEO 가이드
 ### 1-1. D1 데이터베이스 만들기
 1. Cloudflare 대시보드 → **Storage & Databases → D1 SQL Database → Create**
 2. 이름: `machal-db` → Create
-3. 만든 DB의 **Console** 탭에서 이 저장소의 `schema.sql` 내용을 전부 붙여 넣고 **Execute**
-   - "CREATE TABLE IF NOT EXISTS"라서 여러 번 실행해도 안전합니다. **v1.0에서 올라온 경우에도 한 번 더 실행**하면 v1.1 표(동의 기록, 로그인 실패 기록)가 추가됩니다.
+3. 표는 따로 만들 필요가 없습니다. 홈페이지가 처음 API 요청을 받을 때 `schema.sql`의 표를 자동으로 만들고, 모자란 표가 있으면 채웁니다(v1.0에서 올라온 경우에도 v1.1 표가 자동 추가됩니다).
+   - 직접 만들고 싶다면 DB의 **Console** 탭에 `schema.sql` 내용을 붙여 넣고 실행해도 됩니다. 모두 "IF NOT EXISTS"라 여러 번 실행해도 안전합니다.
 
 ### 1-2. Pages 프로젝트 만들기
 1. **Workers & Pages → Create → Pages → Connect to Git** → 저장소 `mychallenge` 선택

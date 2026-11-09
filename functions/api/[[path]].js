@@ -9,6 +9,7 @@ import {
   str, must, intv, getCookie, COOKIE, HttpError as HttpErr, markCookie, jsonWithCookies,
 } from '../_lib/util.js';
 import { POLICY_VERSION } from '../_site/config.js';
+import { SCHEMA_STATEMENTS, SCHEMA_TABLES } from '../_lib/schema.generated.js';
 import { LEVELS, LEVEL_NAMES, FIELDS, ROLES, ROLE_WEIGHTS, BADGE_NAMES, levelIndex, quarterOf } from '../_lib/rules.js';
 import { computeSettlement, buildPayouts, RULE_VERSION } from '../_lib/settlement.js';
 
@@ -25,6 +26,16 @@ function match(parts, pathParts) {
   return params;
 }
 
+// D1에 표가 없거나 모자라면 schema.sql 내용을 그대로 실행한다(모두 IF NOT EXISTS라 여러 번 실행해도 안전).
+// 인스턴스마다 한 번만 확인한다.
+let schemaReady = false;
+async function ensureSchema(db) {
+  if (schemaReady) return;
+  const have = await db.prepare(`SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'table' AND name IN (${SCHEMA_TABLES.map(() => '?').join(',')})`).bind(...SCHEMA_TABLES).first();
+  if ((have?.c || 0) < SCHEMA_TABLES.length) await db.batch(SCHEMA_STATEMENTS.map(sql => db.prepare(sql)));
+  schemaReady = true;
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -32,6 +43,7 @@ export async function onRequest(context) {
   const db = env.DB;
   if (!db) return json({ error: 'D1 바인딩(DB)이 설정되지 않았습니다. README의 배포 안내를 확인하세요.' }, 500);
   try {
+    await ensureSchema(db);
     for (const r of routes) {
       if (r.method !== request.method) continue;
       const params = match(r.parts, pathParts);

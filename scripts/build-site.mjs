@@ -56,6 +56,14 @@ export const ROUTES = ${JSON.stringify(routes, null, 1)};
 export const GUIDES_META = ${JSON.stringify(guidesMeta, null, 1)};
 `);
 
+// D1 스키마를 Functions가 읽을 수 있게 문장 단위로 저장 (첫 요청 때 자동으로 표를 만든다)
+const stmts = readFileSync(join(root, 'schema.sql'), 'utf8').split('\n').map(l => l.replace(/--.*$/, '')).join('\n')
+  .split(';').map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+writeFileSync(join(root, 'functions', '_lib', 'schema.generated.js'), `// 자동 생성 파일입니다. schema.sql 을 고친 뒤 node scripts/build-site.mjs 를 실행하세요.
+export const SCHEMA_STATEMENTS = ${JSON.stringify(stmts, null, 1)};
+export const SCHEMA_TABLES = ${JSON.stringify(stmts.filter(x => /^CREATE TABLE/i.test(x)).map(x => x.match(/CREATE TABLE IF NOT EXISTS (\w+)/i)[1]))};
+`);
+
 console.log(`공개 페이지 ${n}개 생성 · 기준 주소 ${base} · 자산 버전 ${assetVersion}`);
 const missing = Object.entries({ '운영 법인/상호(company)': SITE.operator.company, '문의 이메일(email)': SITE.operator.email, '개인정보 보호책임자(privacyOfficer)': SITE.operator.privacyOfficer }).filter(([, v]) => !v).map(([k]) => k);
 if (missing.length) console.log(`⚠ functions/_site/config.js 의 operator 항목이 비어 있습니다: ${missing.join(', ')} — 정식 공개 전에 채워 주세요.`);
