@@ -241,8 +241,9 @@ await expectOk(c.post(`/events/${ev.id}/attend`, { code: 'md11' }, { as: 'e' }))
 const evs = await expectOk(c.get('/events', { as: 'e' }));
 eq([evs[0].my_status, evs[0].attendance_code], ['attended', undefined], 'attended; code hidden from members');
 // 설정 변경으로 L2 자동 승급 조건을 낮추고 자산 진단 제출 → 자동 승급
-await expectOk(c.put('/admin/settings', { key: 'levels', value: { L2: { points: 30, require_asset_diag: true, require_event: 1, min_days: 0 } } }, { as: 'admin' }));
-await expectFail(c.put('/admin/settings', { key: 'evil', value: 1 }, { as: 'admin' }), 400, 'unknown setting key');
+await expectFail(c.put('/admin/settings', { key: 'levels', value: { L2: { points: 30 } } }, { as: 'admin' }), 400, 'settings change needs reason');
+await expectOk(c.put('/admin/settings', { key: 'levels', value: { L2: { points: 30, require_asset_diag: true, require_event: 1, min_days: 0 } }, reason: '테스트용 조건 완화' }, { as: 'admin' }));
+await expectFail(c.put('/admin/settings', { key: 'evil', value: 1, reason: 'x' }, { as: 'admin' }), 400, 'unknown setting key');
 eq((await c.get('/public/levels')).data.rules.L2.points, 30, 'settings override visible');
 const diag = await expectOk(c.post('/me/asset-diag', { time: '주 6시간', skills: '사진, 엑셀' }, { as: 'e' }));
 eq(diag.promoted, true, 'auto promotion to L2 after conditions met');
@@ -252,7 +253,7 @@ const dash = await expectOk(c.get('/admin/dashboard', { as: 'admin' }));
 ok(dash.first_sales === 0 && dash.completions === 4 && dash.queues.applications === 0, 'admin dashboard');
 await expectOk(c.post(`/admin/users/${C.id}`, { badge: 'first_sale', evidence: '카페 A 입금 확인' }, { as: 'admin' }));
 eq((await c.get('/public/stats')).data.first_sales, 1);
-ok((await expectOk(c.get('/admin/audit', { as: 'admin' }))).length > 10, 'audit log');
+ok((await expectOk(c.get('/admin/audit', { as: 'admin' }))).rows.length > 10, 'audit log');
 await expectFail(c.get('/admin/audit', { as: 'b' }), 403, 'staff only');
 const dB = await expectOk(c.get('/dashboard', { as: 'b' }));
 ok(dB.me && Array.isArray(dB.tasks) && Array.isArray(dB.feed), 'member dashboard');
@@ -317,5 +318,131 @@ const purged = db.db.prepare('SELECT name, email, status, invite_code FROM appli
 ok(purged.status === 'purged' && purged.email.endsWith('@deleted.invalid') && purged.invite_code === null, 'old application purged');
 eq(db.db.prepare("SELECT COUNT(*) AS c FROM consents WHERE subject_type = 'application' AND subject_id = ? AND ip IS NOT NULL", ).get(nj.id).c, 0, 'consent ip cleared');
 console.log('v1.1 동의·로그인 제한·내보내기·탈퇴·파기 ok');
+
+
+
+// 13. v1.2 — 운영본부 콘솔
+{
+  const { FakeD1 } = await import('./harness.js');
+  const { runMigrations } = await import('../functions/_lib/admin-routes.js');
+  const { readFileSync } = await import('node:fs');
+  // 예전(v1.1) 스키마 DB에 새 열이 붙는지 확인
+  const oldSql = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8')
+    .replace(/^\s*recruit_until TEXT,.*$/m, '').replace(/^\s*status TEXT NOT NULL DEFAULT 'scheduled',.*$/m, '').replace(/^\s*hidden INTEGER NOT NULL DEFAULT 0,\s+-- v1\.2.*$/m, '');
+  const old = new FakeD1(); old.db.exec(oldSql);
+  const cols = t => old.db.prepare(`PRAGMA table_info(${t})`).all().map(r => r.name);
+  ok(!cols('rounds').includes('recruit_until') && !cols('events').includes('status') && !cols('comments').includes('hidden'), 'old schema lacks v1.2 columns');
+  await runMigrations(old); await runMigrations(old);
+  ok(cols('rounds').includes('recruit_until') && cols('events').includes('status') && cols('comments').includes('hidden'), 'migrations add columns');
+  eq(old.db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get().c, 3, 'migrations recorded once');
+}
+eq((await expectOk(c.get('/me', { as: 'admin' }))).is_owner, true, 'setup account is owner');
+eq((await expectOk(c.get('/me', { as: 'b' }))).is_owner, false);
+// 운영진 지정: 운영자만 / 일반 운영진은 규칙·개인정보 내려받기 불가
+await expectFail(c.post('/admin/staff', { action: 'grant', who: 'b@test.kr' }, { as: 'b' }), 403, 'member cannot grant');
+await expectOk(c.post('/admin/staff', { action: 'grant', who: 'b@test.kr' }, { as: 'admin' }), 'grant staff');
+const staffList = await expectOk(c.get('/admin/staff', { as: 'b' }));
+ok(staffList.rows.length === 2 && staffList.me.is_owner === false && staffList.rows.find(r => r.is_owner).email === 'admin@machal.kr', 'staff list');
+await expectOk(c.get('/admin/dashboard', { as: 'b' }), 'staff sees dashboard');
+await expectFail(c.put('/admin/settings', { key: 'min_group', value: 2, reason: 'x' }, { as: 'b' }), 403, 'non-owner cannot change settings');
+await expectFail(c.get('/admin/export?table=users', { as: 'b' }), 403, 'non-owner cannot export PII');
+await expectOk(c.get('/admin/export?table=ledger', { as: 'b' }), 'staff can export ledger');
+await expectFail(c.post(`/admin/users/${admin.id}`, { status: 'dormant' }, { as: 'b' }), 403, 'staff cannot touch other staff');
+await expectFail(c.post(`/admin/users/${C.id}`, { role: 'staff' }, { as: 'b' }), 403, 'staff cannot change roles');
+await expectFail(c.post('/admin/staff', { action: 'remove_owner', who: 'admin@machal.kr' }, { as: 'admin' }), 400, 'last owner stays');
+await expectOk(c.post('/admin/staff', { action: 'make_owner', who: 'b@test.kr' }, { as: 'admin' }));
+eq((await expectOk(c.get('/me', { as: 'b' }))).is_owner, true, 'b became owner');
+await expectOk(c.post('/admin/staff', { action: 'remove_owner', who: 'b@test.kr' }, { as: 'admin' }));
+// 대시보드 v2
+const d2 = await expectOk(c.get('/admin/dashboard', { as: 'admin' }));
+ok(d2.kpi && d2.funnel.length === 7 && d2.trends.weeks.length === 8 && d2.trends.applications.length === 8 && Array.isArray(d2.risks) && d2.overdue && d2.me.is_owner, 'dashboard v2 shape');
+ok(d2.funnel[0][1] >= d2.funnel[1][1] - 1, 'funnel numbers');
+// 통합 검색 · 회원 목록/상세 · 메모
+const sr = await expectOk(c.get('/admin/search?q=test.kr', { as: 'admin' }));
+ok(sr.users.length > 0, 'search users');
+const ul = await expectOk(c.get('/admin/users?level=L3&sort=points', { as: 'admin' }));
+ok(ul.total >= 1 && ul.rows.every(r => r.level === 'L3'), 'user filter');
+const cd = await expectOk(c.get(`/admin/users/${C.id}`, { as: 'admin' }));
+ok(cd.user.id === C.id && cd.groups.length > 0 && cd.badges.some(x => x.code === 'first_sale') && cd.points.total > 0 && cd.progress && !('password_hash' in cd.user), 'user detail');
+const note = await expectOk(c.post('/admin/notes', { ref_type: 'user', ref_id: C.id, body: '첫 매출 인증 자료 원본은 메일로 받음' }, { as: 'b' }));
+eq((await expectOk(c.get(`/admin/users/${C.id}`, { as: 'admin' }))).notes.length, 1, 'note visible');
+await expectOk(c.del(`/admin/notes/${note.id}`, { as: 'admin' }), 'owner deletes note');
+// 그룹 모니터링
+const groups = await expectOk(c.get('/admin/groups', { as: 'admin' }));
+ok(groups.length >= 2 && groups.every(g => 'health' in g && 'checkin_rate' in g), 'groups list');
+const gd = await expectOk(c.get(`/admin/groups/${groups.find(g => g.type === 'group').id}`, { as: 'admin' }));
+ok(gd.members.length > 0 && Array.isArray(gd.checkins) && gd.ledger && Array.isArray(gd.history), 'group detail');
+await expectFail(c.post(`/admin/groups/${solo.id}/stage`, { stage: 'closed' }, { as: 'admin' }), 400, 'stage change needs reason');
+await expectOk(c.post(`/admin/groups/${solo.id}/stage`, { stage: 'closed', reason: '본인 요청으로 종료' }, { as: 'admin' }));
+eq((await expectOk(c.get(`/admin/groups/${solo.id}`, { as: 'admin' }))).challenge.stage, 'closed');
+// 지급 · 재원
+const pays = await expectOk(c.get('/admin/payouts?status=paid', { as: 'admin' }));
+ok(pays.rows.length > 0 && pays.totals.length > 0, 'payouts list');
+await expectFail(c.post('/admin/payouts/bulk', { status: 'paid', ids: [] }, { as: 'admin' }), 400, 'bulk needs ids');
+await expectOk(c.post('/admin/hq/expenses', { spent_on: today, category: 'casebook', amount: 120000, memo: '사례집 인쇄' }, { as: 'admin' }));
+await expectFail(c.post('/admin/hq/expenses', { spent_on: today, category: 'party', amount: 1 }, { as: 'admin' }), 400, 'hq category');
+const hq = await expectOk(c.get('/admin/hq', { as: 'admin' }));
+ok(hq.quarters.length >= 1 && hq.quarters[0].spent === 120000 && hq.quarters[0].income > 0, 'hq report');
+const pub = (await c.get('/public/hq-report')).data;
+ok(pub.quarters[0].by_category.casebook === 120000 && !('refund_hq' in pub.quarters[0]), 'public hq report');
+// 단체 알림
+{
+  let n = 0; for (const lv of ['L3', 'L4', 'L5']) n += (await expectOk(c.get(`/admin/users?level=${lv}&status=active`, { as: 'admin' }))).total;
+  eq((await expectOk(c.get('/admin/broadcast/preview?type=level&level=L3', { as: 'admin' }))).count, n, 'segment count');
+}
+await expectFail(c.post('/admin/broadcast', { type: 'challenge', title: 'x' }, { as: 'admin' }), 400, 'challenge segment needs id');
+const bc = await expectOk(c.post('/admin/broadcast', { type: 'all', title: '12월 마챌데이 장소 안내', body: '성수동으로 바뀝니다', link: '#/events', post_notice: true }, { as: 'admin' }));
+ok(bc.recipients >= 5 && bc.post_id, 'broadcast sent');
+ok((await expectOk(c.get('/me/notifications', { as: 'd' }))).some(n => n.title === '12월 마챌데이 장소 안내'), 'member got broadcast');
+eq((await expectOk(c.get('/admin/broadcasts', { as: 'admin' })))[0].recipients, bc.recipients);
+// 커뮤니티 관리
+await expectOk(c.post(`/posts/${po.id}/report`, { note: '광고 같아요' }, { as: 'd' }));
+const com = await expectOk(c.get('/admin/community', { as: 'admin' }));
+ok(com.posts.some(x => x.id === po.id) && com.counts.reported >= 1, 'reported posts');
+const cm = com.comments.find(x => x.post_id === po.id);
+await expectOk(c.post(`/admin/comments/${cm.id}`, { hidden: true, reason: '테스트' }, { as: 'admin' }));
+eq((await expectOk(c.get(`/posts/${po.id}`, { as: 'e' }))).comments.length, 0, 'hidden comment gone');
+await expectOk(c.post(`/admin/posts/${po.id}`, { hidden: true, clear_reports: true, notify_author: true, reason: '테스트 숨김' }, { as: 'admin' }));
+await expectFail(c.get(`/posts/${po.id}`, { as: 'e' }), 404, 'hidden post');
+await expectOk(c.post(`/admin/posts/${po.id}`, { hidden: false }, { as: 'admin' }));
+// 일정 관리 · 출석
+const ev2 = await expectOk(c.post('/admin/events', { type: 'seminar', title: '세금 기초 세미나', starts_at: '2027-01-10 19:00:00', location: '온라인' }, { as: 'admin' }));
+await expectOk(c.post(`/events/${ev2.id}/register`, {}, { as: 'd' }));
+await expectOk(c.post(`/admin/events/${ev2.id}/attendance`, { user_id: D.id, attended: true }, { as: 'admin' }));
+await expectOk(c.post(`/admin/events/${ev2.id}/attendance`, { user_id: D.id, attended: true }, { as: 'admin' }));
+eq(db.db.prepare("SELECT COUNT(*) AS c FROM points_ledger WHERE user_id = ? AND action = 'event_attend' AND ref_id = ?").get(D.id, ev2.id).c, 1, 'attendance points once');
+const evd = await expectOk(c.get(`/admin/events/${ev2.id}`, { as: 'admin' }));
+eq(evd.registrations[0].status, 'attended');
+await expectOk(c.put(`/admin/events/${ev2.id}`, { status: 'cancelled', reason: '강사 일정 변경' }, { as: 'admin' }));
+ok(!(await expectOk(c.get('/events', { as: 'd' }))).some(x => x.id === ev2.id), 'cancelled event hidden for members');
+ok(!(await c.get('/public/events')).data.some(x => x.id === ev2.id), 'cancelled hidden publicly');
+await expectFail(c.post(`/events/${ev2.id}/register`, {}, { as: 'e' }), 400, 'cannot register cancelled');
+ok((await expectOk(c.get('/me/notifications', { as: 'd' }))).some(n => n.title === '신청한 일정이 취소됐습니다'), 'cancel notice');
+// 라운드 모집 · 신청 일괄 승인
+const nextYear = String(new Date().getFullYear() + 1);
+await expectOk(c.put(`/admin/rounds/${round.id}`, { status: 'active' }, { as: 'admin' }));
+eq((await c.get('/public/stats')).data.round, null, 'no open round');
+await expectOk(c.post('/admin/rounds', { name: '2기', start_date: nextYear + '-03-01', end_date: nextYear + '-05-24', status: 'open', recruit_until: nextYear + '-02-20' }, { as: 'admin' }));
+eq((await c.get('/public/stats')).data.round.name, '2기', 'open round public');
+for (const k of ['g1', 'g2']) await expectOk(c.post('/apply', { name: k, email: `${k}@test.kr`, consent_public: true, consent_privacy: true }));
+const pend = await expectOk(c.get('/admin/applications?status=pending&q=g', { as: 'admin' }));
+const bulk = await expectOk(c.post('/admin/applications/bulk', { ids: pend.map(a => a.id) }, { as: 'admin' }));
+ok(bulk.approved.length === 2 && bulk.approved.every(a => /^MC-/.test(a.invite_code)), 'bulk approve');
+// 감사 로그 필터 · 시스템 · 백업 · 규칙 되돌리기
+const au = await expectOk(c.get('/admin/audit?action=broadcast', { as: 'admin' }));
+ok(au.rows.length === 1 && au.actors.length >= 1, 'audit filter');
+const au2 = await expectOk(c.get('/admin/audit?limit=5', { as: 'admin' }));
+ok(au2.rows.length === 5 && au2.next_before, 'audit paging');
+ok((await expectOk(c.get(`/admin/audit?limit=5&before=${au2.next_before}`, { as: 'admin' }))).rows[0].id < au2.next_before, 'audit next page');
+const sys = await expectOk(c.get('/admin/system', { as: 'b' }));
+ok(sys.tables.length === 38 && sys.migrations.length === 3, 'system info');
+await expectFail(c.get('/admin/backup', { as: 'b' }), 403, 'backup owner only');
+const bk = await expectOk(c.get('/admin/backup', { as: 'admin' }));
+ok(bk.tables.users.length > 0 && !('password_hash' in bk.tables.users[0]) && !bk.tables.sessions, 'backup safe');
+await expectOk(c.del('/admin/settings/levels', { as: 'admin' }));
+eq((await c.get('/public/levels')).data.rules.L2.points, 300, 'settings reset to default');
+await expectOk(c.post('/admin/staff', { action: 'revoke', who: 'b@test.kr' }, { as: 'admin' }));
+await expectFail(c.get('/admin/dashboard', { as: 'b' }), 403, 'revoked staff');
+console.log('v1.2 운영본부 콘솔 ok');
 
 console.log('\nAPI 전체 흐름 테스트 통과 ✔');

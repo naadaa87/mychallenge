@@ -459,3 +459,8 @@ pre.template { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular,
 @media print { .sh, .sf, .cta, .side, .article-foot { display: none !important; } .article-layout { display: block; } body { font-size: 12pt; } }
 /* 문장 안 링크는 밑줄로 구분 (색만으로 구분하지 않기) */
 .f small a, .privacy-summary a, .faq-links a, .sources a, .empty-box a, .apply-done a, .legal a { text-decoration: underline; text-underline-offset: 3px; }
+
+/* v1.2 모집 안내 */
+.round-note { display: inline-flex; align-items: center; gap: 8px; margin: 14px 0 0; padding: 7px 14px; border-radius: 999px; background: var(--blue-50); border: 1px solid var(--blue-100); color: var(--blue-700); font-weight: 700; font-size: .92rem; }
+.round-note::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--blue); flex: none; }
+.apply-main .round-note { margin: 0 0 16px; }

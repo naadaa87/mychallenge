@@ -1,4 +1,4 @@
--- 마이챌린지(마챌) D1 스키마 v1.1
+-- 마이챌린지(마챌) D1 스키마 v1.2
 -- Cloudflare D1 콘솔 또는 `wrangler d1 execute machal-db --remote --file=schema.sql` 로 실행
 
 CREATE TABLE IF NOT EXISTS users (
@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS rounds (
   start_date TEXT NOT NULL,
   end_date TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'planning',   -- planning | open | active | closed
+  recruit_until TEXT,                       -- 모집 마감일 (v1.2)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -297,6 +298,7 @@ CREATE TABLE IF NOT EXISTS comments (
   post_id INTEGER NOT NULL,
   author_id INTEGER NOT NULL,
   body TEXT NOT NULL,
+  hidden INTEGER NOT NULL DEFAULT 0,          -- v1.2
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -317,6 +319,7 @@ CREATE TABLE IF NOT EXISTS events (
   min_level TEXT NOT NULL DEFAULT 'L1',
   description TEXT,
   attendance_code TEXT,
+  status TEXT NOT NULL DEFAULT 'scheduled',  -- scheduled | cancelled (v1.2)
   created_by INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -389,3 +392,54 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 );
 CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts(email, created_at);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip, created_at);
+
+-- ---------- v1.2 운영본부 콘솔 ----------
+-- 기존 표에 열을 더할 때 쓰는 마이그레이션 기록 (functions/_lib/admin-routes.js 의 MIGRATIONS)
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 운영자(최고 관리자). 운영진(users.role = 'staff') 중 이 표에 있는 사람만 규칙 변경·운영진 임명·개인정보 내려받기를 한다
+CREATE TABLE IF NOT EXISTS admin_roles (
+  user_id INTEGER PRIMARY KEY,
+  role TEXT NOT NULL DEFAULT 'owner',
+  granted_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 운영진 내부 메모 (회원·챌린지·가입 신청에 붙인다. 회원에게는 보이지 않는다)
+CREATE TABLE IF NOT EXISTS admin_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref_type TEXT NOT NULL,                    -- user | challenge | application
+  ref_id INTEGER NOT NULL,
+  author_id INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_admin_notes_ref ON admin_notes(ref_type, ref_id);
+
+-- 운영본부가 보낸 단체 알림 기록
+CREATE TABLE IF NOT EXISTS broadcasts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  author_id INTEGER NOT NULL,
+  segment TEXT NOT NULL,                     -- JSON {type, level, challenge_id, round_id}
+  title TEXT NOT NULL,
+  body TEXT,
+  link TEXT,
+  recipients INTEGER NOT NULL DEFAULT 0,
+  post_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 운영본부 재원 지출 기록 (운영본부 몫의 쓰임을 분기마다 공개)
+CREATE TABLE IF NOT EXISTS hq_expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  spent_on TEXT NOT NULL,
+  category TEXT NOT NULL,                    -- casebook | mentors | website | advance | other
+  amount INTEGER NOT NULL,
+  memo TEXT,
+  evidence TEXT,
+  created_by INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -56,6 +56,31 @@
     }).catch(() => {});
   }
 
+  // 모집 중인 라운드 안내 (홈·가입 신청)
+  const roundEls = $$('[data-live="round"]');
+  if (roundEls.length) {
+    getJson('/public/stats').then(s => {
+      const r = s.round; if (!r) return;
+      const md = d => { const m = String(d || '').match(/^\d{4}-(\d{2})-(\d{2})/); return m ? `${Number(m[1])}월 ${Number(m[2])}일` : ''; };
+      const text = `${r.name} 모집 중${r.recruit_until ? ` · ${md(r.recruit_until)} 마감` : ''} · ${md(r.start_date)} 시작`;
+      roundEls.forEach(el => { el.textContent = text; el.hidden = false; });
+    }).catch(() => {});
+  }
+
+  // 수익 배분 규칙: 운영본부 몫과 쓰임 (분기별 공개)
+  const hqSec = $('[data-live="hq"]');
+  if (hqSec) {
+    getJson('/public/hq-report').then(d => {
+      const q = (d.quarters || []).filter(r => r.income || r.spent);
+      if (!q.length) return;
+      const won = n => Number(n || 0).toLocaleString('ko-KR') + '원';
+      const cats = d.categories || {};
+      const ql = s => String(s).replace(/^(\d{4})-Q(\d)$/, '$1년 $2분기');
+      hqSec.innerHTML = `<p>최근 ${q.length}개 분기의 기록입니다. 금액은 정산 검수가 끝난 건 기준이고, 쓴 돈은 영수증과 함께 운영본부가 보관합니다.</p>
+        <div class="table-wrap"><table><thead><tr><th>분기</th><th class="num">운영본부 몫</th><th class="num">정산 대행 수수료</th><th class="num">쓴 돈</th><th>쓴 곳</th></tr></thead><tbody>${q.map(r => `<tr><td>${ql(r.quarter)}</td><td class="num">${won(r.hq_share)}</td><td class="num">${won(r.fee)}</td><td class="num">${won(r.spent)}</td><td>${Object.entries(r.by_category || {}).filter(([, v]) => v).map(([k, v]) => `${cats[k] || k} ${won(v)}`).join(' · ') || '-'}</td></tr>`).join('')}</tbody></table></div>`;
+    }).catch(() => {});
+  }
+
   // 등급 페이지: 운영본부가 바꾼 기준값 반영
   const lvSec = $('[data-live="levels"]');
   if (lvSec) {

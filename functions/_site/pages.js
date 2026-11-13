@@ -125,6 +125,7 @@ export function staticPages() {
       <h1>사이드프로젝트,<br>12주 동안 함께<br><em>첫 매출까지</em></h1>
       <p class="lead">마이챌린지(마챌)는 혼자 미뤄 온 사이드프로젝트를 관심사가 비슷한 사람들과 그룹으로 실행하는 모임입니다. 매주 15분 체크인으로 진행을 확인하고, 번 돈은 시작 전에 서명한 합의서대로 나누며, 끝나면 결과를 프로젝트 페이퍼로 남깁니다.</p>
       <div class="hero-actions"><a class="btn btn-primary btn-lg" href="/apply/">가입 신청하기</a><a class="btn btn-line btn-lg" href="/how-it-works/">12주 운영 방식 보기</a></div>
+      <p class="round-note" data-live="round" hidden></p>
       <ul class="hero-facts"><li><b>12주</b>한 라운드</li><li><b>4~8명</b>한 그룹</li><li><b>15분</b>주간 체크인</li></ul>
     </div>
     ${heroVisual}
@@ -405,6 +406,9 @@ ${h.cta('12주 동안 한 번, 끝까지 가 보기', '혼자 미뤄 둔 프로�
   <li>그룹 순수익이 0 이하라면 운영본부 몫도 없습니다. 받은 몫의 합계와 쓴 곳(사례집과 쇼케이스, 세미나 강사비·오피스아워 수당, 홈페이지 운영, 다음 라운드 선지원)은 분기마다 공개합니다.</li>
 </ul>
 
+<h2 id="hq-report">운영본부 몫과 쓰임</h2>
+<div data-live="hq"><p>운영본부가 정산에서 받은 몫과 정산 대행 수수료, 그 돈을 어디에 썼는지를 분기마다 이 자리에 공개합니다. 첫 정산이 끝나기 전이라 아직 공개할 숫자가 없습니다.</p></div>
+
 <h2 id="contribution">기여율</h2>
 <p>그룹원 풀은 실제 기여율대로 나눕니다. 기여율 초안은 그룹장이 확인한 완료 기록에 역할별 가중치를 곱해 홈페이지가 자동으로 만듭니다.</p>
 <div class="table-wrap"><table>
@@ -561,6 +565,7 @@ ${h.cta('궁금한 게 풀렸다면', '신청서는 10분이면 씁니다. 경�
     body: `${h.pageHero('가입 신청', '마이챌린지 가입 신청', '솔직하게 적어 주세요. 경력이나 실적은 심사 기준이 아니고, 쓸 수 있는 시간과 함께하는 방식에 대한 생각을 봅니다.', applyCrumbs)}
 <div class="wrap apply-layout">
 <div class="apply-main">
+  <p class="round-note" data-live="round" hidden></p>
   <ol class="apply-steps"><li><b>신청서 제출</b><span>10분</span></li><li><b>운영본부 확인</b><span>3일 안</span></li><li><b>초대 코드 이메일</b><span>승인 시</span></li><li><b>가입·오리엔테이션</b><span>5분</span></li></ol>
   <form class="apply-form" id="apply-form" novalidate>
     <fieldset><legend>기본 정보</legend>

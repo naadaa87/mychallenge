@@ -49,8 +49,12 @@ ok((await ev('location.hash')) === '#/dashboard', '/app/ 첫 화면은 로그인
 await send('Network.clearBrowserCookies');
 await go(BASE + '/');
 ok(await ev(`!document.querySelector('[data-live=stats]').hidden && /\\d/.test(document.querySelector('[data-stat=members]').textContent)`), '홈의 실제 숫자 섹션이 채워진다(챌린지 기록이 있을 때)');
+ok(await ev(`(() => { const r = document.querySelector('[data-live=round]'); return !r.hidden && r.textContent.includes('모집 중'); })()`), '모집 중인 라운드가 있으면 홈에 안내가 뜬다');
+await go(BASE + '/rules/');
+ok(await ev(`!!document.querySelector('[data-live=hq] table') && document.querySelector('[data-live=hq]').innerText.includes('사례집')`), '수익 배분 규칙 페이지에 운영본부 몫과 쓰임이 공개된다');
 await go(BASE + '/levels/');
-ok((await ev(`document.querySelector('[data-rule="L2.points"]').textContent`)) === '30', '등급 페이지가 운영본부 설정값(테스트 DB: 30점)을 반영한다');
+const lvPts = String((await (await fetch(BASE + '/api/public/levels')).json()).rules.L2.points);
+ok((await ev(`document.querySelector('[data-rule="L2.points"]').textContent`)) === lvPts, `등급 페이지가 운영본부 설정값(지금 ${lvPts}점)을 반영한다`);
 await go(BASE + '/app/');
 await wait(800);
 ok((await ev('location.hash')) === '#/login', '/app/ 첫 화면은 비로그인 상태면 로그인');

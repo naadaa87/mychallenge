@@ -54,6 +54,7 @@ function renderChrome() {
     chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.4A8 8 0 1 1 21 12z"/></svg>',
     book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z"/><path d="M20 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/></svg>',
     user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+    desk: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
   };
   if (!me) {
     nav.innerHTML = `<a href="/about/">마챌 소개</a><a href="/how-it-works/">운영 방식</a><a href="/levels/">등급</a><a href="/papers/">프로젝트 페이퍼</a><a href="/guide/">가이드</a>`;
@@ -62,7 +63,7 @@ function renderChrome() {
   } else {
     nav.innerHTML = `<a href="#/dashboard">홈</a><a href="#/challenges">챌린지</a><a href="#/community">커뮤니티</a><a href="#/papers">페이퍼</a><a href="#/events">일정</a>${me.role === 'staff' ? '<a href="#/admin">운영</a>' : ''}`;
     right.innerHTML = `<a class="bell" href="#/notifications" aria-label="알림">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>'}${me.unread ? `<span class="dot">${me.unread > 9 ? '9+' : me.unread}</span>` : ''}</a><a class="avatar" href="#/me" title="${esc(me.nickname)}">${esc((me.nickname || '?').slice(0, 1))}</a>`;
-    bottom.innerHTML = `<a href="#/dashboard">${ic.home}홈</a><a href="#/challenges">${ic.flag}챌린지</a><a href="#/community">${ic.chat}커뮤니티</a><a href="#/papers">${ic.book}페이퍼</a><a href="#/me">${ic.user}나</a>`;
+    bottom.innerHTML = `<a href="#/dashboard">${ic.home}홈</a><a href="#/challenges">${ic.flag}챌린지</a><a href="#/community">${ic.chat}커뮤니티</a>${me.role === 'staff' ? `<a href="#/admin">${ic.desk}운영</a>` : `<a href="#/papers">${ic.book}페이퍼</a>`}<a href="#/me">${ic.user}나</a>`;
   }
   navActive();
 }

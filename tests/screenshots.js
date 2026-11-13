@@ -70,9 +70,16 @@ await shot('#/levels', 'app-levels-redirect');
 await shot('#/login', 'login');
 await shot('#/register', 'register');
 await login('admin@machal.kr', 'adminpass1');
-await shot('#/admin', 'admin-home');
-await shot('#/admin/settings', 'admin-settings');
-await shot('#/admin/users', 'admin-users');
+await shot('#/admin', 'admin-home', { full: true });
+for (const [h, n, full] of [
+  ['#/admin/applications?status=joined', 'admin-applications'], ['#/admin/challenges', 'admin-challenges'], ['#/admin/agreements', 'admin-agreements'], ['#/admin/settlements', 'admin-settlements'],
+  ['#/admin/papers', 'admin-papers'], ['#/admin/promotions', 'admin-promotions'], ['#/admin/disputes', 'admin-disputes'],
+  ['#/admin/users', 'admin-users'], ['#/admin/users/3', 'admin-user', true], ['#/admin/staff', 'admin-staff'],
+  ['#/admin/groups?view=all', 'admin-groups'], ['#/admin/groups/1', 'admin-group', true], ['#/admin/rounds', 'admin-rounds'],
+  ['#/admin/payouts?status=paid', 'admin-payouts'], ['#/admin/hq', 'admin-hq'],
+  ['#/admin/broadcast', 'admin-broadcast'], ['#/admin/community?view=recent', 'admin-community'], ['#/admin/events?when=past', 'admin-events'], ['#/admin/events/1', 'admin-event'],
+  ['#/admin/settings', 'admin-settings', true], ['#/admin/audit', 'admin-audit'], ['#/admin/data', 'admin-data'],
+]) await shot(h, n, { full: !!full });
 await logout();
 await login('a@test.kr', 'password1');
 await shot('#/dashboard', 'dashboard');

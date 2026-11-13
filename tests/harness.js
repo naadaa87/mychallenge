@@ -44,6 +44,7 @@ export async function makeClient(db) {
   }
   return {
     get: (p, o) => call('GET', p, undefined, o), post: (p, b = {}, o) => call('POST', p, b, o), put: (p, b = {}, o) => call('PUT', p, b, o),
+    del: (p, o) => call('DELETE', p, undefined, o),
     jar,
   };
 }
