@@ -51,7 +51,7 @@ export async function onRequestGet({ request, env, params }) {
       path: '/papers/', title: '프로젝트 페이퍼: 12주 사이드프로젝트의 숫자와 회고', ogImage: '/og/papers.png',
       description: '마이챌린지 그룹 챌린지가 12주 동안 무엇을 만들고 얼마나 팔았으며 무엇을 배웠는지 남긴 프로젝트 페이퍼입니다. 매출이 없었던 챌린지와 멈춘 챌린지도 함께 공개합니다.',
       crumbs, jsonld: [ld],
-      body: `${h.pageHero('프로젝트 페이퍼', '잘된 길도, 멈춘 길도 기록으로 남깁니다', '그룹이 외부 공개에 동의한 페이퍼의 요약입니다. 매출 유무, 외부 고객 수 구간, 투입 시간은 모든 페이퍼에서 공개합니다. 전문은 어치버(L3) 이상 회원이 볼 수 있습니다.', crumbs)}
+      body: `${h.pageHero('프로젝트 페이퍼', '잘된 길도, 멈춘 길도 기록으로 남깁니다', '그룹이 외부 공개에 동의한 페이퍼의 요약입니다. 매출 유무, 외부 고객 수 구간, 투입 시간은 모든 페이퍼에서 공개합니다. 전문은 어치버(L3) 이상 회원이 볼 수 있습니다.', crumbs, '', { name: 'spot-completed-work', alt: '', frame: false, cls: 'ph-spot' })}
 <section class="sec sec-tight"><div class="wrap">
 ${list.length ? `<div class="paper-list">${list.map(card).join('')}</div>` : `<div class="empty-box"><b>아직 공개된 페이퍼가 없습니다</b>첫 라운드가 끝나면 이곳이 채워집니다. 쓰는 방식이 궁금하다면 <a href="/guide/project-paper/">프로젝트 페이퍼 쓰는 법</a>을 먼저 읽어 보세요.</div>`}
 </div></section>

@@ -2,6 +2,7 @@
 import { SITE } from './config.js';
 import { esc, h, breadcrumbHtml } from './layout.js';
 import { GUIDES, CATEGORIES, guideBySlug } from './guides.js';
+import { guideArt, guideCard } from './art.js';
 
 const dateKo = v => { const [y, m, d] = v.split('-').map(Number); return `${y}년 ${m}월 ${d}일`; };
 export function readMinutes(g) {
@@ -41,6 +42,7 @@ export function guidePage(g) {
     <h1>${esc(g.title)}</h1>
     <p class="article-lead">${esc(g.description)}</p>
     <p class="article-meta"><span>${esc(SITE.fullName)} 운영본부</span><span><time datetime="${g.published}">${dateKo(g.published)}</time>${g.modified !== g.published ? ` · 고친 날 <time datetime="${g.modified}">${dateKo(g.modified)}</time>` : ''}</span><span>${minutes}분 분량</span></p>
+    ${guideArt(g.slug) ? `<figure class="article-cover">${guideArt(g.slug, { eager: true, sizes: '(min-width: 1040px) 720px, 100vw' })}</figure>` : ''}
   </header>
   ${toc}
   <div class="article-body">${g.body}</div>
@@ -52,7 +54,7 @@ export function guidePage(g) {
   <div class="side-box side-cta"><b>읽었다면 해 볼 차례</b><p>마이챌린지는 12주 동안 그룹으로 사이드프로젝트를 실행하는 모임입니다.</p><a class="btn btn-primary" href="/apply/">가입 신청</a><a class="side-link" href="/how-it-works/">운영 방식 보기</a></div>
 </aside>
 </div>
-${related.length ? `<section class="sec sec-tint"><div class="wrap"><div class="sec-head"><p class="eyebrow">이어서 읽기</p><h2>이 글과 함께 많이 읽는 가이드</h2></div><div class="g-grid g-grid-3">${related.map(r => `<a class="g-card" href="/guide/${r.slug}/"><span class="g-cat">${CATEGORIES[r.category]}</span><h3>${esc(r.title)}</h3><p>${esc(r.summary)}</p><span class="g-more">읽어 보기</span></a>`).join('')}</div></div></section>` : ''}
+${related.length ? `<section class="sec sec-tint"><div class="wrap"><div class="sec-head"><p class="eyebrow">이어서 읽기</p><h2>이 글과 함께 많이 읽는 가이드</h2></div><div class="g-grid g-grid-3">${related.map(guideCard).join('')}</div></div></section>` : ''}
 ${h.cta('혼자 읽고 끝내지 않으려면', '다음 라운드에서 관심사가 비슷한 사람들과 12주 동안 직접 해 보세요.')}`,
   };
 }

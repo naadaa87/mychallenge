@@ -1,6 +1,8 @@
 // 공개 사이트의 고정 페이지들. 빌드 스크립트가 public/<path>/index.html 로 만든다.
 import { SITE } from './config.js';
-import { esc, h, orgLd, websiteLd } from './layout.js';
+import { esc, h, img, orgLd, websiteLd } from './layout.js';
+import { guideCard, lvIcon, levelStrip, badgeGrid, fieldGrid } from './art.js';
+export { guideCard };
 import { GUIDES, CATEGORIES, guideBySlug } from './guides.js';
 import { legalPages } from './legal.js';
 import { DEFAULT_SETTINGS as D, LEVEL_NAMES, FIELDS } from '../_lib/rules.js';
@@ -10,9 +12,6 @@ const won = n => n.toLocaleString('ko-KR') + '원';
 const P = D.presets;
 
 // ───────────── 재사용 조각 ─────────────
-export function guideCard(g) {
-  return `<a class="g-card" href="/guide/${g.slug}/"><span class="g-cat">${CATEGORIES[g.category]}</span><h3>${esc(g.title)}</h3><p>${esc(g.summary)}</p><span class="g-more">읽어 보기</span></a>`;
-}
 const guideLink = slug => { const g = guideBySlug[slug]; return g ? `<a href="/guide/${slug}/">${esc(g.short)}</a>` : ''; };
 
 const waterfall = `<ol class="flow">
@@ -43,22 +42,24 @@ const LADDER = [
   ['L4', '리더', '라운드 2회 완주 + 리더 교육', '그룹 챌린지 제안과 운영'],
   ['L5', '마스터', '그룹장으로 성공 챌린지 2건 또는 반복 매출', '심사·멘토링 참여'],
 ];
-const ladder = `<ol class="ladder">${LADDER.map(([c, n, how, can]) => `<li><span class="lv lv-${c}">${c}</span><div><b>${n}</b><small>${how}</small></div><p>${can}</p></li>`).join('')}</ol>`;
+const ladder = `<ol class="ladder">${LADDER.map(([c, n, how, can]) => `<li><span class="ladder-ic">${lvIcon(c, 48)}<span class="lv lv-${c}">${c}</span></span><div><b>${n}</b><small>${how}</small></div><p>${can}</p></li>`).join('')}</ol>`;
 
-const heroVisual = `<div class="hero-visual" role="img" aria-label="그룹 공간 화면 예시: 7주차 진행, 마일스톤, 주간 체크인, 배분 합의">
-  <div class="mock">
-    <div class="mock-head"><span class="chip">서비스·프리랜싱</span><span class="chip chip-blue">진행 중 · 7주차</span></div>
-    <b class="mock-title">동네 카페 세 곳 SNS 운영 대행</b>
-    <div class="mock-progress"><span style="width:58%"></span></div>
-    <ul class="mock-ms">
-      <li class="done">4주 선언</li><li class="done">7주 첫 공개</li><li>8주 교차 피드백</li><li>12주 데모데이</li>
-    </ul>
-    <div class="mock-row"><span>이번 주 체크인</span><b>4 / 5 제출</b></div>
-  </div>
-  <div class="mock mock-sm mock-a"><small>완료 기록 · 그룹장 확인</small><b>카페 B 샘플 게시물 4개 전달</b></div>
-  <div class="mock mock-sm mock-b"><small>배분 합의서 · 전원 서명</small><b>10 · 30 · 60</b></div>
-  <p class="mock-note">예시 화면입니다</p>
+const heroVisual = `<div class="hero-visual hero-art">
+  <div class="hero-pic">${img('hero-group-table', '그룹원 네 명이 테이블에 모여 노트북으로 작업하고, 12주 진행표에 메모를 붙이고, 상품 상자를 포장하는 모습', { eager: true })}</div>
+  <div class="mock mock-sm mock-a" aria-hidden="true"><small>이번 주 체크인 · 7주차</small><b>5명 중 4명 제출</b></div>
+  <div class="mock mock-sm mock-b" aria-hidden="true"><small>배분 합의서 · 전원 서명</small><b>10 · 30 · 60</b></div>
 </div>`;
+
+// 홈 '라운드 동안 보내는 시간' 장면들
+const SCENES = [
+  ['act-seminar', '실전 세미나', '상세 페이지, 가격, 첫 판매처럼 바로 써먹을 주제를 해 본 사람에게 듣습니다.', '강사 앞에서 회원들이 노트를 펴고 세미나를 듣는 모습'],
+  ['act-field-visit', '동네 현장 탐방', '팔 곳과 살 사람을 책상 밖에서 찾습니다. 가게를 돌며 묻고, 사진을 찍고, 적습니다.', '지도를 들고 상가를 둘러보며 메모하고 사진을 찍는 네 사람'],
+  ['act-customer-interview', '고객 인터뷰', '만들기 전에 먼저 물어봅니다. 살 사람이 실제로 무엇에 돈을 쓰는지 확인합니다.', '카페 테이블에서 시제품 가방을 보여 주며 이야기를 듣는 모습'],
+  ['act-peer-feedback', '교차 피드백', '8주차에는 다른 그룹과 결과물을 바꿔 보고 냉정한 의견을 주고받습니다.', '테이블에 둘러앉아 서로의 시안을 보며 의견을 나누는 그룹'],
+  ['act-popup-store', '첫 판매', '온라인이든 플리마켓이든 모르는 사람에게 처음 팔아 보는 날이 옵니다.', '천막 매대에서 에코백과 노트를 손님에게 보여 주는 그룹원들'],
+  ['act-demo-day', '데모데이', '12주 동안 만든 것과 숫자를 발표합니다. 매출이 없어도, 멈췄어도 발표합니다.', '화면에 결과물을 띄우고 회원들 앞에서 발표하는 그룹장'],
+];
+const scenes = `<div class="scene-grid">${SCENES.map(([n, t, d, alt]) => `<figure class="scene">${img(n, alt)}<figcaption><b>${t}</b><span>${d}</span></figcaption></figure>`).join('')}</div>`;
 
 const PAINS = [
   ['퇴근 후 혼자 하다 보면 3주째에 멈춥니다', '마감도, 물어볼 사람도 없어서입니다. 매주 15분 체크인과 그룹장이 그 빈자리를 채웁니다.', 'why-group'],
@@ -169,8 +170,16 @@ export function staticPages() {
 </section>
 
 <section class="sec sec-tint">
+  <div class="wrap">
+    <div class="sec-head row"><div><p class="eyebrow">라운드 동안 보내는 시간</p><h2>책상 앞에서만 하지 않습니다</h2></div><a class="more" href="/programs/">프로그램 전체 보기</a></div>
+    ${scenes}
+  </div>
+</section>
+
+<section class="sec">
   <div class="wrap two-col">
     <div>
+      <div class="spot spot-left">${img('spot-agreement', '')}</div>
       <p class="eyebrow">수익 배분</p>
       <h2>돈과 소유는 시작 전에 정합니다</h2>
       <p>그룹 프로젝트가 깨지는 건 대개 돈이 들어온 뒤입니다. 마챌은 배분 순서와 비율, 소유권, 예산 상한을 합의서에 적고 그룹원 전원이 서명한 뒤에만 챌린지를 시작합니다. 비용을 낸 사람이 먼저 돌려받고, 그다음에 몫을 나눕니다.</p>
@@ -181,7 +190,7 @@ export function staticPages() {
   </div>
 </section>
 
-<section class="sec">
+<section class="sec sec-tint">
   <div class="wrap">
     <div class="sec-head row"><div><p class="eyebrow">회원 등급</p><h2>등급은 돈이 아니라 실행 기록으로 오릅니다</h2></div><a class="more" href="/levels/">등급과 포인트 안내</a></div>
     ${ladder}
@@ -190,7 +199,7 @@ export function staticPages() {
 
 <section class="sec sec-stats" data-live="stats" hidden>
   <div class="wrap">
-    <div class="sec-head"><p class="eyebrow">있는 그대로의 숫자</p><h2>성공한 사례만 골라 보여 주지 않습니다</h2></div>
+    <div class="sec-head"><div class="spot spot-bars">${img('spot-honest-results', '')}</div><p class="eyebrow">있는 그대로의 숫자</p><h2>성공한 사례만 골라 보여 주지 않습니다</h2></div>
     <div class="stat-row">
       <div><b data-stat="members">-</b><span>활동 회원</span></div>
       <div><b data-stat="active_challenges">-</b><span>진행 중인 챌린지</span></div>
@@ -216,7 +225,7 @@ export function staticPages() {
   </div>
 </section>
 
-${h.cta('지원서는 10분이면 씁니다', '신청서를 보내면 운영본부가 3일 안에 확인하고 초대 코드를 보내 드립니다. 첫 달은 라운드를 지켜보는 것부터 시작해도 됩니다.')}
+${h.cta('지원서는 10분이면 씁니다', '신청서를 보내면 운영본부가 3일 안에 확인하고 초대 코드를 보내 드립니다. 첫 달은 라운드를 지켜보는 것부터 시작해도 됩니다.', undefined, undefined, { name: 'cta-walking', alt: '강변 산책로를 함께 걸으며 이야기하는 네 사람' })}
 `,
   });
 
@@ -228,7 +237,7 @@ ${h.cta('지원서는 10분이면 씁니다', '신청서를 보내면 운영본�
     description: '마이챌린지(마챌)는 사이드프로젝트를 혼자 미루던 사람들이 그룹으로 실행하고 결과를 숫자로 남기는 모임입니다. 만든 이유, 세 가지 원칙, 하는 일과 하지 않는 일, 운영본부의 역할을 소개합니다.',
     crumbs: aboutCrumbs,
     jsonld: [base => ({ '@context': 'https://schema.org', '@type': 'AboutPage', name: '마이챌린지(마챌) 소개', url: base + '/about/', about: { '@id': base + '/#org' } }), orgLd],
-    body: `${h.pageHero('마챌 소개', '각자의 챌린지를, 함께 끝까지', '마이챌린지는 "내 도전"이라는 뜻입니다. 모임의 주인공은 운영자나 강사가 아니라 각자의 프로젝트를 가진 회원입니다.', aboutCrumbs)}
+    body: `${h.pageHero('마챌 소개', '각자의 챌린지를, 함께 끝까지', '마이챌린지는 "내 도전"이라는 뜻입니다. 모임의 주인공은 운영자나 강사가 아니라 각자의 프로젝트를 가진 회원입니다.', aboutCrumbs, '', { name: 'ph-about', alt: '텃밭 상자에 모종을 심고 물을 주며 함께 가꾸는 네 사람' })}
 <div class="wrap article-layout">
 <article class="prose">
 <h2 id="why">왜 만들었나</h2>
@@ -237,6 +246,7 @@ ${h.cta('지원서는 10분이면 씁니다', '신청서를 보내면 운영본�
 <p>마이챌린지는 이 세 가지 문제, 즉 <b>혼자 하면 멈추는 문제, 함께하면 돈으로 다투는 문제, 불안을 파는 시장</b>에 대한 답으로 만들었습니다. 강의를 파는 대신 실행할 구조를 만들고, 다툼을 사람 사이의 선의에 맡기는 대신 규칙과 기록으로 정합니다.</p>
 
 <h2 id="principles">세 가지 원칙</h2>
+${h.figure('spot-completed-work', '', '', 'fig-spot fig-right')}
 <div class="principles">
   <div><b>① 수익을 보장하지 않습니다</b><p>마챌은 돈을 벌게 해 주는 곳이 아니라 벌어 보려는 사람들이 모여 실행하는 곳입니다. 대신 과정과 결과를 숫자로 공개합니다. 매출 없이 끝난 챌린지와 멈춘 챌린지도 함께 공개합니다.</p></div>
   <div><b>② 실행한 사람이 발언합니다</b><p>조언보다 기록이 먼저입니다. 계획이 아니라 이번 주에 끝낸 일을 적고, 그 기록이 발언권과 등급, 수익 배분의 근거가 됩니다.</p></div>
@@ -257,8 +267,10 @@ ${h.cta('지원서는 10분이면 씁니다', '신청서를 보내면 운영본�
 </table></div>
 
 <h2 id="who">어떤 사람들이 모이나</h2>
+${h.figure('act-content-video', '한 사람은 카메라로 촬영하고, 한 사람은 노트를 들고 설명하고, 한 사람은 편집하는 콘텐츠 제작 모습', '퇴근 후에 모여 각자 잘하는 일을 나눠 맡습니다.')}
 <p>회사에 다니면서 퇴근 후와 주말을 쓰는 직장인, 본업과 별개로 자기 상품을 만들어 보려는 프리랜서, 가게 밖에서 새로운 매출을 찾는 자영업자가 중심입니다. 처음부터 큰 사업을 하려는 사람보다, 12주 안에 모르는 사람에게 한 번 팔아 보는 것을 목표로 삼는 사람에게 잘 맞습니다.</p>
-<p>회원의 프로젝트는 콘텐츠·미디어, 디지털 상품, 커머스, 서비스·프리랜싱, 공간·오프라인, 웹·앱·자동화의 여섯 분야로 나눠 관리합니다.</p>
+<p>회원의 프로젝트는 아래 여섯 분야로 나눠 관리합니다. 분야 스터디도 이 구분대로 열립니다.</p>
+${fieldGrid()}
 
 <h2 id="hq">운영본부가 하는 일</h2>
 <p>운영본부는 운영자와 위촉된 운영진으로 이루어집니다. 가입 신청 확인, 챌린지 제안 심사, 합의서 승인, 정산 검수, 프로젝트 페이퍼 검토, 승급 심사, 분쟁 조정을 맡습니다. 심사와 검수는 홈페이지의 운영 화면에서 처리하고, 모든 결정은 감사 기록으로 남깁니다.</p>
@@ -288,7 +300,7 @@ ${h.cta('각자의 챌린지를 함께 끝까지', '다음 라운드 모집을 �
     title: '12주 라운드 운영 방식: 제안부터 데모데이·정산까지',
     description: '마이챌린지 그룹 챌린지는 12주 라운드로 운영합니다. 챌린지 제안과 심사, 합의서 서명, 주간 체크인과 완료 기록, 4·7·8·12주 마일스톤, 데모데이와 프로젝트 페이퍼, 정산까지 순서대로 설명합니다.',
     crumbs: howCrumbs,
-    body: `${h.pageHero('운영 방식', '12주 라운드는 이렇게 흘러갑니다', '마챌의 모든 그룹 챌린지는 한 분기 길이의 라운드 안에서 시작하고, 점검하고, 정산합니다. 라운드는 1년에 네 번 열립니다.', howCrumbs)}
+    body: `${h.pageHero('운영 방식', '12주 라운드는 이렇게 흘러갑니다', '마챌의 모든 그룹 챌린지는 한 분기 길이의 라운드 안에서 시작하고, 점검하고, 정산합니다. 라운드는 1년에 네 번 열립니다.', howCrumbs, '', { name: 'ph-how', alt: '킥오프 날 진행표에 메모를 붙이며 12주 계획을 세우는 그룹' })}
 <div class="wrap article-layout">
 <article class="prose">
 <nav class="toc" aria-label="이 페이지의 내용"><b>이 페이지의 내용</b><ol><li><a href="#overview">한눈에 보기</a></li><li><a href="#types">챌린지의 세 종류</a></li><li><a href="#propose">제안과 심사</a></li><li><a href="#team">그룹 구성</a></li><li><a href="#agreement">합의서</a></li><li><a href="#weekly">매주 하는 일</a></li><li><a href="#milestones">마일스톤</a></li><li><a href="#end">데모데이·페이퍼·정산</a></li><li><a href="#stop">멈출 때와 나갈 때</a></li></ol></nav>
@@ -307,6 +319,7 @@ ${timeline}
 </table></div>
 
 <h2 id="propose">제안과 심사</h2>
+${h.figure('spot-building', '', '', 'fig-spot fig-right')}
 <p>그룹 챌린지는 리더(L4) 이상 회원이 제안합니다. 제안서에는 풀려는 불편, 만들 상품, 첫 매출 계획, 배분 유형, 소유 유형을 적습니다. 운영본부는 아래 여섯 항목을 1~5점으로 매기고 가중치를 곱해 더합니다.</p>
 <div class="table-wrap"><table>
   <thead><tr><th>심사 항목</th><th class="num">가중치</th><th>보는 것</th></tr></thead>
@@ -327,10 +340,12 @@ ${timeline}
 <p>그룹 안에서는 역할을 나눕니다. 그룹장 외에 회계, 기록, 제작, 마케팅·판매, 일반 참여 중에서 맡을 역할을 정하고, 이 역할은 나중에 기여율을 계산할 때 가중치로 쓰입니다.</p>
 
 <h2 id="agreement">합의서</h2>
+${h.figure('spot-agreement', '', '', 'fig-spot fig-right fig-sm')}
 <p>모집이 끝나면 그룹장이 합의서를 씁니다. 합의서에는 배분 유형과 비율, 소유 유형(A·B·C), 역할과 예정 기여율, 예산 상한, 매출을 받을 명의가 들어갑니다. 그룹원 전원이 조항을 읽고 서명하면 운영본부가 검토해 승인하고, 승인되는 순간 합의서는 잠기고 챌린지가 시작됩니다.</p>
 <p>규칙이 부딪히면 법령, 챌린지 합의서, 마챌 운영 규칙, 운영본부 결정 순으로 따릅니다. 합의서는 마챌 규칙보다 회원에게 불리하게 정할 수 없고, 규칙이 바뀌어도 이미 진행 중인 챌린지에는 소급하지 않습니다. 자세한 배분 규칙은 <a href="/rules/">수익 배분과 합의서 규칙</a>에 있습니다.</p>
 
 <h2 id="weekly">매주 하는 일</h2>
+${h.figure('act-weekly-retro', '둥글게 앉아 지난주에 끝낸 일과 막힌 점을 돌아가며 이야기하는 그룹', '매주 체크인은 15분. 끝낸 것, 끝낼 것, 막힌 것만 짧게 나눕니다.')}
 <div class="cards-3">
   <div class="mini"><b>주간 체크인</b><p>지난주에 끝낸 것, 이번 주에 끝낼 것, 막힌 점, 쓴 시간을 적습니다. 15분이면 끝납니다.</p></div>
   <div class="mini"><b>완료 기록</b><p>끝낸 일을 한 줄과 링크로 남기면 그룹장이 확인합니다. 수정은 안 되고 취소만 됩니다.</p></div>
@@ -350,6 +365,7 @@ ${timeline}
 </table></div>
 
 <h2 id="end">데모데이, 페이퍼, 정산</h2>
+${h.figure('spot-sharing', '', '', 'fig-spot fig-right')}
 <p>12주차 데모데이에서 결과를 발표한 뒤에는 프로젝트 페이퍼를 냅니다. 장부와 체크인 기록을 바탕으로 숫자 항목이 미리 채워진 양식에서 시작하고, 운영본부가 검토해 승인합니다. 쓰는 법은 ${guideLink('project-paper')}에 있습니다.</p>
 <p>정산은 그룹장이 정산표를 만들면 그룹원 전원이 확인하거나 이의를 내고, 운영본부가 검수한 뒤 지급합니다. 프로젝트 페이퍼가 승인되어야 지급이 이뤄집니다. 이의가 있으면 다툼이 없는 금액은 먼저 지급하고, 이의를 낸 사람의 몫만 보류한 채 조정합니다.</p>
 
@@ -373,7 +389,7 @@ ${h.cta('12주 동안 한 번, 끝까지 가 보기', '혼자 미뤄 둔 프로�
     title: '수익 배분과 합의서 규칙: 배분 순서, 비율, 소유권, 정산',
     description: '마이챌린지 그룹 챌린지의 돈 규칙입니다. 외부 매출과 순수익의 정의, 비용 회수부터 시작하는 배분 순서, 네 가지 배분 유형, 기여율 계산, 소유권 A·B·C, 예산 상한과 정산 조건을 정리했습니다.',
     crumbs: rulesCrumbs,
-    body: `${h.pageHero('수익 배분 규칙', '돈과 소유는 시작 전에 합의합니다', '아래 규칙은 홈페이지의 정산 계산기에 그대로 들어가 있습니다. 운영본부가 기준값을 바꾸면 다음 라운드부터 적용하고, 진행 중인 챌린지에는 소급하지 않습니다.', rulesCrumbs)}
+    body: `${h.pageHero('수익 배분 규칙', '돈과 소유는 시작 전에 합의합니다', '아래 규칙은 홈페이지의 정산 계산기에 그대로 들어가 있습니다. 운영본부가 기준값을 바꾸면 다음 라운드부터 적용하고, 진행 중인 챌린지에는 소급하지 않습니다.', rulesCrumbs, '', { name: 'spot-agreement', alt: '', frame: false, cls: 'ph-spot' })}
 <div class="wrap article-layout">
 <article class="prose">
 <div class="callout"><strong>먼저 밝혀 둡니다</strong><p>마이챌린지는 수익을 보장하지 않습니다. 회원에게서 출자금이나 투자금을 받지 않고, 원금이나 수익을 약속하지 않습니다. 배분하는 돈은 그룹이 실제로 판 상품의 순수익뿐이며, 이 원칙은 모든 합의서의 첫 조항에 들어갑니다.</p></div>
@@ -407,6 +423,7 @@ ${h.cta('12주 동안 한 번, 끝까지 가 보기', '혼자 미뤄 둔 프로�
 </ul>
 
 <h2 id="hq-report">운영본부 몫과 쓰임</h2>
+<div class="spot spot-bars spot-inline">${img('spot-honest-results', '')}</div>
 <div data-live="hq"><p>운영본부가 정산에서 받은 몫과 정산 대행 수수료, 그 돈을 어디에 썼는지를 분기마다 이 자리에 공개합니다. 첫 정산이 끝나기 전이라 아직 공개할 숫자가 없습니다.</p></div>
 
 <h2 id="contribution">기여율</h2>
@@ -471,19 +488,19 @@ ${h.cta('규칙이 먼저 있어서 함께할 수 있습니다', '돈 이야기�
     title: '회원 등급과 활동 포인트: 챌린저부터 마스터까지',
     description: '마이챌린지 회원 등급은 돈으로 살 수 없고 실행 기록으로만 오릅니다. 게스트(L0)부터 마스터(L5)까지 각 등급의 조건과 할 수 있는 일, 활동 포인트 기준과 하루 상한을 정리했습니다.',
     crumbs: levelsCrumbs,
-    body: `${h.pageHero('등급과 포인트', '등급은 실행 기록으로 오릅니다', '등급을 돈으로 사는 구조는 만들지 않습니다. 아래 기준은 운영본부가 조정할 수 있고, 바뀌면 이 페이지도 함께 바뀝니다.', levelsCrumbs)}
+    body: `${h.pageHero('등급과 포인트', '등급은 실행 기록으로 오릅니다', '등급을 돈으로 사는 구조는 만들지 않습니다. 아래 기준은 운영본부가 조정할 수 있고, 바뀌면 이 페이지도 함께 바뀝니다.', levelsCrumbs, levelStrip())}
 <div class="wrap article-layout" data-live="levels">
 <article class="prose">
 <h2 id="ladder">여섯 단계</h2>
 <div class="table-wrap"><table class="lv-table">
   <thead><tr><th>등급</th><th>되는 방법</th><th>할 수 있는 것</th></tr></thead>
   <tbody>
-    <tr><td><span class="lv lv-L0">L0</span> 게스트</td><td>가입 승인 직후</td><td>공지, 공개 페이퍼 요약. 오리엔테이션(원칙 3문항 확인)을 마치면 자동으로 챌린저가 됩니다</td></tr>
-    <tr><td><span class="lv lv-L1">L1</span> 챌린저</td><td>오리엔테이션 이수</td><td>챌린지 보드, 세미나·스터디·마챌데이, 커피챗, 커뮤니티, 솔로 챌린지, 페이퍼 요약</td></tr>
-    <tr><td><span class="lv lv-L2">L2</span> 메이커</td><td>활동 포인트 <b data-rule="L2.points">${D.levels.L2.points}</b>점, 자기 자산 진단 제출, 모임 <b data-rule="L2.require_event">${D.levels.L2.require_event}</b>회 참석, 가입 후 <b data-rule="L2.min_days">${D.levels.L2.min_days}</b>일. 조건을 채우면 <b>자동 승급</b></td><td>그룹 챌린지 그룹원 지원·참여, 품앗이 보드, 아카이브</td></tr>
-    <tr><td><span class="lv lv-L3">L3</span> 어치버</td><td>라운드 1회 완주(데모데이 발표와 페이퍼 제출) 또는 첫 외부 매출 인증 → 신청과 심사</td><td>다른 그룹의 진행 기록과 장부 요약, 페이퍼 전문</td></tr>
-    <tr><td><span class="lv lv-L4">L4</span> 리더</td><td>라운드 2회 완주와 리더 교육 이수, 운영본부 면담 → 신청과 심사</td><td>그룹 챌린지 제안과 운영, 그룹장 몫</td></tr>
-    <tr><td><span class="lv lv-L5">L5</span> 마스터</td><td>그룹장으로 성공 챌린지 2건 또는 반복 매출 → 신청과 심사</td><td>챌린지 심사·멘토링 참여, 오피셜 챌린지 공동 설계</td></tr>
+    <tr><td class="lv-cell">${lvIcon('L0', 36)}<span class="lv lv-L0">L0</span> 게스트</td><td>가입 승인 직후</td><td>공지, 공개 페이퍼 요약. 오리엔테이션(원칙 3문항 확인)을 마치면 자동으로 챌린저가 됩니다</td></tr>
+    <tr><td class="lv-cell">${lvIcon('L1', 36)}<span class="lv lv-L1">L1</span> 챌린저</td><td>오리엔테이션 이수</td><td>챌린지 보드, 세미나·스터디·마챌데이, 커피챗, 커뮤니티, 솔로 챌린지, 페이퍼 요약</td></tr>
+    <tr><td class="lv-cell">${lvIcon('L2', 36)}<span class="lv lv-L2">L2</span> 메이커</td><td>활동 포인트 <b data-rule="L2.points">${D.levels.L2.points}</b>점, 자기 자산 진단 제출, 모임 <b data-rule="L2.require_event">${D.levels.L2.require_event}</b>회 참석, 가입 후 <b data-rule="L2.min_days">${D.levels.L2.min_days}</b>일. 조건을 채우면 <b>자동 승급</b></td><td>그룹 챌린지 그룹원 지원·참여, 품앗이 보드, 아카이브</td></tr>
+    <tr><td class="lv-cell">${lvIcon('L3', 36)}<span class="lv lv-L3">L3</span> 어치버</td><td>라운드 1회 완주(데모데이 발표와 페이퍼 제출) 또는 첫 외부 매출 인증 → 신청과 심사</td><td>다른 그룹의 진행 기록과 장부 요약, 페이퍼 전문</td></tr>
+    <tr><td class="lv-cell">${lvIcon('L4', 36)}<span class="lv lv-L4">L4</span> 리더</td><td>라운드 2회 완주와 리더 교육 이수, 운영본부 면담 → 신청과 심사</td><td>그룹 챌린지 제안과 운영, 그룹장 몫</td></tr>
+    <tr><td class="lv-cell">${lvIcon('L5', 36)}<span class="lv lv-L5">L5</span> 마스터</td><td>그룹장으로 성공 챌린지 2건 또는 반복 매출 → 신청과 심사</td><td>챌린지 심사·멘토링 참여, 오피셜 챌린지 공동 설계</td></tr>
   </tbody>
 </table></div>
 <p>L3부터는 신청을 받아 운영본부가 7일 안에 심사하고, 보류하거나 반려할 때는 사유를 적어 알려 드립니다.</p>
@@ -496,7 +513,8 @@ ${h.cta('규칙이 먼저 있어서 함께할 수 있습니다', '돈 이야기�
 </table></div>
 
 <h2 id="badges">배지</h2>
-<p>등급과 별도로 의미 있는 순간에 배지를 드립니다. 첫 매출, 반복 매출, 라운드 완주, 그룹장 완주, 페이퍼 기고, 창립 멤버, 강사·멘토 배지가 있습니다. 첫 매출 배지는 외부 고객의 결제를 증빙으로 확인한 뒤에만 드립니다.</p>
+<p>등급과 별도로 의미 있는 순간에 배지를 드립니다. 첫 매출 배지는 외부 고객의 결제를 증빙으로 확인한 뒤에만 드립니다.</p>
+${badgeGrid()}
 
 <h2 id="dormant">휴면과 복귀</h2>
 <p>6개월 넘게 활동이 없으면 휴면으로 바뀝니다. 휴면 중에도 등급, 배지, 포인트 기록은 그대로 남고, 돌아오면 원래 등급으로 복원됩니다. 리더(L4) 이상은 복귀할 때 운영본부와 한 번 면담합니다.</p>
@@ -521,14 +539,25 @@ ${h.cta('규칙이 먼저 있어서 함께할 수 있습니다', '돈 이야기�
     ['품앗이 보드', '상시', 'L2 이상', '디자인, 글, 세팅처럼 서로 가진 기술을 교환합니다. 금전 거래는 당사자끼리 따로 합니다.'],
     ['마챌 페이퍼(사례집)', '분기 1회', '누구나(공개 요약)', '라운드가 끝나면 프로젝트 페이퍼를 묶어 사례집으로 냅니다. 잘된 길과 멈춘 길을 함께 싣습니다.'],
   ];
+  const PROGRAM_ART = [
+    ['act-event-checkin', '행사장 입구에서 이름표를 받고 입장하는 회원들'],
+    ['act-kickoff', '그룹원들이 진행표에 메모를 붙이며 12주 계획을 세우는 킥오프'],
+    ['act-demo-day', '회원들 앞에서 결과물을 띄워 놓고 발표하는 그룹장'],
+    ['act-seminar', '강사의 설명을 들으며 손을 들어 질문하는 세미나 참가자들'],
+    ['act-book-club', '소파에 둘러앉아 같은 책을 읽고 이야기하는 스터디'],
+    ['act-networking', '커피잔을 앞에 두고 편하게 이야기를 나누는 회원들'],
+    ['act-mentoring', '안락의자에 앉아 멘토와 함께 막힌 부분을 짚어 보는 모습'],
+    ['act-web-app', '디자인 화면과 앱 시안을 놓고 서로의 기술을 보태는 사람들'],
+    ['act-project-showcase', '테이블마다 프로젝트 결과물을 펼쳐 놓고 소개하는 전시'],
+  ];
   pages.push({
     path: '/programs/', slug: 'programs',
     title: '마챌 프로그램: 마챌데이, 그룹 챌린지, 데모데이, 세미나',
     description: '마이챌린지에서 열리는 프로그램을 소개합니다. 월 1회 마챌데이, 12주 그룹 챌린지 라운드, 데모데이, 실무 세미나, 분야 스터디, 커피챗, 오피스아워, 품앗이 보드, 분기 사례집.',
     crumbs: progCrumbs,
-    body: `${h.pageHero('프로그램', '혼자서는 만들기 어려운 리듬을 만듭니다', '매주, 매월, 매 분기 돌아오는 프로그램이 사이드프로젝트에 마감과 동료를 만들어 줍니다.', progCrumbs)}
+    body: `${h.pageHero('프로그램', '혼자서는 만들기 어려운 리듬을 만듭니다', '매주, 매월, 매 분기 돌아오는 프로그램이 사이드프로젝트에 마감과 동료를 만들어 줍니다.', progCrumbs, '', { name: 'ph-programs', alt: '공방 테이블에서 천을 자르고 바느질하며 함께 작업하는 세 사람' })}
 <section class="sec sec-tight"><div class="wrap">
-  <div class="prog-grid">${PROGRAMS.map(([t, when, who, d]) => `<article class="prog"><h2>${t}</h2><p class="prog-meta"><span>${when}</span><span>${who}</span></p><p>${d}</p></article>`).join('')}</div>
+  <div class="prog-grid">${PROGRAMS.map(([t, when, who, d], i) => `<article class="prog has-pic"><div class="prog-pic">${img(PROGRAM_ART[i][0], PROGRAM_ART[i][1])}</div><div class="prog-body"><h2>${t}</h2><p class="prog-meta"><span>${when}</span><span>${who}</span></p><p>${d}</p></div></article>`).join('')}</div>
 </div></section>
 <section class="sec sec-tint" data-live="events" hidden><div class="wrap narrow">
   <div class="sec-head"><p class="eyebrow">다가오는 일정</p><h2>이번 달 모임</h2></div>
@@ -546,7 +575,7 @@ ${h.cta('다음 마챌데이에서 만나요', '가입하면 일정 게시판에
     description: '마이챌린지 가입 절차와 비용, 그룹 챌린지 참여 조건, 수익 배분과 손실 처리, 소유권, 회사 겸업과 세금, 결과 공개와 개인정보, 탈퇴까지 자주 묻는 질문을 모았습니다.',
     crumbs: faqCrumbs,
     jsonld: [faqLd],
-    body: `${h.pageHero('자주 묻는 질문', '신청 전에 궁금한 것들', '찾는 답이 없다면 가입 신청서의 마지막 칸에 질문을 남겨 주세요. 운영본부가 확인할 때 함께 답해 드립니다.', faqCrumbs)}
+    body: `${h.pageHero('자주 묻는 질문', '신청 전에 궁금한 것들', '찾는 답이 없다면 가입 신청서의 마지막 칸에 질문을 남겨 주세요. 운영본부가 확인할 때 함께 답해 드립니다.', faqCrumbs, '', { name: 'ph-faq', alt: '마이크 앞에 마주 앉아 질문하고 답하는 두 사람' })}
 <div class="wrap narrow faq-page">
 ${FAQ.map(([group, qs], i) => `<section class="faq-group" id="faq-${i + 1}"><h2>${group}</h2><div class="faq">${qs.map(faqItem).join('')}</div></section>`).join('')}
 <p class="faq-links">더 자세한 내용: <a href="/how-it-works/">운영 방식</a> · <a href="/rules/">수익 배분 규칙</a> · <a href="/levels/">등급과 포인트</a> · ${guideLink('side-job-company-rules')} · ${guideLink('side-income-tax')} · <a href="/privacy/">개인정보처리방침</a></p>
@@ -562,7 +591,7 @@ ${h.cta('궁금한 게 풀렸다면', '신청서는 10분이면 씁니다. 경�
     title: '가입 신청: 사이드프로젝트 모임 마이챌린지에 함께하기',
     description: '마이챌린지(마챌) 가입 신청 페이지입니다. 신청서를 보내면 운영본부가 3일 안에 확인하고 초대 코드를 이메일로 보내 드립니다. 경력이나 실적은 심사 기준이 아닙니다.',
     crumbs: applyCrumbs,
-    body: `${h.pageHero('가입 신청', '마이챌린지 가입 신청', '솔직하게 적어 주세요. 경력이나 실적은 심사 기준이 아니고, 쓸 수 있는 시간과 함께하는 방식에 대한 생각을 봅니다.', applyCrumbs)}
+    body: `${h.pageHero('가입 신청', '마이챌린지 가입 신청', '솔직하게 적어 주세요. 경력이나 실적은 심사 기준이 아니고, 쓸 수 있는 시간과 함께하는 방식에 대한 생각을 봅니다.', applyCrumbs, '', { name: 'ph-apply', alt: '운영진이 문을 열고 노트를 든 새 회원들을 맞이하는 모습' })}
 <div class="wrap apply-layout">
 <div class="apply-main">
   <p class="round-note" data-live="round" hidden></p>
@@ -652,6 +681,7 @@ ${h.cta('읽는 것보다 해 보는 게 빠릅니다', '다음 라운드에서 
     title: '페이지를 찾을 수 없습니다',
     description: '요청한 페이지를 찾을 수 없습니다. 주소를 확인하거나 마이챌린지 홈에서 다시 찾아 주세요.',
     body: `<section class="notfound"><div class="wrap narrow center">
+  <div class="nf-pic">${img('ph-404', '공원 산책로에서 주변을 둘러보며 사진을 찍는 사람들', { eager: true })}</div>
   <p class="eyebrow">404</p>
   <h1>페이지를 찾을 수 없습니다</h1>
   <p class="lead">주소가 바뀌었거나 없어진 페이지입니다. 아래에서 찾던 내용을 골라 주세요.</p>

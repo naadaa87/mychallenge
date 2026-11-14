@@ -17,12 +17,12 @@ export function paperCard(p) {
 }
 
 export async function login() {
-  const html = `<div class="wrap auth"><div class="card"><h2>로그인</h2><form class="form" data-form="login">${field('이메일', input('email', { type: 'email', required: true }))}${field('비밀번호', input('password', { type: 'password', required: true }))}<div class="form-error error"></div><button class="btn primary block" type="submit">로그인</button></form><div class="divider"></div><p class="small muted" style="margin:0">아직 계정이 없나요? <a href="#/register">초대 코드로 가입</a> · <a href="/apply/">가입 신청</a></p></div></div>`;
+  const html = `<div class="wrap auth"><div class="auth-art"><img src="/assets/img/act-kickoff-sm.webp" width="480" height="300" alt="그룹원들이 테이블에 모여 12주 계획을 세우는 모습"></div><div class="card"><h2>로그인</h2><form class="form" data-form="login">${field('이메일', input('email', { type: 'email', required: true }))}${field('비밀번호', input('password', { type: 'password', required: true }))}<div class="form-error error"></div><button class="btn primary block" type="submit">로그인</button></form><div class="divider"></div><p class="small muted" style="margin:0">아직 계정이 없나요? <a href="#/register">초대 코드로 가입</a> · <a href="/apply/">가입 신청</a></p></div></div>`;
   return { html, mount(root) { bindForms(root, { async login(d) { await post('/auth/login', d); await state.refreshMe(); const after = sessionStorage.getItem('machal_after_login'); sessionStorage.removeItem('machal_after_login'); go(after && after !== '#/login' ? after : '#/dashboard'); } }); } };
 }
 
 export async function register() {
-  const html = `<div class="wrap auth"><div class="card"><h2>초대 코드로 가입</h2><p class="muted small">운영본부가 보낸 초대 코드와 지원서에 적은 이메일이 필요합니다.</p><form class="form" data-form="reg">
+  const html = `<div class="wrap auth"><div class="auth-art"><img src="/assets/img/act-invite-sm.webp" width="480" height="300" alt="운영진이 문을 열고 새 회원들을 맞이하는 모습"></div><div class="card"><h2>초대 코드로 가입</h2><p class="muted small">운영본부가 보낸 초대 코드와 지원서에 적은 이메일이 필요합니다.</p><form class="form" data-form="reg">
     ${field('초대 코드', input('invite_code', { required: true, placeholder: 'MC-XXXXXX' }))}
     ${field('이메일 (지원서와 동일)', input('email', { type: 'email', required: true }))}
     <div class="form-cols">${field('이름', input('name', { required: true }))}${field('닉네임', input('nickname', { required: true, placeholder: '모임에서 불릴 이름' }))}</div>
@@ -41,7 +41,7 @@ export async function register() {
 export async function setup() {
   const st = await api('/public/status');
   if (!st.setup_needed) return `<div class="wrap auth"><div class="card"><h2>이미 설정이 끝났습니다</h2><p class="muted">운영자 계정이 있습니다. <a href="#/login">로그인</a>으로 이동하세요.</p><p class="small muted">공개 홈페이지는 <a href="/">여기</a>에 있습니다.</p></div></div>`;
-  const html = `<div class="wrap auth"><div class="card"><h2>마챌 초기 설정</h2><p class="muted small">첫 운영자(마스터 · 운영진) 계정을 만듭니다. 이 화면은 한 번만 열립니다.</p><form class="form" data-form="setup">
+  const html = `<div class="wrap auth"><div class="auth-art"><img src="/assets/img/act-workshop-sm.webp" width="480" height="300" alt="화이트보드 앞에서 계획을 함께 정리하는 사람들"></div><div class="card"><h2>마챌 초기 설정</h2><p class="muted small">첫 운영자(마스터 · 운영진) 계정을 만듭니다. 이 화면은 한 번만 열립니다.</p><form class="form" data-form="setup">
     ${field('이름', input('name', { required: true }))}${field('닉네임', input('nickname', { placeholder: '운영본부' }))}${field('이메일', input('email', { type: 'email', required: true }))}${field('비밀번호 (8자 이상)', input('password', { type: 'password', required: true }))}
     <div class="form-error error"></div><button class="btn primary block" type="submit">운영자 계정 만들기</button></form></div></div>`;
   return { html, mount(root) { bindForms(root, { async setup(d) { await post('/setup', d); await state.refreshMe(); toast('운영자 계정이 만들어졌습니다'); go('#/admin'); } }); } };

@@ -1,6 +1,7 @@
 // 공개 사이트 공통 레이아웃: <head>(메타·OG·구조화 데이터), 머리글, 바닥글
 // 빌드 스크립트(scripts/build-site.mjs)와 Pages Functions(/papers, /sitemap.xml, /rss.xml)가 함께 쓴다.
 import { SITE } from './config.js';
+import { IMG } from './images.generated.js';
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ld = obj => `<script type="application/ld+json">${JSON.stringify(obj).replace(/</g, '\\u003c')}</script>`;
@@ -142,7 +143,7 @@ ${head}
 <a class="skip" href="#main">본문 바로가기</a>
 ${header(p.path)}
 <main id="main">
-${p.body}
+${withImageVersion(p.body, o.assetVersion)}
 </main>
 ${footer()}
 <script src="/assets/site.js${v}" defer></script>
@@ -151,9 +152,39 @@ ${footer()}
 `;
 }
 
+// 이미지 주소에 자산 버전을 붙여 캐시가 바뀐 그림을 놓치지 않게 한다
+const withImageVersion = (html, ver) => ver ? String(html).replace(/(\/assets\/img\/[\w.-]+\.webp)(?=["\s,])/g, `$1?v=${ver}`) : html;
+
+/**
+ * 일러스트 <img>. name은 public/assets/img/<name>.webp
+ * @param {string} name
+ * @param {string} alt  꾸밈용이면 '' (스크린리더가 건너뜀)
+ * @param {object} o  cls, eager(첫 화면 그림), sizes(작은 판이 있을 때 srcset 기준), w(표시 너비 힌트)
+ */
+export function img(name, alt, o = {}) {
+  const d = IMG[name];
+  if (!d) throw new Error('이미지 없음: ' + name);
+  const sm = IMG[name + '-sm'];
+  const src = `/assets/img/${name}.webp`;
+  const srcset = sm ? ` srcset="/assets/img/${name}-sm.webp ${sm[0]}w, ${src} ${d[0]}w" sizes="${o.sizes || `(min-width: 1040px) 360px, (min-width: 720px) 50vw, 100vw`}"` : '';
+  return `<img src="${src}"${srcset} width="${d[0]}" height="${d[1]}" alt="${esc(alt)}"${o.cls ? ` class="${o.cls}"` : ''}${o.eager ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">`;
+}
+
 // 본문 조각을 만들 때 쓰는 작은 도우미
 export const h = {
-  pageHero: (eyebrow, title, lead, crumbs, extra = '') => `<section class="page-hero"><div class="wrap">${breadcrumbHtml(crumbs)}<p class="eyebrow">${eyebrow}</p><h1>${title}</h1>${lead ? `<p class="lead">${lead}</p>` : ''}${extra}</div></section>`,
-  cta: (title, text, primary = ['/apply/', '가입 신청하기'], secondary = ['/how-it-works/', '운영 방식 보기']) => `<section class="cta"><div class="wrap"><div class="cta-box"><div><h2>${title}</h2><p>${text}</p></div><div class="cta-actions"><a class="btn btn-white btn-lg" href="${primary[0]}">${primary[1]}</a>${secondary ? `<a class="btn btn-ghost-white btn-lg" href="${secondary[0]}">${secondary[1]}</a>` : ''}</div></div></div></section>`,
+  // art: { name, alt } 또는 그림 HTML 문자열. 있으면 오른쪽에 그림을 둔 두 칸 머리말이 된다.
+  pageHero: (eyebrow, title, lead, crumbs, extra = '', art = null) => {
+    const copy = `${breadcrumbHtml(crumbs)}<p class="eyebrow">${eyebrow}</p><h1>${title}</h1>${lead ? `<p class="lead">${lead}</p>` : ''}${extra}`;
+    if (!art) return `<section class="page-hero"><div class="wrap">${copy}</div></section>`;
+    const pic = typeof art === 'string' ? art : img(art.name, art.alt || '', { eager: true, cls: art.cls });
+    return `<section class="page-hero has-art"><div class="wrap ph-in"><div class="ph-copy">${copy}</div><div class="ph-art${art.frame === false ? '' : ' framed'}">${pic}</div></div></section>`;
+  },
+  cta: (title, text, primary = ['/apply/', '가입 신청하기'], secondary = ['/how-it-works/', '운영 방식 보기'], art = null) => {
+    const actions = `<div class="cta-actions"><a class="btn btn-white btn-lg" href="${primary[0]}">${primary[1]}</a>${secondary ? `<a class="btn btn-ghost-white btn-lg" href="${secondary[0]}">${secondary[1]}</a>` : ''}</div>`;
+    if (!art) return `<section class="cta"><div class="wrap"><div class="cta-box"><div><h2>${title}</h2><p>${text}</p></div>${actions}</div></div></section>`;
+    return `<section class="cta"><div class="wrap"><div class="cta-box has-art"><div class="cta-copy"><h2>${title}</h2><p>${text}</p>${actions}</div><div class="cta-art">${img(art.name, art.alt || '', { sizes: '(min-width: 900px) 420px, 90vw' })}</div></div></div></section>`;
+  },
+  // 본문 속 그림 (캡션 포함)
+  figure: (name, alt, caption = '', cls = '') => `<figure class="fig${cls ? ' ' + cls : ''}">${img(name, alt, { sizes: '(min-width: 1040px) 720px, 100vw' })}${caption ? `<figcaption>${caption}</figcaption>` : ''}</figure>`,
   sources: list => list.length ? `<aside class="sources"><h2>참고한 자료</h2><ol>${list.map(([t, url, note]) => `<li><a href="${url}" rel="noopener" target="_blank">${t}</a>${note ? ` <span>${note}</span>` : ''}</li>`).join('')}</ol></aside>` : '',
 };

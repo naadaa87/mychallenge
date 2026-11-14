@@ -1,7 +1,7 @@
 // 공개 사이트 생성기: functions/_site/* 의 내용으로 public/ 아래 정적 HTML을 만든다.
 // 사용: node scripts/build-site.mjs
 // Cloudflare Pages의 Build command에 넣어 두면 배포할 때마다 다시 만든다(넣지 않아도 저장소에 커밋된 결과로 동작).
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -16,8 +16,10 @@ const pub = join(root, 'public');
 const base = siteUrl();
 const ver = verification();
 
-const hash = files => createHash('sha1').update(files.map(f => readFileSync(join(pub, f))).join('')).digest('hex').slice(0, 8);
-const assetVersion = hash(['assets/site.css', 'assets/site.js']);
+const hash = files => { const h = createHash('sha1'); for (const f of files) h.update(readFileSync(join(pub, f))); return h.digest('hex').slice(0, 8); };
+// 일러스트가 바뀌어도 버전이 바뀌도록 그림 파일까지 함께 센다
+const imgFiles = existsSync(join(pub, 'assets/img')) ? readdirSync(join(pub, 'assets/img')).filter(f => f.endsWith('.webp')).sort().map(f => 'assets/img/' + f) : [];
+const assetVersion = hash(['assets/site.css', 'assets/site.js', ...imgFiles]);
 const opts = { base, verification: ver, assetVersion };
 
 const ogFor = p => p.ogImage || (existsSync(join(pub, 'og', `${p.slug}.png`)) ? `/og/${p.slug}.png` : '/og/default.png');
