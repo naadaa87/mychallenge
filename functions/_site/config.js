@@ -8,7 +8,7 @@
 
 export const SITE = {
   // 대표 주소. 끝에 / 를 붙이지 않습니다. 커스텀 도메인을 연결하면 여기를 바꾸세요. 예: 'https://www.mychallenge.kr'
-  url: 'https://mychallenge.pages.dev',
+  url: 'https://mychallenge.kr',
   name: '마이챌린지',
   alt: '마챌',
   fullName: '마이챌린지(마챌)',
@@ -19,7 +19,7 @@ export const SITE = {
 
   // 검색엔진 소유확인 코드 (meta 태그 방식). 받은 코드의 content 값만 넣습니다.
   // 네이버 서치어드바이저: <meta name="naver-site-verification" content="여기 값">
-  naverVerification: '',
+  naverVerification: '379c68b11b3d1e9b5afb28d36885bfb247e820e4',
   // 구글 서치콘솔: <meta name="google-site-verification" content="여기 값">
   googleVerification: '',
 

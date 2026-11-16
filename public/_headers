@@ -13,3 +13,7 @@
 
 /og/*
   Cache-Control: public, max-age=604800
+
+# 기본 주소(mychallenge.pages.dev)와 미리보기 주소는 검색에 노출하지 않는다. 대표 주소는 https://mychallenge.kr
+https://:project.pages.dev/*
+  X-Robots-Tag: noindex

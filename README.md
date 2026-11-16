@@ -62,12 +62,12 @@ docs/                   ← 기획 문서와 SEO 가이드
 3. **Deployments 탭 → 최신 배포 → Retry deployment** (바인딩은 다시 배포해야 적용됩니다)
 
 ### 1-4. 첫 운영자 계정
-1. 배포된 주소 뒤에 **`/app/`** 을 붙여 엽니다. 예: `https://mychallenge.pages.dev/app/`
+1. 배포된 주소 뒤에 **`/app/`** 을 붙여 엽니다. 예: `https://mychallenge.kr/app/`
 2. 운영자가 없으면 자동으로 **초기 설정 화면**이 뜹니다. 이름·이메일·비밀번호를 넣으면 **마스터(L5)·운영진** 계정이 만들어집니다.
 3. 이 화면은 첫 계정이 생기면 닫힙니다. 다른 운영진은 **운영본부 → 회원 → 관리**에서 "운영진" 권한을 주면 됩니다.
 
 ### 1-5. 대표 주소 맞추기
-- Pages 기본 주소가 `https://mychallenge.pages.dev`가 아니거나 커스텀 도메인을 연결했다면, 아래 둘 중 하나로 대표 주소를 알려 주세요. 검색엔진에 알려 주는 정식 주소(canonical), 사이트맵, 공유 이미지 주소가 모두 이 값을 씁니다.
+- Pages 기본 주소가 `https://mychallenge.kr`가 아니거나 커스텀 도메인을 연결했다면, 아래 둘 중 하나로 대표 주소를 알려 주세요. 검색엔진에 알려 주는 정식 주소(canonical), 사이트맵, 공유 이미지 주소가 모두 이 값을 씁니다.
   - **방법 A (권장)**: Pages → Settings → **Variables and Secrets** → `SITE_URL` = `https://내도메인` 추가 → 다시 배포 (Build command가 설정되어 있어야 공개 페이지에도 반영됩니다)
   - **방법 B**: GitHub에서 `functions/_site/config.js`의 `url` 값을 고치고 Commit
 - 커스텀 도메인: Pages 프로젝트 → **Custom domains → Set up a custom domain**
