@@ -79,6 +79,8 @@ for (const [h, n, full] of [
   ['#/admin/payouts?status=paid', 'admin-payouts'], ['#/admin/hq', 'admin-hq'],
   ['#/admin/broadcast', 'admin-broadcast'], ['#/admin/community?view=recent', 'admin-community'], ['#/admin/events?when=past', 'admin-events'], ['#/admin/events/1', 'admin-event'],
   ['#/admin/settings', 'admin-settings', true], ['#/admin/audit', 'admin-audit'], ['#/admin/data', 'admin-data'],
+  ['#/admin/kpi', 'admin-kpi', true], ['#/admin/kpi?tab=traffic', 'admin-kpi-traffic', true], ['#/admin/kpi?tab=content', 'admin-kpi-content', true],
+  ['#/admin/kpi?tab=members', 'admin-kpi-members', true], ['#/admin/kpi?tab=groups', 'admin-kpi-groups', true], ['#/admin/kpi?tab=community', 'admin-kpi-community', true],
 ]) await shot(h, n, { full: !!full });
 await logout();
 await login('a@test.kr', 'password1');

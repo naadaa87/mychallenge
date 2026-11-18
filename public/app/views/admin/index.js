@@ -8,6 +8,7 @@ import { groups } from './groups.js';
 import { money } from './money.js';
 import { comms } from './comms.js';
 import { system } from './system.js';
+import { kpiPage } from './kpi.js';
 
 const SECTIONS = {
   ...inbox,
@@ -16,6 +17,7 @@ const SECTIONS = {
   payouts: money.payouts, hq: money.hq,
   broadcast: comms.broadcast, community: comms.community, events: comms.events,
   settings: system.settings, audit: system.audit, data: system.data,
+  kpi: kpiPage,
 };
 const DETAILS = { users: people.userDetail, groups: groups.groupDetail, events: comms.eventDetail };
 // 예전 주소 호환

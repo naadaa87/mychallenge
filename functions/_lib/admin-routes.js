@@ -635,7 +635,7 @@ export function registerAdminRoutes(on, h) {
   });
 
   // ─────────────────────────────── 시스템·백업 ───────────────────────────────
-  const BACKUP_SKIP = ['sessions', 'login_attempts', 'view_logs'];
+  const BACKUP_SKIP = ['sessions', 'login_attempts', 'view_logs', 'analytics_events'];
   on('GET', '/admin/system', async ({ db, user }) => {
     requireStaff(user);
     const tables = (await all(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name")).map(r => r.name);

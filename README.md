@@ -10,15 +10,16 @@
 | 회원 공간 | `/app/#/login`, `/app/#/dashboard` … | 가입·챌린지·체크인·장부·합의서·정산·페이퍼·운영본부 화면. 검색엔진에는 노출하지 않습니다(noindex) |
 | 검색엔진용 | `/sitemap.xml`, `/rss.xml`, `/robots.txt` | 사이트맵(공개 페이퍼 자동 포함), RSS(가이드 + 페이퍼), 크롤러 안내 |
 
-기획 문서(MC-01~05, 통합 기획서 v2.0)는 `docs/` 폴더에 있고, 검색 노출 운영 방법은 **[docs/SEO-가이드.md](docs/SEO-가이드.md)**, 운영본부 콘솔 사용법은 **[docs/운영본부-가이드.md](docs/운영본부-가이드.md)**에 정리했습니다.
+기획 문서(MC-01~05, 통합 기획서 v2.0)는 `docs/` 폴더에 있고, 검색 노출 운영 방법은 **[docs/SEO-가이드.md](docs/SEO-가이드.md)**, 운영본부 콘솔 사용법은 **[docs/운영본부-가이드.md](docs/운영본부-가이드.md)**, KPI 지표의 정의는 **[docs/KPI-정의.md](docs/KPI-정의.md)**에 정리했습니다.
 
 ```
 public/                 Cloudflare Pages가 그대로 내보내는 폴더
   index.html, about/, guide/ …   ← 공개 사이트 (scripts/build-site.mjs 가 만든 결과물)
   assets/site.css, site.js       ← 공개 사이트 디자인·편의 기능
+  assets/track.js                ← 방문·클릭·머문 시간 기록 (공개 사이트·회원 공간 공통)
   assets/img/*.webp              ← 일러스트·아이콘 (scripts/make_images.py 로 생성, 배치는 functions/_site/art.js·pages.js)
   app/                           ← 회원 공간 (index.html, app.js, core.js, styles.css, views/*.js)
-  app/views/admin/               ← 운영본부 콘솔 (현황·받은 일·사람·챌린지·돈·소통·설정)
+  app/views/admin/               ← 운영본부 콘솔 (현황·KPI 지표·받은 일·사람·챌린지·돈·소통·설정)
   og/*.png, icon-*.png           ← 공유 미리보기 이미지·아이콘 (scripts/render-og.mjs 로 생성)
   _routes.json, _headers, robots.txt, site.webmanifest, 404.html
 functions/
@@ -26,7 +27,7 @@ functions/
   papers/[[path]].js    ← /papers/ 공개 페이퍼 페이지
   sitemap.xml.js, rss.xml.js
   _site/                ← 공개 사이트 원고와 레이아웃 (config.js, pages.js, guides.js, legal.js …)
-  _lib/                 ← 규칙 기본값, 정산 계산기, 공통 유틸, 운영본부 API(admin-routes.js)
+  _lib/                 ← 규칙 기본값, 정산 계산기, 공통 유틸, 운영본부 API(admin-routes.js), 이용 통계·KPI API(kpi-routes.js)
 scripts/                ← build-site.mjs (공개 페이지 생성), render-og.mjs (OG 이미지 생성)
 schema.sql              ← D1(SQLite) 테이블 정의
 tests/                  ← 테스트·로컬 미리보기·SEO 점검
@@ -160,6 +161,16 @@ node tests/screenshots.js [--mobile]       # 주요 화면 캡처, 운영 화면
 
 ## 변경 기록
 
+- **v1.3 (2026-11-18)** — 이용 통계와 KPI 지표
+  - 방문 기록: 공개 사이트와 회원 공간의 페이지 보기, 머문 시간(화면이 보인 시간만), 링크·버튼·FAQ 클릭, 유입 출처와 UTM, 기기 종류를 직접 모읍니다. 외부 분석 도구 없이 D1에 저장하고, 운영진·검색 로봇·'추적 안 함' 브라우저는 세지 않습니다
+  - 운영본부 콘솔에 **분석 → KPI 지표** 메뉴 추가. 요약 / 방문·유입 / 콘텐츠 / 회원 / 모임·참여 / 커뮤니티 6개 탭, 기간(7일·30일·90일·1년) 선택, 지난 기간 대비 증감, 표마다 CSV 내려받기
+  - 요약: 유입 → 전환 → 참여 → 모임 → 성과 다섯 묶음 20개 지표와 추이
+  - 방문·유입: 방문자·방문·페이지뷰·머문 시간·한 페이지 이탈률, 출처별 신청 전환율, 들어온 사이트, 캠페인, 기기, 시간대·요일
+  - 콘텐츠: 가입 신청까지의 흐름, 신청 버튼을 누른 곳, 많이 본 페이지(머문 시간·바로 나감·여기서 떠남), 가이드 순위, 많이 펼친 FAQ, 많이 누른 링크, 페이퍼 열람, 회원 공간 화면
+  - 회원: DAU·WAU·MAU·고착도·잠든 회원, 가입 흐름, 등급 분포, 가입 월별 활동률, 회원별 활동 목록(검색·정렬)
+  - 모임·참여: 개설 수, 평균 인원·충원율, 지원 수락률, 중도 이탈률, 완주율, 회원 모임 참여율, 모임별 참여 현황, 일정별 참석률
+  - 커뮤니티: 글·댓글·도움돼요, 쓴 회원 수, 질문 답변율, 반응이 많았던 글, 많이 참여한 회원
+  - 개인정보처리방침에 이용 통계 항목·보관 기간(13개월)·브라우저 저장소 사용을 추가하고 시행일을 2026-11-18로 바꿈. 탈퇴하면 방문 기록과 회원 번호의 연결을 끊음
 - **v1.2.1 (2026-11-15)** — 일러스트 적용
   - 홈: 첫 화면 그림, '라운드 동안 보내는 시간' 장면 6컷, 수익 배분·숫자 섹션 스팟 그림, 등급 아이콘, 맺음 띠 그림
   - 소개·운영 방식·프로그램·FAQ·가입 신청·404에 머리 그림, 본문 곳곳에 장면·스팟 그림, 프로그램 9개에 각각 그림

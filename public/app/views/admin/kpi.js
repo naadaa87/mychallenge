@@ -1,0 +1,240 @@
+// KPI 지표 — 방문·유입, 콘텐츠, 회원, 모임·참여, 커뮤니티 (v1.3)
+import { api, esc, num, won, fmtDate, fmtLocal, ago, LEVEL_NAMES, BOARDS, EVENT_TYPES, lvChip, stageChip, typeChip, empty, toast } from '../../core.js';
+import { columns, hbars, qs } from './shared.js';
+
+const TABS = [['summary', '요약'], ['traffic', '방문·유입'], ['content', '콘텐츠'], ['members', '회원'], ['groups', '모임·참여'], ['community', '커뮤니티']];
+const RANGES = [[7, '7일'], [30, '30일'], [90, '90일'], [365, '1년']];
+const ZONES = { header: '머리글', hero: '첫 화면', body: '본문', cta: '맺음 띠', footer: '바닥글', nav: '메뉴', goal: '목표' };
+const AREAS = { site: '공개 사이트', paper: '프로젝트 페이퍼', app: '회원 공간' };
+const DEVICES = { mobile: '휴대폰', tablet: '태블릿', desktop: 'PC' };
+
+// ───────── 숫자 표시 ─────────
+const dur = s => s == null ? '-' : s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60 ? (s % 60) + '초' : ''}`.trim();
+function fmtVal(v, unit, f) {
+  if (v == null || Number.isNaN(v)) return '-';
+  if (f === 'dur' || unit === '초') return dur(v);
+  if (unit === '%') return `${v}<small>%</small>`;
+  return `${num(v)}<small>${unit || ''}</small>`;
+}
+function delta(cur, prev, unit, better = 'up') {
+  if (prev == null || cur == null) return '';
+  if (cur === prev) return '<span class="dl dl-flat">– 지난 기간과 같음</span>';
+  let txt;
+  if (unit === '%') txt = `${Math.abs(Math.round((cur - prev) * 10) / 10)}%p`;
+  else if (!prev) return `<span class="dl dl-flat">${cur > 0 ? '▲' : '▼'} 지난 기간 0${unit === '초' ? '' : unit}</span>`;
+  else txt = `${Math.abs(Math.round((cur - prev) / prev * 1000) / 10)}%`;
+  const up = cur > prev, good = better === 'up' ? up : !up;
+  return `<span class="dl ${good ? 'dl-good' : 'dl-bad'}">${up ? '▲' : '▼'} ${txt}</span>`;
+}
+function tile(c) {
+  return `<div class="kpi kpi-d"><div class="kpi-label">${esc(c.label)}</div><div class="kpi-num">${fmtVal(c.value, c.unit, c.fmt)}</div>${delta(c.value, c.prev, c.unit, c.better)}<div class="kpi-sub">${esc(c.def || '')}</div></div>`;
+}
+const T = (label, value, prev, unit, def, opt = {}) => tile({ label, value, prev, unit, def, ...opt });
+function labelsFor(p, keys) {
+  return keys.map(k => p.bucket === 'month' ? `${k.slice(2, 4)}.${Number(k.slice(5, 7))}` : `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}${p.bucket === 'week' ? '~' : ''}`);
+}
+const chart = (title, values, labels, unit, note = '') => `<div class="card"><div class="card-head"><h3 class="small">${title}</h3><span class="muted small">합계 ${num(values.reduce((a, b) => a + b, 0))}${unit}</span></div>${columns(values, labels, { unit, height: 110 })}${note ? `<p class="small muted" style="margin:8px 0 0">${note}</p>` : ''}</div>`;
+
+// ───────── 표 + CSV ─────────
+const TABLES = {};
+function table(id, cols, rows, { limit = 0, emptyText = '자료가 없습니다', csvName = id } = {}) {
+  TABLES[id] = { cols, rows, csvName };
+  if (!rows.length) return `<p class="muted small pad">${emptyText}</p>`;
+  const shown = limit ? rows.slice(0, limit) : rows;
+  return `<div class="table-wrap"><table class="tbl compact kpi-tbl"><thead><tr>${cols.map(c => `<th class="${c.num ? 'num' : ''}">${c.label}</th>`).join('')}</tr></thead><tbody>${shown.map(r => `<tr>${cols.map(c => `<td class="${c.num ? 'num' : ''}">${c.html ? c.html(r) : esc(c.get ? c.get(r) ?? '-' : r[c.key] ?? '-')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${limit && rows.length > limit ? `<p class="muted small" style="margin:6px 12px 10px">상위 ${limit}개만 보입니다. 전체는 CSV로 받으세요.</p>` : ''}`;
+}
+const csvBtn = id => `<button class="btn sm ghost" type="button" data-csv="${id}">CSV</button>`;
+function downloadCsv(id, p) {
+  const t = TABLES[id]; if (!t) return;
+  const cell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const lines = [t.cols.map(c => cell(c.label.replace(/<[^>]+>/g, ''))).join(',')];
+  for (const r of t.rows) lines.push(t.cols.map(c => cell(c.csv ? c.csv(r) : c.get ? c.get(r) : r[c.key])).join(','));
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `machal-kpi-${t.csvName}-${p.start}_${p.end}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+const sec = (title, inner, { csv, sub = '', flush = false } = {}) => `<section class="card${flush ? ' flush' : ''}"><div class="card-head${flush ? ' pad' : ''}"><h3>${title}${sub ? ` <small class="muted">${sub}</small>` : ''}</h3>${csv ? csvBtn(csv) : ''}</div>${inner}</section>`;
+const pathLink = (path, title) => `<a href="${esc(path)}" target="_blank" rel="noopener">${esc(title || path)}</a><br><small class="muted">${esc(path)}</small>`;
+const pct = v => v == null ? '-' : v + '%';
+
+// ───────── 탭별 화면 ─────────
+async function summary(range) {
+  const d = await api('/admin/kpi/summary?range=' + range);
+  const L = labelsFor(d.period, d.labels);
+  const groups = [...new Set(d.cards.map(c => c.group))];
+  const GROUP_NOTE = { 유입: '사람들이 얼마나 들어오나', 전환: '들어온 사람이 회원이 되나', 참여: '회원이 실제로 움직이나', 모임: '모임이 만들어지고 채워지나', 성과: '라운드의 결과' };
+  return {
+    note: !d.tracking_since ? '<div class="notice">방문 통계는 이번 업데이트 이후부터 쌓입니다. 방문·페이지뷰·머문 시간은 하루쯤 지나면 보이기 시작합니다. 회원·모임·커뮤니티 지표는 지금 바로 정확합니다.</div>'
+      : d.tracking_since > d.period.start ? `<div class="notice">방문 통계는 ${fmtDate(d.tracking_since)}부터 쌓였습니다. 그 이전 날짜의 방문 수치는 0으로 보입니다.</div>` : '',
+    body: `${groups.map(g => `<section class="adm-sec"><div class="adm-sec-head"><h2>${g}</h2><span class="muted small">${GROUP_NOTE[g] || ''}</span></div><div class="kpi-grid kpi-4">${d.cards.filter(c => c.group === g).map(tile).join('')}</div></section>`).join('')}
+      <section class="adm-sec"><div class="adm-sec-head"><h2>추이</h2><span class="muted small">${d.period.bucket === 'day' ? '하루' : d.period.bucket === 'week' ? '주' : '월'} 단위</span></div>
+        <div class="trend-grid trend-3">${chart('방문자', d.series.visitors, L, '명')}${chart('가입 신청', d.series.applications, L, '건')}${chart('새 회원', d.series.signups, L, '명')}</div></section>`,
+  };
+}
+
+async function traffic(range) {
+  const d = await api('/admin/kpi/traffic?range=' + range);
+  const L = labelsFor(d.period, d.labels); const c = d.cur, p = d.prev || {};
+  const totalSessions = d.sources.reduce((t, r) => t + r.sessions, 0);
+  const wd = ['월', '화', '수', '목', '금', '토', '일'];
+  return {
+    note: c.views === 0 ? '<div class="notice">이 기간에는 방문 기록이 없습니다. 방문 통계는 이번 업데이트 이후부터 쌓입니다.</div>' : '',
+    body: `<div class="kpi-grid kpi-4">
+        ${T('방문자', c.visitors, p.visitors, '명', '중복 없이 센 브라우저 수')}${T('방문', c.sessions, p.sessions, '회', '30분 넘게 쉬면 새 방문')}${T('페이지뷰', c.views, p.views, '회', '열어 본 화면 수')}${T('방문당 페이지', c.views_per_session, p.views_per_session, '쪽', '한 번 들어와서 본 페이지 수')}
+        ${T('방문당 머문 시간', c.avg_session_sec, p.avg_session_sec, '초', '화면이 실제로 보인 시간', { fmt: 'dur' })}${T('페이지당 머문 시간', c.avg_view_sec, p.avg_view_sec, '초', '페이지 하나를 본 평균 시간', { fmt: 'dur' })}${T('한 페이지만 보고 나간 비율', c.bounce_rate, p.bounce_rate, '%', '방문 중 페이지 하나만 본 비율', { better: 'down' })}${T('처음 온 방문자 비율', c.new_rate, p.new_rate, '%', '이 브라우저로 처음 들어온 방문자')}
+      </div>
+      <div class="trend-grid trend-3">${chart('방문자', d.series.visitors, L, '명')}${chart('방문', d.series.sessions, L, '회')}${chart('페이지뷰', d.series.views, L, '회')}</div>
+      <div class="adm-two wide-left">
+        ${sec('유입 출처', table('sources', [
+          { label: '출처', key: 'source' }, { label: '방문', key: 'sessions', num: 1, get: r => num(r.sessions), csv: r => r.sessions },
+          { label: '비율', num: 1, get: r => pct(totalSessions ? Math.round(r.sessions / totalSessions * 1000) / 10 : null) },
+          { label: '방문자', key: 'visitors', num: 1 }, { label: '신청서 제출', key: 'goals', num: 1 }, { label: '신청 전환율', num: 1, get: r => pct(r.conv) },
+        ], d.sources, { emptyText: '아직 유입 기록이 없습니다' }), { csv: 'sources', flush: true, sub: '방문의 첫 페이지 기준' })}
+        <div class="stack">
+          ${sec('기기', d.devices.length ? hbars(d.devices.map(r => [DEVICES[r.device] || r.device, r.visitors])) : '<p class="muted small">자료 없음</p>', { sub: '방문자 기준' })}
+          ${sec('영역', d.areas.length ? hbars(d.areas.map(r => [AREAS[r.area] || r.area, r.views]), { unit: '회' }) : '<p class="muted small">자료 없음</p>', { sub: '페이지뷰 기준' })}
+        </div>
+      </div>
+      <div class="trend-grid trend-2">
+        <div class="card"><h3 class="small card-title">시간대별 페이지뷰 <small class="muted">한국 시간</small></h3>${columns(d.hours, d.hours.map((_, i) => i + '시'), { unit: '회', height: 100, markLast: false })}</div>
+        <div class="card"><h3 class="small card-title">요일별 페이지뷰</h3>${columns(d.weekdays, wd, { unit: '회', height: 100, markLast: false })}</div>
+      </div>
+      <div class="adm-two">
+        ${sec('들어온 사이트', table('hosts', [{ label: '도메인', key: 'host' }, { label: '방문', key: 'sessions', num: 1 }], d.hosts, { emptyText: '바깥 사이트에서 들어온 기록이 없습니다' }), { csv: 'hosts', flush: true })}
+        ${sec('캠페인(UTM)', table('campaigns', [{ label: '캠페인', key: 'campaign' }, { label: '방문', key: 'sessions', num: 1 }, { label: '방문자', key: 'visitors', num: 1 }], d.campaigns, { emptyText: '캠페인 링크로 들어온 기록이 없습니다' })
+          + '<p class="small muted pad" style="padding-top:0">홍보 링크 뒤에 <code>?utm_source=instagram&amp;utm_campaign=1기모집</code>처럼 붙이면 어디서 온 방문인지 따로 셉니다.</p>', { csv: 'campaigns', flush: true })}
+      </div>`,
+  };
+}
+
+async function content(range) {
+  const d = await api('/admin/kpi/content?range=' + range);
+  const pageCols = [
+    { label: '페이지', html: r => pathLink(r.path, r.title), get: r => r.title || r.path, csv: r => r.path },
+    { label: '페이지뷰', key: 'views', num: 1 }, { label: '방문자', key: 'visitors', num: 1 },
+    { label: '평균 머문 시간', num: 1, get: r => dur(r.avg_sec), csv: r => r.avg_sec },
+    { label: '첫 페이지로 들어옴', key: 'entries', num: 1 }, { label: '바로 나감', num: 1, get: r => pct(r.bounce_rate) }, { label: '여기서 떠남', num: 1, get: r => pct(r.exit_rate) }, { label: '클릭', key: 'clicks', num: 1 },
+  ];
+  const maxG = Math.max(1, ...d.guides.map(g => g.views));
+  return {
+    body: `<div class="adm-two">
+        ${sec('가입 신청까지', hbars(d.apply_funnel, { unit: '회', showPct: true }) + '<p class="small muted" style="margin:10px 0 0">방문 단위로 셉니다. 신청서 제출은 브라우저에서 제출을 마친 경우만 셉니다.</p>')}
+        ${sec('가입 신청 버튼을 누른 곳', table('apply_from', [{ label: '페이지', key: 'path' }, { label: '위치', get: r => ZONES[r.zone] || r.zone || '-' }, { label: '클릭', key: 'n', num: 1 }], d.apply_from, { limit: 7, emptyText: '아직 클릭 기록이 없습니다' }), { csv: 'apply_from', flush: true })}
+      </div>
+      ${sec('많이 본 페이지', table('pages', pageCols, d.site, { limit: 30, emptyText: '아직 방문 기록이 없습니다' }), { csv: 'pages', flush: true, sub: '가이드 제외 · 공개 사이트' })}
+      <div class="adm-two wide-left">
+        ${sec('가장 많이 읽은 가이드', d.guides.length ? `<div class="hbars">${d.guides.slice(0, 11).map(g => `<div class="hbar" data-tip="${esc(g.title || g.path)} · ${num(g.views)}회 · 평균 ${dur(g.views ? g.avg_sec : 0)}"><div class="hbar-label"><a href="${esc(g.path)}" target="_blank" rel="noopener">${esc((g.title || g.path).replace(/ \|.*$/, ''))}</a></div><div class="hbar-track"><div class="hbar-fill" style="width:${Math.max(1.5, g.views / maxG * 100)}%"></div></div><div class="hbar-val">${num(g.views)}<small> · ${dur(g.avg_sec)}</small></div></div>`).join('')}</div>` : '<p class="muted small">아직 기록이 없습니다</p>', { csv: 'guides', sub: '페이지뷰 · 평균 머문 시간' })}
+        ${sec('많이 펼친 질문(FAQ)', table('faq', [{ label: '질문', key: 'label' }, { label: '펼침', key: 'n', num: 1 }, { label: '사람', key: 'visitors', num: 1 }], d.faq, { emptyText: '아직 기록이 없습니다' }), { csv: 'faq', flush: true })}
+      </div>
+      ${(TABLES.guides = { cols: pageCols, rows: d.guides, csvName: 'guides' }, '')}
+      ${sec('많이 누른 링크·버튼', table('clicks', [{ label: '누른 글자', get: r => r.label || '(글자 없음)' }, { label: '이동한 곳', get: r => r.target.startsWith('out:') ? '바깥: ' + r.target.slice(4) : r.target }, { label: '위치', get: r => ZONES[r.zone] || r.zone || '-' }, { label: '클릭', key: 'n', num: 1 }, { label: '누른 사람', key: 'visitors', num: 1 }], d.top_clicks, { limit: 20, emptyText: '아직 클릭 기록이 없습니다' }), { csv: 'clicks', flush: true })}
+      <div class="adm-two">
+        ${sec('프로젝트 페이퍼', table('papers', [{ label: '페이퍼', html: r => `${esc(r.title || r.path)}${r.full ? ' <span class="chip">회원 전문 열람</span>' : ''}`, get: r => r.title }, { label: '열람', key: 'views', num: 1 }, { label: '사람', key: 'visitors', num: 1 }], d.papers, { emptyText: '아직 열람 기록이 없습니다' }), { csv: 'papers', flush: true })}
+        ${sec('회원 공간에서 많이 쓴 화면', table('app', [{ label: '화면', key: 'path' }, { label: '페이지뷰', key: 'views', num: 1 }, { label: '평균 머문 시간', num: 1, get: r => dur(r.avg_sec), csv: r => r.avg_sec }], d.app, { limit: 15, emptyText: '아직 기록이 없습니다' }), { csv: 'app', flush: true })}
+      </div>
+      ${d.outbound.length ? sec('바깥으로 나간 링크', table('outbound', [{ label: '사이트', key: 'host' }, { label: '클릭', key: 'n', num: 1 }], d.outbound), { csv: 'outbound', flush: true }) : ''}`,
+  };
+}
+
+async function members(range) {
+  const d = await api('/admin/kpi/members?range=' + range);
+  const L = labelsFor(d.period, d.labels);
+  const listCols = [
+    { label: '회원', html: r => `<a href="#/admin/users/${r.id}"><b>${esc(r.nickname)}</b></a> ${lvChip(r.level)}${r.status !== 'active' ? ' <span class="chip">휴면</span>' : ''}<br><small class="muted">${esc(r.name || '')}</small>`, get: r => r.nickname },
+    { label: '가입', get: r => fmtDate(r.created_at) }, { label: '최근 접속', get: r => r.last_seen_at ? ago(r.last_seen_at) : '-', csv: r => r.last_seen_at || '' },
+    { label: '활동한 날', key: 'active_days', num: 1 }, { label: '화면', key: 'views', num: 1 }, { label: '머문 시간', num: 1, get: r => dur(r.secs || 0), csv: r => r.secs },
+    { label: '체크인', key: 'checkins', num: 1 }, { label: '완료 기록', key: 'done', num: 1 }, { label: '글·댓글', key: 'talk', num: 1 }, { label: '출석', key: 'attended', num: 1 }, { label: '진행 모임', key: 'groups', num: 1 }, { label: '포인트', key: 'points', num: 1 },
+  ];
+  const SORTS = { active: (a, b) => b.active_days - a.active_days || b.views - a.views, recent: (a, b) => (a.created_at < b.created_at ? 1 : -1), seen: (a, b) => String(b.last_seen_at || '').localeCompare(String(a.last_seen_at || '')), points: (a, b) => b.points - a.points, quiet: (a, b) => a.active_days - b.active_days || String(a.last_seen_at || '').localeCompare(String(b.last_seen_at || '')) };
+  const listHtml = (sort, q) => table('members', listCols, d.list.filter(r => !q || (r.nickname + ' ' + (r.name || '')).includes(q)).sort(SORTS[sort]), { emptyText: '회원이 없습니다' });
+  return {
+    body: `<div class="kpi-grid kpi-3">
+        ${T('정회원', d.members, null, '명', '오리엔테이션을 마친 활동 회원(L1 이상)')}${T('오늘 활동 회원 (DAU)', d.dau, null, '명', '오늘 회원 공간 방문 또는 기록이 있는 회원')}${T('7일 활동 회원 (WAU)', d.wau, null, '명', '최근 7일')}
+        ${T('30일 활동 회원 (MAU)', d.mau, null, '명', '최근 30일')}${T('고착도 (DAU ÷ MAU)', d.stickiness, null, '%', '한 달 활동 회원 중 오늘도 들어온 비율')}${T('잠든 회원', d.dormant, null, '명', '30일 넘게 접속하지 않은 정회원', { better: 'down' })}
+      </div>
+      <div class="trend-grid trend-3">${chart('가입 신청', d.series.applications, L, '건')}${chart('새 회원', d.series.signups, L, '명')}${chart('활동 회원', d.series.active, L, '명', '구간마다 활동한 회원 수')}</div>
+      <div class="adm-two">
+        ${sec('가입 흐름', hbars(d.funnel, { showPct: true }) + '<p class="small muted" style="margin:10px 0 0">위 세 줄은 기간 안에 들어온 신청서, 아래 세 줄은 기간 안에 가입한 회원 기준입니다.</p>', { sub: '이 기간' })}
+        <div class="stack">
+          ${sec('등급 분포', hbars(d.levels.map(l => [`${l.level} ${l.name}`, l.n])))}
+          ${sec('가입 월별 최근 30일 활동률', table('cohorts', [{ label: '가입 월', key: 'month' }, { label: '회원', key: 'members', num: 1 }, { label: '최근 30일 활동', key: 'active', num: 1 }, { label: '활동률', num: 1, get: r => pct(r.rate) }], d.cohorts), { csv: 'cohorts', flush: true })}
+        </div>
+      </div>
+      <section class="card flush"><div class="card-head pad"><h3>회원별 활동 <small class="muted">이 기간</small></h3><div class="row"><input type="search" class="mini-input" id="kpi-mq" placeholder="닉네임·이름"><select class="mini-input" id="kpi-ms"><option value="active">활동한 날 많은 순</option><option value="quiet">조용한 회원 먼저</option><option value="seen">최근 접속순</option><option value="recent">최근 가입순</option><option value="points">포인트순</option></select>${csvBtn('members')}</div></div><div id="kpi-mlist">${listHtml('active', '')}</div></section>`,
+    mount(root) {
+      const re = () => { root.querySelector('#kpi-mlist').innerHTML = listHtml(root.querySelector('#kpi-ms').value, root.querySelector('#kpi-mq').value.trim()); };
+      root.querySelector('#kpi-ms').addEventListener('change', re);
+      root.querySelector('#kpi-mq').addEventListener('input', re);
+    },
+  };
+}
+
+async function groups(range) {
+  const d = await api('/admin/kpi/groups?range=' + range);
+  const L = labelsFor(d.period, d.labels); const t = d.totals;
+  const STAGE = { proposed: '보완 중', review: '심사 중', recruiting: '모집 중', agreement: '합의 중', active: '진행 중', settling: '정산 중', closed: '종료', stopped: '중단' };
+  return {
+    body: `<div class="kpi-grid kpi-4">
+        ${T('새로 개설된 모임', t.opened, null, '개', `그룹·오피셜 제안 수 · 솔로 ${t.solo}개 별도`)}${T('진행 중인 모임', t.running, null, '개', '모집·합의·진행·정산 단계')}${T('모임 평균 인원', t.avg_size, null, '명', `진행 그룹 기준 · 충원율 ${pct(t.fill_rate)}(최대 ${t.max}명) · ${t.min}명 이상 ${pct(t.min_met)}`)}${T('회원 모임 참여율', t.participation, null, '%', `정회원 ${t.members}명 중 진행 중인 그룹에 있는 ${t.in_group}명`)}
+        ${T('지원 수락률', t.accept_rate, null, '%', '그룹원 지원 중 받아들인 비율')}${T('중도 이탈률', t.dropout_rate, null, '%', '그룹에 들어온 사람 중 이탈·제외된 비율', { better: 'down' })}${T('완주율', t.completion_rate, null, '%', '끝난 모임 중 중단 없이 종료한 비율')}${T('일정 참석률', d.attendance.rate, null, '%', `이 기간 일정 신청 ${d.attendance.registered}명 중 출석 ${d.attendance.attended}명`)}
+      </div>
+      <div class="trend-grid trend-3">${chart('새 모임 개설', d.series.opened, L, '개')}
+        <div class="card"><h3 class="small card-title">분야별 개설 <small class="muted">이 기간</small></h3>${hbars(d.by_field.map(f => [f.name, f.n]), { unit: '개' })}</div>
+        <div class="card"><h3 class="small card-title">단계별 모임 <small class="muted">지금</small></h3>${hbars(d.stages.map(s => [STAGE[s.stage] || s.stage, s.n]), { unit: '개' })}</div></div>
+      ${sec('모임별 참여 현황', table('groups', [
+        { label: '모임', html: r => `<a href="#/admin/groups/${r.id}"><b>${esc(r.title)}</b></a><br><small class="muted">${esc(r.leader)} · ${esc(r.field_name || '')}${r.round_name ? ' · ' + esc(r.round_name) : ''}</small>`, get: r => r.title },
+        { label: '단계', html: r => `${typeChip(r.type)} ${stageChip(r.stage)}`, get: r => STAGE[r.stage] || r.stage },
+        { label: '지원', key: 'applied', num: 1 }, { label: '수락', key: 'accepted', num: 1 },
+        { label: `활동 인원/${t.max}`, num: 1, html: r => `${r.active}${r.min_met ? '' : ' <span class="chip amber">최소 미달</span>'}`, get: r => r.active },
+        { label: '충원율', num: 1, get: r => pct(r.fill_rate) }, { label: '체크인 참여율', num: 1, get: r => pct(r.checkin_rate) },
+        { label: '완료 기록', key: 'done', num: 1 }, { label: '이탈', key: 'left_n', num: 1 }, { label: '외부 매출', num: 1, get: r => r.revenue ? won(r.revenue) : '-', csv: r => r.revenue },
+      ], d.groups, { emptyText: '아직 그룹 모임이 없습니다' }), { csv: 'groups', flush: true, sub: '진행 중인 모임 먼저' })}
+      ${sec('일정(오프라인·온라인 모임) 참석', table('events', [
+        { label: '일정', html: r => `<a href="#/admin/events/${r.id}"><b>${esc(r.title)}</b></a>${r.status === 'cancelled' ? ' <span class="chip red">취소</span>' : ''}<br><small class="muted">${esc(EVENT_TYPES[r.type] || r.type)}</small>`, get: r => r.title },
+        { label: '일시', get: r => fmtLocal(r.starts_at) }, { label: '정원', num: 1, get: r => r.capacity || '제한 없음' },
+        { label: '신청', key: 'registered', num: 1 }, { label: '출석', key: 'attended', num: 1 }, { label: '참석률', num: 1, get: r => pct(r.attend_rate) }, { label: '정원 대비 신청', num: 1, get: r => pct(r.fill_rate) },
+      ], d.events, { emptyText: '이 기간에 열린 일정이 없습니다' }), { csv: 'events', flush: true, sub: '이 기간에 열린 일정' })}`,
+  };
+}
+
+async function community(range) {
+  const d = await api('/admin/kpi/community?range=' + range);
+  const L = labelsFor(d.period, d.labels);
+  return {
+    body: `<div class="kpi-grid kpi-4">
+        ${T('새 글·댓글', d.cur.posts + d.cur.comments, d.prev.posts + d.prev.comments, '개', `글 ${d.cur.posts} · 댓글 ${d.cur.comments} · 숨긴 글과 운영진 글 제외`)}${T('도움돼요', d.cur.helpful, d.prev.helpful, '회', '회원이 다른 글에 누른 수')}${T('글·댓글 쓴 회원', d.writers, null, '명', '이 기간 한 번이라도 쓴 회원')}${T('질문 답변율', d.questions.rate, null, '%', `질문 ${d.questions.n}개 중 다른 회원이 답한 ${d.questions.answered}개`)}
+      </div>
+      <div class="trend-grid trend-3">${chart('새 글', d.series.posts, L, '개')}${chart('댓글', d.series.comments, L, '개')}
+        <div class="card"><h3 class="small card-title">게시판별 글</h3>${d.by_board.length ? hbars(d.by_board.map(b => [BOARDS[b.board] || b.board, b.n]), { unit: '개' }) : '<p class="muted small">자료 없음</p>'}</div></div>
+      <div class="adm-two wide-left">
+        ${sec('반응이 많았던 글', table('posts', [
+          { label: '글', html: r => `<a href="#/community/posts/${r.id}"><b>${esc(r.title)}</b></a><br><small class="muted">${esc(BOARDS[r.board] || r.board)} · ${esc(r.nickname)} · ${fmtDate(r.created_at)}</small>`, get: r => r.title },
+          { label: '읽음', key: 'views', num: 1 }, { label: '읽은 사람', key: 'readers', num: 1 }, { label: '댓글', key: 'comments', num: 1 }, { label: '도움돼요', key: 'helpful_count', num: 1 },
+        ], d.top, { emptyText: '이 기간에 쓴 글이 없습니다' }), { csv: 'posts', flush: true })}
+        ${sec('많이 참여한 회원', table('contributors', [{ label: '회원', html: r => `<a href="#/admin/users/${r.id}">${esc(r.nickname)}</a> ${lvChip(r.level)}`, get: r => r.nickname }, { label: '글', key: 'posts', num: 1 }, { label: '댓글', key: 'comments', num: 1 }], d.contributors, { emptyText: '자료가 없습니다' }), { csv: 'contributors', flush: true })}
+      </div>`,
+  };
+}
+
+const VIEWS = { summary, traffic, content, members, groups, community };
+
+export async function kpiPage({ query }) {
+  const tab = VIEWS[query.tab] ? query.tab : 'summary';
+  const range = RANGES.some(([r]) => String(r) === String(query.range)) ? Number(query.range) : 30;
+  for (const k of Object.keys(TABLES)) delete TABLES[k];
+  const out = await VIEWS[tab](range);
+  const today = new Date(Date.now() + 9 * 3600e3);
+  const start = new Date(today.getTime() - (range - 1) * 86400e3);
+  const f = d => `${d.getUTCMonth() + 1}월 ${d.getUTCDate()}일`;
+  const body = `<div class="toolbar kpi-bar"><div class="pill-tabs">${TABS.map(([k, l]) => `<a href="#/admin/kpi${qs({ tab: k === 'summary' ? '' : k, range: range === 30 ? '' : range })}" class="${tab === k ? 'active' : ''}">${l}</a>`).join('')}</div>
+      <div class="row"><span class="muted small">${f(start)} ~ ${f(today)} · 지난 기간과 비교</span><div class="pill-tabs sm">${RANGES.map(([r, l]) => `<a href="#/admin/kpi${qs({ tab: tab === 'summary' ? '' : tab, range: r === 30 ? '' : r })}" class="${range === r ? 'active' : ''}">${l}</a>`).join('')}</div></div></div>
+    <div class="kpi-body">${out.note || ''}${out.body}</div>
+    <p class="small muted" style="margin-top:14px">운영진 방문과 검색 로봇은 세지 않습니다. 브라우저에서 '추적 안 함'을 켠 방문자도 세지 않으므로 실제보다 조금 적게 나올 수 있습니다. 지표 정의는 저장소의 <code>docs/KPI-정의.md</code>에 있습니다.</p>`;
+  return {
+    title: 'KPI 지표', sub: '방문부터 가입, 모임 참여, 성과까지 한 화면에서 봅니다.', body,
+    mount(root) {
+      root.addEventListener('click', e => { const b = e.target.closest('[data-csv]'); if (!b) return; if (!TABLES[b.dataset.csv]?.rows.length) return toast('내려받을 자료가 없습니다', true); downloadCsv(b.dataset.csv, { start: start.toISOString().slice(0, 10), end: today.toISOString().slice(0, 10) }); });
+      if (out.mount) out.mount(root);
+    },
+  };
+}

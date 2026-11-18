@@ -142,6 +142,7 @@
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error || '신청서를 보내지 못했습니다. 잠시 뒤 다시 시도해 주세요.');
         try { localStorage.removeItem(KEY); } catch {}
+        try { window.machalTrack?.goal('apply', '가입 신청서 제출'); } catch {}
         form.hidden = true; $('.apply-steps').hidden = true;
         const done = $('.apply-done'); done.hidden = false; done.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch (err) { bad(err.message); }

@@ -68,6 +68,17 @@ function renderChrome() {
   navActive();
 }
 
+// 이용 통계: 같은 화면을 다시 그리는 경우(저장 후 새로고침)는 한 번만 센다. 운영진과 운영본부 화면은 세지 않는다.
+let lastTracked = null;
+function trackView(path) {
+  const t = window.machalTrack; if (!t) return;
+  if (path.startsWith('/admin') || state.me?.role === 'staff') { t.leave(); lastTracked = null; return; }
+  if (path === lastTracked) return;
+  lastTracked = path;
+  const title = (document.querySelector('#app h1, #app h2')?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  t.view('/app' + path, 'app', title);
+}
+
 let renderSeq = 0;
 async function route() {
   closeModal();
@@ -95,6 +106,7 @@ async function route() {
     if (typeof out !== 'string' && out.mount) await out.mount(view);
     window.scrollTo({ top: 0 });
     navActive();
+    trackView(path);
   } catch (e) {
     if (seq !== renderSeq) return;
     console.error(e);

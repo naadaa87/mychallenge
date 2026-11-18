@@ -4,6 +4,7 @@ import { api, post, esc, nl2br, ago, fmtDate, num, toast, modal, closeModal, bin
 // 사이드 메뉴 — [키, 이름, 묶음, 개수 키]
 export const MENU = [
   ['home', '현황', null],
+  ['kpi', 'KPI 지표', '분석'],
   ['applications', '가입 신청', '받은 일', 'applications'],
   ['challenges', '챌린지 심사', '받은 일', 'challenges'],
   ['agreements', '합의서 승인', '받은 일', 'agreements'],
@@ -106,12 +107,12 @@ export function waitChip(days, limit) {
 }
 
 // 세로 막대 (주간 추이 등). 한 가지 색, 마지막 값만 숫자로 표시하고 나머지는 마우스를 올리면 보인다.
-export function columns(values, labels, { unit = '', height = 96 } = {}) {
+export function columns(values, labels, { unit = '', height = 96, markLast = true } = {}) {
   const max = Math.max(1, ...values);
-  const last = values.length - 1;
+  const last = markLast ? values.length - 1 : -1;
   return `<div class="cols" style="--h:${height}px" role="img" aria-label="${esc(labels.map((l, i) => `${l} ${values[i]}${unit}`).join(', '))}">
     ${values.map((v, i) => `<div class="col" data-tip="${esc(labels[i])} · ${num(v)}${unit}"><div class="col-bar${i === last ? ' now' : ''}" style="height:${v ? Math.max(3, Math.round(v / max * 100)) : 0}%"></div>${i === last ? `<span class="col-val">${num(v)}</span>` : ''}</div>`).join('')}
-  </div><div class="cols-x"><span>${esc(labels[0])}</span><span>${esc(labels[last])}</span></div>`;
+  </div><div class="cols-x"><span>${esc(labels[0])}</span><span>${esc(labels[labels.length - 1])}</span></div>`;
 }
 // 가로 막대 (퍼널·분포)
 export function hbars(rows, { unit = '명', showPct = false } = {}) {

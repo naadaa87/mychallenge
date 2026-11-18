@@ -435,7 +435,7 @@ const au2 = await expectOk(c.get('/admin/audit?limit=5', { as: 'admin' }));
 ok(au2.rows.length === 5 && au2.next_before, 'audit paging');
 ok((await expectOk(c.get(`/admin/audit?limit=5&before=${au2.next_before}`, { as: 'admin' }))).rows[0].id < au2.next_before, 'audit next page');
 const sys = await expectOk(c.get('/admin/system', { as: 'b' }));
-ok(sys.tables.length === 38 && sys.migrations.length === 3, 'system info');
+ok(sys.tables.length === 39 && sys.migrations.length === 3, 'system info');
 await expectFail(c.get('/admin/backup', { as: 'b' }), 403, 'backup owner only');
 const bk = await expectOk(c.get('/admin/backup', { as: 'admin' }));
 ok(bk.tables.users.length > 0 && !('password_hash' in bk.tables.users[0]) && !bk.tables.sessions, 'backup safe');
@@ -444,5 +444,75 @@ eq((await c.get('/public/levels')).data.rules.L2.points, 300, 'settings reset to
 await expectOk(c.post('/admin/staff', { action: 'revoke', who: 'b@test.kr' }, { as: 'admin' }));
 await expectFail(c.get('/admin/dashboard', { as: 'b' }), 403, 'revoked staff');
 console.log('v1.2 운영본부 콘솔 ok');
+
+// 14. v1.3 — 이용 통계와 KPI
+{
+  const { classifySource } = await import('../functions/_lib/kpi-routes.js');
+  eq(classifySource('m.search.naver.com/search.naver').source, '네이버 검색');
+  eq(classifySource('l.instagram.com/').source, '인스타그램');
+  eq(classifySource(null).source, '직접 방문');
+  eq(classifySource(null, 'insta_bio / social').source, '캠페인 · insta_bio');
+  eq(classifySource('www.example.com/a').source, 'example.com');
+}
+const T = (e, o) => c.post('/t', { e }, o);
+const cnt = (sql, ...p) => db.db.prepare(sql).get(...p).c;
+const before = cnt('SELECT COUNT(*) AS c FROM analytics_events');
+eq((await T([{ k: 'view', a: 'site', p: '/', t: '마이챌린지', vid: 'vtest0001', sid: 'stest0001', device: 'mobile', n: 1, f: 1, r: 'search.naver.com/search.naver' },
+  { k: 'click', a: 'site', p: '/', g: '/apply/', l: '가입 신청하기', z: 'hero', vid: 'vtest0001', sid: 'stest0001' },
+  { k: 'leave', a: 'site', p: '/', d: 42, vid: 'vtest0001', sid: 'stest0001' },
+  { k: 'view', a: 'site', p: '/apply/', t: '가입 신청', vid: 'vtest0001', sid: 'stest0001' },
+  { k: 'click', a: 'site', p: '/apply/', g: 'goal:apply', l: '가입 신청서 제출', z: 'goal', vid: 'vtest0001', sid: 'stest0001' },
+  { k: 'view', a: 'site', p: '/x', vid: 'BAD id', sid: 'stest0001' },
+  { k: 'hack', p: '/', vid: 'vtest0001', sid: 'stest0001' },
+  { k: 'leave', a: 'site', p: '/apply/', d: 99999, vid: 'vtest0001', sid: 'stest0001' }])).status, 204, 'track accepted');
+eq(cnt('SELECT COUNT(*) AS c FROM analytics_events') - before, 6, 'invalid events dropped');
+eq(db.db.prepare("SELECT source FROM analytics_events WHERE sid = 'stest0001' AND entry = 1").get().source, '네이버 검색', 'source classified');
+eq(db.db.prepare("SELECT MAX(dur) AS d FROM analytics_events WHERE sid = 'stest0001'").get().d, 1800, 'dwell capped');
+await T([{ k: 'view', a: 'site', p: '/', vid: 'vadmin001', sid: 'sadmin001', f: 1 }], { as: 'admin' });
+eq(cnt("SELECT COUNT(*) AS c FROM analytics_events WHERE vid = 'vadmin001'"), 0, 'staff visits not counted');
+await T([{ k: 'view', a: 'app', p: '/app/dashboard', t: '대시보드', vid: 'vmemd0001', sid: 'smemd0001', f: 1 }, { k: 'view', a: 'app', p: `/app/community/posts/${po.id}`, vid: 'vmemd0001', sid: 'smemd0001' }], { as: 'd' });
+ok(db.db.prepare("SELECT user_id FROM analytics_events WHERE vid = 'vmemd0001' LIMIT 1").get().user_id === D.id, 'member visit linked');
+// 지난 30일 표본 (화면 점검용)
+{
+  const ins = db.db.prepare('INSERT INTO analytics_events (day, hour, vid, sid, user_id, kind, area, path, title, source, ref_host, target, label, zone, dur, device, is_new, entry) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+  const kst = d => new Date(Date.now() + 9 * 3600e3 - d * 86400e3).toISOString().slice(0, 10);
+  const pages = [['/', '마이챌린지'], ['/how-it-works/', '운영 방식'], ['/rules/', '수익 배분 규칙'], ['/guide/side-project-start/', '사이드프로젝트 시작'], ['/guide/side-income-tax/', '부업 소득 세금'], ['/faq/', '자주 묻는 질문'], ['/apply/', '가입 신청'], ['/levels/', '등급과 포인트']];
+  const srcs = [['네이버 검색', 'search.naver.com'], ['직접 방문', null], ['인스타그램', 'instagram.com'], ['구글 검색', 'google.com'], ['네이버 블로그', 'blog.naver.com']];
+  let seed = 7; const rnd = n => { seed = (seed * 9301 + 49297) % 233280; return Math.floor(seed / 233280 * n); };
+  for (let d = 29; d >= 1; d--) {
+    const visits = 4 + rnd(8) + (d < 10 ? 4 : 0);
+    for (let v = 0; v < visits; v++) {
+      const vid = 'vs' + d + 'x' + v + 'aa', sid = 'ss' + d + 'x' + v + 'aa', [src, host] = srcs[rnd(srcs.length)], dev = rnd(3) ? 'mobile' : 'desktop', hour = 8 + rnd(15);
+      const n = 1 + rnd(4);
+      for (let i = 0; i < n; i++) {
+        const [path, title] = i === 0 ? pages[rnd(3)] : pages[rnd(pages.length)];
+        ins.run(kst(d), hour, vid, sid, null, 'view', 'site', path, title, i === 0 ? src : null, i === 0 ? host : null, null, null, null, null, dev, i === 0 && rnd(2) ? 1 : 0, i === 0 ? 1 : 0);
+        ins.run(kst(d), hour, vid, sid, null, 'leave', 'site', path, null, null, null, null, null, null, 10 + rnd(170), dev, 0, 0);
+        if (rnd(3) === 0) ins.run(kst(d), hour, vid, sid, null, 'click', 'site', path, null, null, null, '/apply/', '가입 신청하기', rnd(2) ? 'hero' : 'cta', null, dev, 0, 0);
+        if (path === '/faq/') ins.run(kst(d), hour, vid, sid, null, 'click', 'site', path, null, null, null, 'faq', ['회사에 다니면서 해도 되나요?', '수익이 안 나면 어떻게 되나요?', '참가비가 있나요?'][rnd(3)], 'body', null, dev, 0, 0);
+      }
+    }
+  }
+}
+await expectFail(c.get('/admin/kpi/summary', { as: 'e' }), 403, 'kpi staff only');
+const ks = await expectOk(c.get('/admin/kpi/summary?range=30', { as: 'admin' }));
+ok(ks.cards.length >= 20 && ks.labels.length === 30 && ks.series.visitors.length === 30 && ks.cards.find(x => x.key === 'visitors').value > 50 && ks.tracking_since, 'kpi summary');
+ok(ks.cards.find(x => x.key === 'apps').value >= 2 && ks.cards.find(x => x.key === 'checkin').value !== undefined, 'summary includes members data');
+const k7 = await expectOk(c.get('/admin/kpi/summary?range=7', { as: 'admin' }));
+ok(k7.labels.length === 7 && k7.period.prevEnd < k7.period.start, 'period 7');
+const kq = await expectOk(c.get('/admin/kpi/summary?range=90', { as: 'admin' }));
+ok(kq.period.bucket === 'week' && kq.labels.length >= 13, 'weekly buckets');
+const kt = await expectOk(c.get('/admin/kpi/traffic?range=30', { as: 'admin' }));
+const naverSrc = kt.sources.find(x => x.source === '네이버 검색');
+ok(naverSrc && naverSrc.goals >= 1 && kt.hours.length === 24 && kt.weekdays.length === 7 && kt.devices.length >= 2 && kt.cur.bounce_rate !== null, 'kpi traffic');
+const kc = await expectOk(c.get('/admin/kpi/content?range=30', { as: 'admin' }));
+ok(kc.site.find(x => x.path === '/').views > 10 && kc.guides.length >= 2 && kc.faq.length >= 1 && kc.apply_funnel[3][1] >= 1 && kc.app.some(x => x.path === '/app/community/posts/:id'), 'kpi content');
+const km = await expectOk(c.get('/admin/kpi/members?range=30', { as: 'admin' }));
+ok(km.list.length >= 4 && km.funnel.length === 6 && km.levels.length === 6 && km.mau >= 1 && km.list.find(x => x.id === D.id).views >= 2, 'kpi members');
+const kg = await expectOk(c.get('/admin/kpi/groups?range=30', { as: 'admin' }));
+ok(kg.groups.length >= 1 && kg.totals.min === 4 && 'participation' in kg.totals && Array.isArray(kg.events) && kg.by_field.length === 6, 'kpi groups');
+const kcm = await expectOk(c.get('/admin/kpi/community?range=30', { as: 'admin' }));
+ok(kcm.cur.posts >= 1 && kcm.top.length >= 1 && kcm.top.find(x => x.id === po.id)?.views >= 1, 'kpi community');
+console.log('v1.3 이용 통계·KPI ok');
 
 console.log('\nAPI 전체 흐름 테스트 통과 ✔');

@@ -34,7 +34,7 @@ export async function register() {
     <div class="form-error error"></div><button class="btn primary block" type="submit">가입하기</button></form></div></div>`;
   return { html, mount(root) { bindForms(root, { async reg(d) {
     if (!d.agree_terms || !d.agree_privacy) throw new Error('이용약관과 개인정보 수집·이용에 동의해야 가입할 수 있습니다');
-    await post('/auth/register', { ...d, agree_terms: true, agree_privacy: true }); await state.refreshMe(); go('#/onboarding');
+    await post('/auth/register', { ...d, agree_terms: true, agree_privacy: true }); try { window.machalTrack?.goal('signup', '초대 코드로 가입 완료'); } catch {} await state.refreshMe(); go('#/onboarding');
   } }); } };
 }
 

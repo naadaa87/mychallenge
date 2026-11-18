@@ -59,6 +59,30 @@ await go(BASE + '/app/');
 await wait(800);
 ok((await ev('location.hash')) === '#/login', '/app/ 첫 화면은 비로그인 상태면 로그인');
 
+// 이용 통계: 페이지 보기·캠페인·FAQ 펼침·버튼 클릭이 KPI에 잡힌다 (헤드리스 표시를 지운 브라우저 정보로)
+await send('Network.clearBrowserCookies'); // 운영진으로 로그인한 방문은 세지 않으므로 로그아웃 상태로
+await send('Network.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' });
+await go('about:blank');
+await send('Storage.clearDataForOrigin', { origin: BASE, storageTypes: 'local_storage' }); // 새 방문으로 시작
+const camp = 'kpi' + Date.now().toString(36);
+await go(BASE + `/faq/?utm_source=flowtest&utm_campaign=${camp}`);
+await ev(`document.querySelector('details.faq-item summary').click()`);
+await wait(300);
+await ev(`document.querySelector('main a[href="/apply/"]').click()`);
+await wait(1500);
+const kget = async p => (await fetch(BASE + '/api' + p, { headers: { cookie: 'machal_session=' + token } })).json();
+const kt = await kget('/admin/kpi/traffic?range=7');
+ok(kt.campaigns.some(c => c.campaign === `flowtest / ${camp}`), '캠페인 링크로 들어온 방문이 잡힌다');
+const kc = await kget('/admin/kpi/content?range=7');
+ok(kc.faq.length >= 1 && kc.apply_from.some(r => r.path === '/faq/'), 'FAQ 펼침과 가입 신청 버튼 클릭이 잡힌다');
+const faqRow = kc.site.find(r => r.path === '/faq/');
+ok(faqRow && faqRow.avg_sec !== null && kc.site.some(r => r.path === '/apply/'), '링크로 넘어가면 앞 페이지의 머문 시간과 다음 페이지 보기가 기록된다');
+const kin = await kget('/admin/kpi/summary?range=7');
+await go(BASE + '/');
+await wait(600);
+const kin2 = await kget('/admin/kpi/summary?range=7');
+ok(kin2.cards.find(c => c.key === 'views').value === kin.cards.find(c => c.key === 'views').value + 1, '페이지를 열면 바로 페이지뷰가 1 늘어난다');
+
 ws.close(); chrome.kill();
 if (fails.length) { console.log(`\n실패 ${fails.length}건`); process.exit(1); }
 console.log('\n공개 사이트 동작 점검 통과 ✔');

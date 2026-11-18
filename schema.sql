@@ -1,4 +1,4 @@
--- 마이챌린지(마챌) D1 스키마 v1.2
+-- 마이챌린지(마챌) D1 스키마 v1.3
 -- Cloudflare D1 콘솔 또는 `wrangler d1 execute machal-db --remote --file=schema.sql` 로 실행
 
 CREATE TABLE IF NOT EXISTS users (
@@ -443,3 +443,33 @@ CREATE TABLE IF NOT EXISTS hq_expenses (
   created_by INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ───────── v1.3 이용 통계 (KPI) ─────────
+-- 공개 사이트·회원 공간의 페이지 보기, 클릭, 머문 시간. IP와 브라우저 정보 원문은 저장하지 않는다. 13개월이 지나면 지운다.
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day TEXT NOT NULL,                         -- 한국 날짜 YYYY-MM-DD
+  hour INTEGER NOT NULL,                     -- 한국 시각 0~23
+  vid TEXT NOT NULL,                         -- 브라우저에 저장된 무작위 방문자 번호
+  sid TEXT NOT NULL,                         -- 방문(세션) 번호, 30분 쉬면 새로 만든다
+  user_id INTEGER,                           -- 로그인한 회원이면 회원 번호
+  kind TEXT NOT NULL,                        -- view | click | leave
+  area TEXT NOT NULL DEFAULT 'site',         -- site | paper | app
+  path TEXT NOT NULL,
+  title TEXT,                                -- view: 페이지 제목
+  source TEXT,                               -- view(방문 첫 페이지): 유입 출처 이름 (네이버 검색, 인스타그램, 직접 방문 …)
+  ref_host TEXT,                             -- view(방문 첫 페이지): 들어온 주소의 도메인
+  campaign TEXT,                             -- utm_source / utm_medium / utm_campaign
+  target TEXT,                               -- click: 누른 링크 주소 또는 종류
+  label TEXT,                                -- click: 누른 글자
+  zone TEXT,                                 -- click: header | hero | body | cta | footer | nav
+  dur INTEGER,                               -- leave: 화면에 보인 시간(초)
+  device TEXT,                               -- mobile | tablet | desktop
+  is_new INTEGER NOT NULL DEFAULT 0,         -- 이 브라우저의 첫 방문
+  entry INTEGER NOT NULL DEFAULT 0,          -- 방문의 첫 페이지
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ae_day ON analytics_events(day, kind);
+CREATE INDEX IF NOT EXISTS idx_ae_path ON analytics_events(path, kind, day);
+CREATE INDEX IF NOT EXISTS idx_ae_sid ON analytics_events(sid);
+CREATE INDEX IF NOT EXISTS idx_ae_user ON analytics_events(user_id, day);

@@ -74,8 +74,27 @@ await go('#/admin/payouts');
 ok(await ev(`getComputedStyle(document.querySelector('.adm-side')).display === 'none' && getComputedStyle(document.querySelector('.adm-mnav')).display !== 'none'`), '휴대폰에서는 사이드 메뉴 대신 메뉴 버튼이 보인다');
 await ev(`document.querySelector('.adm-mnav summary').click()`);
 await wait(200);
-ok(await ev(`document.querySelector('.adm-mnav').open && document.querySelectorAll('.adm-mnav-panel a').length === 20`), '메뉴 버튼을 누르면 전체 메뉴가 열린다');
+ok(await ev(`document.querySelector('.adm-mnav').open && document.querySelectorAll('.adm-mnav-panel a').length === 21`), '메뉴 버튼을 누르면 전체 메뉴가 열린다');
 await send('Emulation.clearDeviceMetricsOverride');
+
+// 6-1. KPI 지표 — 탭마다 숫자와 표가 뜬다
+for (const [tab, sel, n] of [['', '.kpi-d', 20], ['traffic', '.kpi-d', 8], ['content', '.kpi-tbl', 3], ['members', '#kpi-mlist .kpi-tbl', 1], ['groups', '.kpi-tbl', 1], ['community', '.kpi-d', 4]]) {
+  await go('#/admin/kpi' + (tab ? '?tab=' + tab : ''));
+  await wait(400);
+  const got = await ev(`document.querySelectorAll('${sel}').length`);
+  ok(got >= n && await ev(`!!document.querySelector('.adm-side a.active[href="#/admin/kpi"]') && !document.querySelector('.error-box')`), `KPI ${tab || 'summary'} 탭이 열린다 (${got})`);
+}
+await go('#/admin/kpi?range=7');
+ok(await ev(`document.querySelector('.kpi-bar .pill-tabs.sm a.active')?.textContent === '7일' && document.querySelectorAll('.cols')[0]?.children.length === 7`), '기간을 7일로 바꾸면 막대가 7개');
+await go('#/admin/kpi?tab=members');
+await ev(`(() => { const q = document.querySelector('#kpi-mq'); q.value = '메이커'; q.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await wait(200);
+const mrows = await ev(`document.querySelectorAll('#kpi-mlist tbody tr').length`);
+ok(mrows >= 1 && await ev(`[...document.querySelectorAll('#kpi-mlist tbody tr')].every(tr => tr.textContent.includes('메이커'))`), `회원 목록을 이름으로 거른다 (${mrows})`);
+const kpiTracked = Number((await (await fetch(BASE + '/api/admin/kpi/members?range=7', { headers: { cookie: 'machal_session=' + admin } })).json()).list.length >= 0);
+ok(kpiTracked === 1, 'KPI API 응답');
+await go('#/admin/kpi?tab=content');
+ok(await ev(`!!window.machalTrack && typeof window.machalTrack.goal === 'function'`), '회원 공간에 방문 기록 스크립트가 들어 있다');
 
 // 7. 일반 회원은 들어올 수 없다
 await send('Network.clearBrowserCookies');

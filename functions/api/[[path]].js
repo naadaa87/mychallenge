@@ -13,6 +13,7 @@ import { SCHEMA_STATEMENTS, SCHEMA_TABLES } from '../_lib/schema.generated.js';
 import { LEVELS, LEVEL_NAMES, FIELDS, ROLES, ROLE_WEIGHTS, BADGE_NAMES, levelIndex, quarterOf } from '../_lib/rules.js';
 import { computeSettlement, buildPayouts, RULE_VERSION } from '../_lib/settlement.js';
 import { registerAdminRoutes, runMigrations, isOwner, requireOwner } from '../_lib/admin-routes.js';
+import { registerKpiRoutes } from '../_lib/kpi-routes.js';
 
 const routes = [];
 const on = (method, pattern, handler) => routes.push({ method, parts: pattern.split('/').filter(Boolean), handler });
@@ -236,6 +237,7 @@ on('POST', '/me/withdraw', async ({ db, request, user }) => {
   for (const a of apps) await run(db, "UPDATE consents SET ip = NULL WHERE subject_type = 'application' AND subject_id = ?", a.id);
   await run(db, 'DELETE FROM sessions WHERE user_id = ?', user.id);
   await run(db, 'DELETE FROM notifications WHERE user_id = ?', user.id);
+  await run(db, 'UPDATE analytics_events SET user_id = NULL WHERE user_id = ?', user.id);
   await audit(db, user.id, 'user.withdraw', 'users:' + user.id);
   return jsonWithCookies({ ok: true }, [clearCookie(), markCookie(false)]);
 });
@@ -1205,6 +1207,8 @@ async function purgeOldApplications(db) {
 }
 // 현황·회원·그룹·지급·재원·알림·커뮤니티·일정·감사·백업 API는 _lib/admin-routes.js 에 있다.
 registerAdminRoutes(on, { purgeOldApplications, levelProgress, ledgerTotals });
+// 이용 통계 수집(/t)과 KPI(/admin/kpi/*)는 _lib/kpi-routes.js 에 있다.
+registerKpiRoutes(on);
 
 on('POST', '/admin/applications/:id', async ({ db, request, user, params }) => {
   requireStaff(user); const b = await readJson(request);

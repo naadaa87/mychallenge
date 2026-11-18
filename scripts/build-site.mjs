@@ -19,7 +19,7 @@ const ver = verification();
 const hash = files => { const h = createHash('sha1'); for (const f of files) h.update(readFileSync(join(pub, f))); return h.digest('hex').slice(0, 8); };
 // 일러스트가 바뀌어도 버전이 바뀌도록 그림 파일까지 함께 센다
 const imgFiles = existsSync(join(pub, 'assets/img')) ? readdirSync(join(pub, 'assets/img')).filter(f => f.endsWith('.webp')).sort().map(f => 'assets/img/' + f) : [];
-const assetVersion = hash(['assets/site.css', 'assets/site.js', ...imgFiles]);
+const assetVersion = hash(['assets/site.css', 'assets/site.js', 'assets/track.js', ...imgFiles]);
 const opts = { base, verification: ver, assetVersion };
 
 const ogFor = p => p.ogImage || (existsSync(join(pub, 'og', `${p.slug}.png`)) ? `/og/${p.slug}.png` : '/og/default.png');

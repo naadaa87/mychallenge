@@ -394,6 +394,29 @@ a.kpi:hover { border-color: #c9d4ff; text-decoration: none; }
 @media (min-width: 1100px) { .trend-grid { grid-template-columns: repeat(4, 1fr); } }
 .trend-grid .card { padding: 14px 14px 10px; }
 .trend-grid h3 { margin: 0; color: var(--ink-2); }
+.trend-grid.trend-3, .trend-grid.trend-2 { margin: 0 0 14px; }
+@media (min-width: 1100px) { .trend-grid.trend-3 { grid-template-columns: repeat(3, 1fr); } .trend-grid.trend-2 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .trend-grid.trend-3, .trend-grid.trend-2 { grid-template-columns: 1fr; } }
+.trend-grid .card-head { margin-bottom: 0; }
+.trend-grid h3.card-title { margin-bottom: 14px; }
+.kpi-body > .card { margin: 14px 0; }
+.kpi-body > .notice { margin-bottom: 14px; }
+
+/* KPI 지표 (v1.3) */
+.kpi-bar .row { gap: 10px; flex-wrap: wrap; }
+.pill-tabs.sm a { padding: 4px 10px; font-size: .8rem; }
+@media (min-width: 900px) { .kpi-grid.kpi-3 { grid-template-columns: repeat(3, 1fr); } }
+.kpi-d { display: flex; flex-direction: column; }
+.kpi-d .kpi-sub { margin-top: 6px; line-height: 1.45; }
+.dl { font-size: .78rem; font-weight: 750; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.dl-good { color: var(--green); }
+.dl-bad { color: var(--red); }
+.dl-flat { color: var(--muted); font-weight: 600; }
+.kpi-tbl td small { font-weight: 500; }
+.kpi-tbl td a { word-break: keep-all; }
+.kpi-tbl td, .kpi-tbl th { white-space: nowrap; }
+.kpi-tbl td:first-child { white-space: normal; }
+.card .card-head h3 small { font-size: .8rem; }
 .hbars { display: grid; gap: 7px; }
 .hbar { display: grid; grid-template-columns: minmax(84px, 34%) 1fr auto; gap: 10px; align-items: center; font-size: .86rem; position: relative; }
 .hbar-label { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -497,6 +520,8 @@ details.card[open] > summary::after { content: '접기'; }
 @media (max-width: 720px) {
   .adm .table-wrap > .tbl { min-width: 620px; }
   .adm .table-wrap > .tbl.compact, .adm .table-wrap > .tbl.perm { min-width: 0; }
+  .adm .table-wrap > .tbl.kpi-tbl { min-width: 560px; }
+  .kpi-tbl td:first-child { min-width: 150px; }
   .kpi-num { font-size: 1.3rem; }
   .adm-head h1 { font-size: 1.3rem; }
   .adm-today { padding: 14px; }

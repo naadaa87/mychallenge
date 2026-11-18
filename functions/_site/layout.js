@@ -147,6 +147,7 @@ ${withImageVersion(p.body, o.assetVersion)}
 </main>
 ${footer()}
 <script src="/assets/site.js${v}" defer></script>
+<script src="/assets/track.js${v}" defer></script>
 </body>
 </html>
 `;
