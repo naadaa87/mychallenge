@@ -35,6 +35,16 @@ export const SITE = {
     privacyEmail: '',     // 개인정보 문의 이메일 (비우면 email 사용)
   },
 
+  // 홈페이지 제작·유지관리자. 제작자 관리 프로그램으로 방문 현황 일부를 보냅니다(개인정보처리방침 1·2·5·9항).
+  // start 전에는 스크립트를 불러오지 않습니다(처리방침 시행일). 추적 안 함·GPC를 켠 브라우저도 불러오지 않습니다.
+  maintainer: {
+    name: '최시준',
+    site: 'choisijun.com',
+    script: 'https://choisijun.com/k1.js',
+    integrity: 'sha384-E7Xl7wiU1vNu5AUY41kJB1uV52L+UEvqwYRzRj4zdaBGAeyRfCll926ETRo39Jm6',
+    start: '2026-11-27',
+  },
+
   // 이용약관·개인정보처리방침 시행일. 문서를 고치면 이 날짜도 바꿉니다. 가입 동의 기록에 이 값이 남습니다.
   policyVersion: '2026-11-18',
 

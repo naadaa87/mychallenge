@@ -87,6 +87,13 @@ function footer() {
  * @param {object} p  path, title, description, body, crumbs, jsonld[], ogImage, ogType, published, modified, noindex, fullTitle
  * @param {object} o  base(사이트 주소), verification({naver, google}), assetVersion
  */
+// 제작자 관리 프로그램 스크립트. 시행일 전과 추적 안 함·GPC를 켠 브라우저에서는 불러오지 않는다.
+export function maintainerScript() {
+  const m = SITE.maintainer;
+  if (!m || !m.script) return '';
+  return `<script>(function(n,d){if(n.globalPrivacyControl===true||n.doNotTrack==='1'||window.doNotTrack==='1'||Date.now()<Date.parse('${m.start}T00:00:00+09:00'))return;var s=d.createElement('script');s.src='${m.script}';s.integrity='${m.integrity}';s.crossOrigin='anonymous';s.defer=true;d.body.appendChild(s);})(navigator,document);</script>`;
+}
+
 export function renderPage(p, o) {
   const base = o.base;
   const url = base + p.path;
@@ -148,7 +155,7 @@ ${withImageVersion(p.body, o.assetVersion)}
 ${footer()}
 <script src="/assets/site.js${v}" defer></script>
 <script src="/assets/track.js${v}" defer></script>
-<script defer src="https://choisijun.com/k1.js" integrity="sha384-E7Xl7wiU1vNu5AUY41kJB1uV52L+UEvqwYRzRj4zdaBGAeyRfCll926ETRo39Jm6" crossorigin="anonymous"></script>
+${maintainerScript()}
 </body>
 </html>
 `;

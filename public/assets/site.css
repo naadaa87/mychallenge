@@ -414,6 +414,7 @@ pre.template { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular,
 .legal { padding-top: 44px; padding-bottom: 80px; }
 .legal h2 { font-size: 1.2rem; margin-top: 2em; }
 .legal .table-wrap table { min-width: 0; }
+.legal td, .legal th { overflow-wrap: break-word; }
 .legal-date { margin-top: 2.4em; color: var(--muted); }
 
 /* 페이퍼 (Functions가 그림) */
