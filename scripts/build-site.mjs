@@ -38,6 +38,7 @@ for (const p of pages) {
 writeFileSync(join(pub, 'robots.txt'), `User-agent: *
 Allow: /
 Disallow: /api/
+Disallow: /cdn-cgi/
 
 Sitemap: ${base}/sitemap.xml
 `);
