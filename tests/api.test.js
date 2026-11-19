@@ -328,13 +328,13 @@ console.log('v1.1 동의·로그인 제한·내보내기·탈퇴·파기 ok');
   const { readFileSync } = await import('node:fs');
   // 예전(v1.1) 스키마 DB에 새 열이 붙는지 확인
   const oldSql = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8')
-    .replace(/^\s*recruit_until TEXT,.*$/m, '').replace(/^\s*status TEXT NOT NULL DEFAULT 'scheduled',.*$/m, '').replace(/^\s*hidden INTEGER NOT NULL DEFAULT 0,\s+-- v1\.2.*$/m, '');
+    .replace(/^\s*recruit_until TEXT,.*$/m, '').replace(/^\s*status TEXT NOT NULL DEFAULT 'scheduled',.*$/m, '').replace(/^\s*hidden INTEGER NOT NULL DEFAULT 0,\s+-- v1\.2.*$/m, '').replace(/^\s*scroll INTEGER,.*$/m, '');
   const old = new FakeD1(); old.db.exec(oldSql);
   const cols = t => old.db.prepare(`PRAGMA table_info(${t})`).all().map(r => r.name);
   ok(!cols('rounds').includes('recruit_until') && !cols('events').includes('status') && !cols('comments').includes('hidden'), 'old schema lacks v1.2 columns');
   await runMigrations(old); await runMigrations(old);
-  ok(cols('rounds').includes('recruit_until') && cols('events').includes('status') && cols('comments').includes('hidden'), 'migrations add columns');
-  eq(old.db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get().c, 3, 'migrations recorded once');
+  ok(cols('rounds').includes('recruit_until') && cols('events').includes('status') && cols('comments').includes('hidden') && cols('analytics_events').includes('scroll'), 'migrations add columns');
+  eq(old.db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get().c, 4, 'migrations recorded once');
 }
 eq((await expectOk(c.get('/me', { as: 'admin' }))).is_owner, true, 'setup account is owner');
 eq((await expectOk(c.get('/me', { as: 'b' }))).is_owner, false);
@@ -435,7 +435,7 @@ const au2 = await expectOk(c.get('/admin/audit?limit=5', { as: 'admin' }));
 ok(au2.rows.length === 5 && au2.next_before, 'audit paging');
 ok((await expectOk(c.get(`/admin/audit?limit=5&before=${au2.next_before}`, { as: 'admin' }))).rows[0].id < au2.next_before, 'audit next page');
 const sys = await expectOk(c.get('/admin/system', { as: 'b' }));
-ok(sys.tables.length === 39 && sys.migrations.length === 3, 'system info');
+ok(sys.tables.length === 39 && sys.migrations.length === 4, 'system info');
 await expectFail(c.get('/admin/backup', { as: 'b' }), 403, 'backup owner only');
 const bk = await expectOk(c.get('/admin/backup', { as: 'admin' }));
 ok(bk.tables.users.length > 0 && !('password_hash' in bk.tables.users[0]) && !bk.tables.sessions, 'backup safe');
@@ -456,10 +456,20 @@ console.log('v1.2 운영본부 콘솔 ok');
 }
 const T = (e, o) => c.post('/t', { e }, o);
 const cnt = (sql, ...p) => db.db.prepare(sql).get(...p).c;
+// 수집 시작일 전에는 모으지 않는다 (개인정보처리방침 시행일). 운영자만 바꾼다.
+const kstD = n => new Date(Date.now() + 9 * 3600e3 + n * 86400e3).toISOString().slice(0, 10);
+await expectFail(c.put('/admin/kpi/settings', { analytics: { start: '' } }, { as: 'e' }), 403, 'kpi settings owner only');
+await expectFail(c.put('/admin/kpi/settings', { analytics: { start: '11/25' } }, { as: 'admin' }), 400, 'bad start date');
+await expectOk(c.put('/admin/kpi/settings', { analytics: { enabled: true, start: kstD(1) } }, { as: 'admin' }));
+const gate0 = cnt('SELECT COUNT(*) AS c FROM analytics_events');
+await T([{ k: 'view', a: 'site', p: '/', vid: 'vgate0001', sid: 'sgate0001', f: 1 }]);
+eq(cnt('SELECT COUNT(*) AS c FROM analytics_events'), gate0, 'not collected before start date');
+eq((await expectOk(c.get('/admin/kpi/summary', { as: 'admin' }))).config.collecting, false, 'config shows not collecting');
+await expectOk(c.put('/admin/kpi/settings', { analytics: { enabled: true, start: '' }, reason: '테스트에서 바로 수집' }, { as: 'admin' }));
 const before = cnt('SELECT COUNT(*) AS c FROM analytics_events');
 eq((await T([{ k: 'view', a: 'site', p: '/', t: '마이챌린지', vid: 'vtest0001', sid: 'stest0001', device: 'mobile', n: 1, f: 1, r: 'search.naver.com/search.naver' },
   { k: 'click', a: 'site', p: '/', g: '/apply/', l: '가입 신청하기', z: 'hero', vid: 'vtest0001', sid: 'stest0001' },
-  { k: 'leave', a: 'site', p: '/', d: 42, vid: 'vtest0001', sid: 'stest0001' },
+  { k: 'leave', a: 'site', p: '/', d: 42, s: 75, vid: 'vtest0001', sid: 'stest0001' },
   { k: 'view', a: 'site', p: '/apply/', t: '가입 신청', vid: 'vtest0001', sid: 'stest0001' },
   { k: 'click', a: 'site', p: '/apply/', g: 'goal:apply', l: '가입 신청서 제출', z: 'goal', vid: 'vtest0001', sid: 'stest0001' },
   { k: 'view', a: 'site', p: '/x', vid: 'BAD id', sid: 'stest0001' },
@@ -468,6 +478,7 @@ eq((await T([{ k: 'view', a: 'site', p: '/', t: '마이챌린지', vid: 'vtest00
 eq(cnt('SELECT COUNT(*) AS c FROM analytics_events') - before, 6, 'invalid events dropped');
 eq(db.db.prepare("SELECT source FROM analytics_events WHERE sid = 'stest0001' AND entry = 1").get().source, '네이버 검색', 'source classified');
 eq(db.db.prepare("SELECT MAX(dur) AS d FROM analytics_events WHERE sid = 'stest0001'").get().d, 1800, 'dwell capped');
+eq(db.db.prepare("SELECT scroll FROM analytics_events WHERE sid = 'stest0001' AND kind = 'leave' AND path = '/'").get().scroll, 75, 'scroll stored');
 await T([{ k: 'view', a: 'site', p: '/', vid: 'vadmin001', sid: 'sadmin001', f: 1 }], { as: 'admin' });
 eq(cnt("SELECT COUNT(*) AS c FROM analytics_events WHERE vid = 'vadmin001'"), 0, 'staff visits not counted');
 await T([{ k: 'view', a: 'app', p: '/app/dashboard', t: '대시보드', vid: 'vmemd0001', sid: 'smemd0001', f: 1 }, { k: 'view', a: 'app', p: `/app/community/posts/${po.id}`, vid: 'vmemd0001', sid: 'smemd0001' }], { as: 'd' });
@@ -513,6 +524,29 @@ const kg = await expectOk(c.get('/admin/kpi/groups?range=30', { as: 'admin' }));
 ok(kg.groups.length >= 1 && kg.totals.min === 4 && 'participation' in kg.totals && Array.isArray(kg.events) && kg.by_field.length === 6, 'kpi groups');
 const kcm = await expectOk(c.get('/admin/kpi/community?range=30', { as: 'admin' }));
 ok(kcm.cur.posts >= 1 && kcm.top.length >= 1 && kcm.top.find(x => x.id === po.id)?.views >= 1, 'kpi community');
+// 기간 직접 고르기
+const kx = await expectOk(c.get(`/admin/kpi/summary?start=${kstD(-13)}&end=${kstD(0)}`, { as: 'admin' }));
+ok(kx.period.custom && kx.period.range === 14 && kx.labels.length === 14 && kx.period.prevEnd === kstD(-14), 'custom period');
+const kl = await expectOk(c.get(`/admin/kpi/summary?start=2020-01-01&end=${kstD(5)}`, { as: 'admin' }));
+ok(kl.period.range === 366 && kl.period.end === kstD(0) && kl.period.bucket === 'month', 'custom period clipped');
+// 페이지 상세
+const kd = await expectOk(c.get('/admin/kpi/content?range=30&path=/', { as: 'admin' }));
+ok(kd.detail && kd.detail.views > 10 && kd.detail.series.length === 30 && kd.detail.next.length >= 1 && kd.detail.clicks_list.some(x => x.target === '/apply/') && kd.detail.sources.length >= 1, 'page detail');
+ok(kd.site.find(x => x.path === '/').scroll === 75, 'page scroll column');
+const ka = await expectOk(c.get('/admin/kpi/content?range=30&path=/apply/', { as: 'admin' }));
+ok(ka.detail.goals.some(g => g.target === 'goal:apply' && g.n >= 1) && ka.detail.from.some(x => x.path === '/'), 'detail goals and previous page');
+// 월 목표
+const km0 = await expectOk(c.get('/admin/kpi/summary', { as: 'admin' }));
+ok(km0.month && km0.month.days_in_month >= 28 && km0.month.actual.visitors >= 1 && km0.config.is_owner && km0.config.collecting, 'month block');
+await expectOk(c.put('/admin/kpi/settings', { targets: { visitors: 300, apps: '20', signups: '' } }, { as: 'admin' }));
+eq((await expectOk(c.get('/admin/kpi/summary', { as: 'admin' }))).month.targets, { visitors: 300, views: 0, apps: 20, signups: 0, active: 0 }, 'targets saved');
+// 수집을 끄면 버린다
+await expectOk(c.put('/admin/kpi/settings', { analytics: { enabled: false } }, { as: 'admin' }));
+const off0 = cnt('SELECT COUNT(*) AS c FROM analytics_events');
+await T([{ k: 'view', a: 'site', p: '/', vid: 'voff00001', sid: 'soff00001', f: 1 }]);
+eq(cnt('SELECT COUNT(*) AS c FROM analytics_events'), off0, 'disabled drops events');
+await expectOk(c.put('/admin/kpi/settings', { analytics: { enabled: true, start: '' } }, { as: 'admin' }));
+ok((await expectOk(c.get('/admin/audit?action=kpi', { as: 'admin' }))).rows.length >= 4, 'kpi settings audited');
 console.log('v1.3 이용 통계·KPI ok');
 
 console.log('\nAPI 전체 흐름 테스트 통과 ✔');

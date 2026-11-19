@@ -52,6 +52,15 @@
   // 화면에 실제로 보인 시간만 센다 (다른 탭에 가 있던 시간은 빼기)
   let cur = null;
   function startClock() { if (cur) { cur.acc = 0; cur.since = document.visibilityState === 'visible' ? Date.now() : 0; } }
+  // 페이지를 어디까지 내려 봤는지(%) — 가장 많이 내려 본 위치만 기억한다
+  function measure() {
+    if (!cur) return;
+    const de = document.documentElement, h = Math.max(de.scrollHeight, document.body ? document.body.scrollHeight : 0);
+    const pct = h > 0 ? Math.min(100, Math.round((window.scrollY + window.innerHeight) / h * 100)) : 100;
+    if (pct > cur.scroll) cur.scroll = pct;
+  }
+  let ticking = false;
+  window.addEventListener('scroll', () => { if (ticking) return; ticking = true; requestAnimationFrame(() => { ticking = false; measure(); }); }, { passive: true });
   function elapsed() { if (!cur) return 0; return Math.round((cur.acc + (cur.since ? Date.now() - cur.since : 0)) / 1000); }
 
   function view(path, area = 'site', title = document.title) {
@@ -69,14 +78,16 @@
       if (c) ev.c = [q.get('utm_source'), q.get('utm_medium'), q.get('utm_campaign')].filter(Boolean).join(' / ').slice(0, 80);
     }
     isNew = 0;
-    cur = { path: ev.p, area, acc: 0, since: 0 };
+    cur = { path: ev.p, area, acc: 0, since: 0, scroll: 0 };
     startClock();
+    setTimeout(measure, 300);
     push(ev, true); // 페이지 보기는 바로 보낸다 (곧바로 다른 페이지로 가도 빠지지 않게)
   }
   function leave(now = false) {
     if (!cur) return;
     const d = Math.min(elapsed(), 1800);
-    if (d >= 1) push({ k: 'leave', a: cur.area, p: cur.path, d }, now); else if (now) send(true);
+    measure();
+    if (d >= 1) push({ k: 'leave', a: cur.area, p: cur.path, d, s: cur.scroll }, now); else if (now) send(true);
     cur = null;
   }
   function click(el) {
@@ -100,7 +111,8 @@
     if (document.visibilityState === 'hidden') {
       if (cur.since) { cur.acc += Date.now() - cur.since; cur.since = 0; }
       const d = Math.min(Math.round(cur.acc / 1000), 1800);
-      if (d >= 1) push({ k: 'leave', a: cur.area, p: cur.path, d }, true); else send(true);
+      measure();
+      if (d >= 1) push({ k: 'leave', a: cur.area, p: cur.path, d, s: cur.scroll }, true); else send(true);
       cur.acc = 0;
     }
     else { cur.since = Date.now(); session(); }

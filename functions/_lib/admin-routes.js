@@ -12,6 +12,7 @@ export const MIGRATIONS = [
   ['2026-11-14-rounds-recruit-until', 'ALTER TABLE rounds ADD COLUMN recruit_until TEXT'],
   ['2026-11-14-events-status', "ALTER TABLE events ADD COLUMN status TEXT NOT NULL DEFAULT 'scheduled'"],
   ['2026-11-14-comments-hidden', 'ALTER TABLE comments ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0'],
+  ['2026-11-19-analytics-scroll', 'ALTER TABLE analytics_events ADD COLUMN scroll INTEGER'],
 ];
 export async function runMigrations(db) {
   const done = new Set((await all(db, 'SELECT id FROM schema_migrations')).map(r => r.id));

@@ -164,10 +164,11 @@ export const ACTION_LABELS = {
   'broadcast.send': '단체 알림 발송', 'post.hide': '게시물 숨김', 'post.update': '게시물 처리', 'comment.hide': '댓글 숨김', 'comment.show': '댓글 다시 보이기',
   'challenge.create': '챌린지 제안', 'settlement.create': '정산표 작성', 'user.withdraw': '회원 탈퇴', 'payout.held': '지급 보류', 'payout.pending': '지급 대기로 되돌림',
   'member.accept': '그룹원 수락', 'member.reject': '그룹원 거절', 'member.remove': '그룹원 이탈 처리', 'member.role': '그룹원 역할 변경',
+  'kpi.settings': 'KPI 목표·수집 설정',
   'hq.expense.add': '재원 사용 기록', 'hq.expense.delete': '재원 기록 삭제', export: 'CSV 내려받기', 'backup.download': '전체 백업', 'member.withdraw': '회원 탈퇴',
 };
 export const actionLabel = a => ACTION_LABELS[a] || a;
-export const ACTION_GROUPS = [['', '전체 행동'], ['application', '가입'], ['challenge', '챌린지'], ['agreement', '합의서'], ['settlement', '정산'], ['payout', '지급'], ['paper', '페이퍼'], ['promotion', '승급'], ['user', '회원'], ['member', '그룹원'], ['staff', '운영진'], ['settings', '규칙'], ['event', '일정'], ['broadcast', '알림'], ['post', '게시물'], ['hq', '재원'], ['export', '내려받기'], ['backup', '백업']];
+export const ACTION_GROUPS = [['', '전체 행동'], ['application', '가입'], ['challenge', '챌린지'], ['agreement', '합의서'], ['settlement', '정산'], ['payout', '지급'], ['paper', '페이퍼'], ['promotion', '승급'], ['user', '회원'], ['member', '그룹원'], ['staff', '운영진'], ['settings', '규칙'], ['event', '일정'], ['broadcast', '알림'], ['post', '게시물'], ['hq', '재원'], ['kpi', 'KPI'], ['export', '내려받기'], ['backup', '백업']];
 export function targetLink(target) {
   const m = String(target || '').match(/^(users|challenges|applications|events|posts|settlements|papers):(\d+)/);
   if (!m) return esc(target || '');

@@ -1,6 +1,7 @@
 // 이용 통계 수집(/api/t)과 운영본부 KPI API(/api/admin/kpi/*) — v1.3
-import { one, all, run, requireStaff } from './util.js';
+import { one, all, run, requireStaff, bad, audit, str, intv, J } from './util.js';
 import { LEVELS, LEVEL_NAMES, FIELDS } from './rules.js';
+import { isOwner, requireOwner } from './admin-routes.js';
 
 // ───────────────────────── 날짜 ─────────────────────────
 const kstNow = () => new Date(Date.now() + 9 * 3600e3);
@@ -9,14 +10,31 @@ const addDays = (d, n) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x
 const mondayOf = d => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7)); return x.toISOString().slice(0, 10); };
 const K = col => `date(datetime(${col}, '+9 hours'))`; // UTC로 저장된 시각 → 한국 날짜
 
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+// 기간: range(7·30·90·365일) 또는 start~end 직접 지정(최대 1년). 비교 기간은 바로 앞의 같은 길이.
 export function period(query) {
-  const range = [7, 30, 90, 365].includes(Number(query.range)) ? Number(query.range) : 30;
-  const end = /^\d{4}-\d{2}-\d{2}$/.test(query.end || '') ? query.end : kstDate();
-  const start = addDays(end, -(range - 1));
+  const today = kstDate();
+  let end = DAY_RE.test(query.end || '') ? query.end : today;
+  if (end > today) end = today;
+  let start, range, custom = false;
+  if (DAY_RE.test(query.start || '')) {
+    start = query.start > end ? end : query.start;
+    range = Math.round((Date.parse(end + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z')) / 86400e3) + 1;
+    if (range > 366) { range = 366; start = addDays(end, -365); }
+    custom = true;
+  } else {
+    range = [7, 30, 90, 365].includes(Number(query.range)) ? Number(query.range) : 30;
+    start = addDays(end, -(range - 1));
+  }
   const prevEnd = addDays(start, -1);
   const prevStart = addDays(prevEnd, -(range - 1));
   const bucket = range <= 31 ? 'day' : range <= 120 ? 'week' : 'month';
-  return { range, start, end, prevStart, prevEnd, bucket };
+  return { range, start, end, prevStart, prevEnd, bucket, custom };
+}
+// 수집 여부: 운영자가 끄거나 시작일 전이면 모으지 않는다 (개인정보처리방침 시행일을 지키기 위해)
+export function collecting(settings) {
+  const a = settings.analytics || {};
+  return a.enabled !== false && !(a.start && kstDate() < a.start);
 }
 const bucketOf = (day, b) => b === 'day' ? day : b === 'week' ? mondayOf(day) : day.slice(0, 7);
 function buckets(p) {
@@ -68,7 +86,8 @@ async function purgeOld(db) {
 }
 
 export function registerKpiRoutes(on) {
-  on('POST', '/t', async ({ db, request, user }) => {
+  on('POST', '/t', async ({ db, request, user, settings }) => {
+    if (!collecting(settings)) return empty();
     if (BOT.test(request.headers.get('user-agent') || '')) return empty();
     if (user && user.role === 'staff') return empty(); // 운영진 방문은 세지 않는다
     const text = await request.text();
@@ -84,7 +103,7 @@ export function registerKpiRoutes(on) {
       if (!path.startsWith('/') || path.length > 200) continue;
       const area = ['site', 'paper', 'app'].includes(e.a) ? e.a : 'site';
       const device = ['mobile', 'tablet', 'desktop'].includes(e.device) ? e.device : null;
-      const v = { title: null, source: null, host: null, campaign: null, target: null, label: null, zone: null, dur: null, isNew: 0, entry: 0 };
+      const v = { title: null, source: null, host: null, campaign: null, target: null, label: null, zone: null, dur: null, scroll: null, isNew: 0, entry: 0 };
       if (e.k === 'view') {
         v.title = clip(e.t, 120); v.isNew = e.n ? 1 : 0; v.entry = e.f ? 1 : 0;
         if (v.entry) { v.campaign = clip(e.c, 80); const s = classifySource(clip(e.r, 120), v.campaign); v.source = s.source; v.host = s.host; }
@@ -93,9 +112,10 @@ export function registerKpiRoutes(on) {
         if (!v.target) continue;
       } else {
         const d = Math.round(Number(e.d)); if (!(d >= 1)) continue; v.dur = Math.min(d, 1800);
+        const sc = Math.round(Number(e.s)); if (sc >= 0 && sc <= 100) v.scroll = sc;
       }
-      stmts.push(db.prepare(`INSERT INTO analytics_events (day, hour, vid, sid, user_id, kind, area, path, title, source, ref_host, campaign, target, label, zone, dur, device, is_new, entry)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(day, hour, e.vid, e.sid, user ? user.id : null, e.k, area, path, v.title, v.source, v.host, v.campaign, v.target, v.label, v.zone, v.dur, device, v.isNew, v.entry));
+      stmts.push(db.prepare(`INSERT INTO analytics_events (day, hour, vid, sid, user_id, kind, area, path, title, source, ref_host, campaign, target, label, zone, dur, scroll, device, is_new, entry)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(day, hour, e.vid, e.sid, user ? user.id : null, e.k, area, path, v.title, v.source, v.host, v.campaign, v.target, v.label, v.zone, v.dur, v.scroll, device, v.isNew, v.entry));
     }
     if (stmts.length) { await db.batch(stmts); await purgeOld(db); }
     return empty();
@@ -206,10 +226,26 @@ export function registerKpiRoutes(on) {
       card('성과', 'new_rate', '처음 온 방문자 비율', cur.new_rate, pv(prev.new_rate), '%', '방문자 중 이 브라우저로 처음 들어온 사람 — 새 사람에게 닿고 있는지'),
       card('성과', 'goals', '신청서 제출 방문', cur.goals, pv(prev.goals), '회', '브라우저에서 가입 신청서 제출을 마친 방문 (홍보 효과 확인용)'),
     ];
+    // 이번 달 목표: 1일부터 오늘까지 실제 숫자
+    const today = kstDate(), mFirst = today.slice(0, 8) + '01';
+    const mt = await traffic(db, mFirst, today);
+    const lastDay = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).getUTCDate();
+    const month = {
+      month: today.slice(0, 7), days_elapsed: Number(today.slice(8)), days_in_month: lastDay,
+      targets: settings.kpi_targets || {},
+      actual: {
+        visitors: mt.visitors, views: mt.views,
+        apps: await c1(db, `SELECT COUNT(*) AS c FROM applications WHERE ${K('created_at')} BETWEEN ? AND ?`, mFirst, today),
+        signups: await c1(db, `SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND ${K('created_at')} BETWEEN ? AND ?`, mFirst, today),
+        active: await activeCount(db, mFirst, today),
+      },
+    };
     const vis = await all(db, "SELECT day, vid AS key FROM analytics_events WHERE kind = 'view' AND day BETWEEN ? AND ?", p.start, p.end);
     const sign = await all(db, `SELECT ${K('created_at')} AS day, COUNT(*) AS n FROM users WHERE role = 'member' AND ${K('created_at')} BETWEEN ? AND ? GROUP BY day`, p.start, p.end);
     const appsS = await all(db, `SELECT ${K('created_at')} AS day, COUNT(*) AS n FROM applications WHERE ${K('created_at')} BETWEEN ? AND ? GROUP BY day`, p.start, p.end);
-    return { period: p, labels: buckets(p), cards, series: { visitors: seriesDistinct(p, vis), applications: series(p, appsS), signups: series(p, sign) }, tracking_since, members };
+    const a = settings.analytics || {};
+    const config = { enabled: a.enabled !== false, start: a.start || '', collecting: collecting(settings), is_owner: await isOwner(db, user) };
+    return { period: p, labels: buckets(p), cards, series: { visitors: seriesDistinct(p, vis), applications: series(p, appsS), signups: series(p, sign) }, tracking_since, members, month, config };
   });
 
   // ─────────────────────── 방문·유입 ───────────────────────
@@ -250,7 +286,9 @@ export function registerKpiRoutes(on) {
       AND (SELECT COUNT(*) FROM analytics_events b WHERE b.sid = a.sid AND b.kind = 'view') = 1 GROUP BY a.path`, s, e)).map(r => [r.path, r.n]));
     const exits = Object.fromEntries((await all(db, `SELECT a.path, COUNT(*) AS n FROM analytics_events a WHERE a.kind = 'view' AND a.day BETWEEN ? AND ?
       AND a.id = (SELECT MAX(b.id) FROM analytics_events b WHERE b.sid = a.sid AND b.kind = 'view') GROUP BY a.path`, s, e)).map(r => [r.path, r.n]));
-    const rows = pages.map(r => ({ ...r, avg_sec: r.views ? Math.round((dwell[r.path] || 0) / r.views) : null, clicks: clicks[r.path] || 0, bounce_rate: rate(bounce[r.path] || 0, r.entries), exit_rate: rate(exits[r.path] || 0, r.views) }));
+    // 스크롤: 방문마다 그 페이지에서 가장 많이 내려 본 위치의 평균
+    const scrolls = Object.fromEntries((await all(db, `SELECT path, ROUND(AVG(sc)) AS sc FROM (SELECT sid, path, MAX(scroll) AS sc FROM analytics_events WHERE kind = 'leave' AND scroll IS NOT NULL AND day BETWEEN ? AND ? GROUP BY sid, path) GROUP BY path`, s, e)).map(r => [r.path, r.sc]));
+    const rows = pages.map(r => ({ ...r, avg_sec: r.views ? Math.round((dwell[r.path] || 0) / r.views) : null, scroll: scrolls[r.path] ?? null, clicks: clicks[r.path] || 0, bounce_rate: rate(bounce[r.path] || 0, r.entries), exit_rate: rate(exits[r.path] || 0, r.views) }));
     // 회원 공간 화면은 번호를 지워서 화면 종류별로 묶는다
     const appScreens = {};
     for (const r of rows.filter(r => r.area === 'app')) {
@@ -264,8 +302,24 @@ export function registerKpiRoutes(on) {
     const sessions = await c1(db, "SELECT COUNT(DISTINCT sid) AS c FROM analytics_events WHERE kind = 'view' AND day BETWEEN ? AND ?", s, e);
     const paperIds = rows.filter(r => /^\/papers\/\d+/.test(r.path)).map(r => Number(r.path.split('/')[2]));
     const paperTitles = paperIds.length ? Object.fromEntries((await all(db, `SELECT p.id, c.title FROM papers p JOIN challenges c ON c.id = p.challenge_id WHERE p.id IN (${paperIds.map(() => '?').join(',')})`, ...paperIds)).map(r => [r.id, r.title])) : {};
+    // 페이지 상세: 그 페이지에서 누른 것, 바로 들어온 출처, 앞뒤로 본 페이지
+    let detail = null;
+    if (query.path) {
+      const path = String(query.path).split('?')[0].slice(0, 200);
+      const row = rows.find(r => r.path === path) || { path, title: null, views: 0, visitors: 0, entries: 0, avg_sec: null, scroll: null, clicks: 0, bounce_rate: null, exit_rate: null };
+      const neighbor = (dir) => all(db, `SELECT n.path, COUNT(*) AS n FROM analytics_events a JOIN analytics_events n ON n.id = (SELECT ${dir === 'next' ? 'MIN' : 'MAX'}(x.id) FROM analytics_events x WHERE x.sid = a.sid AND x.kind = 'view' AND x.id ${dir === 'next' ? '>' : '<'} a.id)
+        WHERE a.kind = 'view' AND a.path = ? AND a.day BETWEEN ? AND ? GROUP BY n.path ORDER BY n DESC LIMIT 8`, path, s, e);
+      detail = {
+        ...row,
+        series: series(p, await all(db, "SELECT day, COUNT(*) AS n FROM analytics_events WHERE kind = 'view' AND path = ? AND day BETWEEN ? AND ? GROUP BY day", path, s, e)),
+        clicks_list: await all(db, "SELECT target, label, zone, COUNT(*) AS n, COUNT(DISTINCT vid) AS visitors FROM analytics_events WHERE kind = 'click' AND path = ? AND target NOT LIKE 'goal:%' AND day BETWEEN ? AND ? GROUP BY target, label ORDER BY n DESC LIMIT 15", path, s, e),
+        goals: await all(db, "SELECT target, COUNT(DISTINCT sid) AS n FROM analytics_events WHERE kind = 'click' AND path = ? AND target LIKE 'goal:%' AND day BETWEEN ? AND ? GROUP BY target", path, s, e),
+        sources: await all(db, "SELECT COALESCE(source, '직접 방문') AS source, COUNT(*) AS n FROM analytics_events WHERE kind = 'view' AND entry = 1 AND path = ? AND day BETWEEN ? AND ? GROUP BY source ORDER BY n DESC LIMIT 10", path, s, e),
+        from: await neighbor('prev'), next: await neighbor('next'),
+      };
+    }
     return {
-      period: p,
+      period: p, labels: buckets(p), detail,
       site: rows.filter(r => r.area === 'site' && !r.path.startsWith('/guide/')),
       guides: rows.filter(r => r.area === 'site' && /^\/guide\/[^/]+\/$/.test(r.path)),
       papers: [
@@ -408,5 +462,29 @@ export function registerKpiRoutes(on) {
           UNION ALL SELECT author_id, 0, 1 FROM comments WHERE hidden = 0 AND ${K('created_at')} BETWEEN ?1 AND ?2) x JOIN users u ON u.id = x.uid
         WHERE u.role = 'member' GROUP BY u.id ORDER BY posts * 3 + comments DESC LIMIT 15`, s, e),
     };
+  });
+
+  // ─────────────────────── 월 목표·수집 설정 (운영자) ───────────────────────
+  const saveSetting = (db, key, val, uid) => run(db, `INSERT INTO settings (key, value, version, updated_by) VALUES (?,?,1,?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, version = settings.version + 1, updated_by = excluded.updated_by, updated_at = datetime('now')`, key, J(val), uid);
+  on('PUT', '/admin/kpi/settings', async ({ db, request, user, settings }) => {
+    await requireOwner(db, user);
+    let b; try { b = JSON.parse(await request.text() || '{}'); } catch { throw bad('잘못된 JSON 본문입니다'); }
+    const changes = {};
+    if (b.targets && typeof b.targets === 'object') {
+      const t = {};
+      for (const k of ['visitors', 'views', 'apps', 'signups', 'active']) t[k] = b.targets[k] === '' || b.targets[k] == null ? 0 : intv(b.targets[k], '목표', { min: 0, max: 100000000 });
+      await saveSetting(db, 'kpi_targets', t, user.id); changes.targets = t;
+    }
+    if (b.analytics && typeof b.analytics === 'object') {
+      const cur = settings.analytics || {};
+      const start = b.analytics.start == null ? (cur.start || '') : String(b.analytics.start);
+      if (start && !DAY_RE.test(start)) throw bad('수집 시작일은 날짜로 넣어 주세요');
+      const val = { ...cur, enabled: b.analytics.enabled == null ? cur.enabled !== false : !!b.analytics.enabled, start };
+      await saveSetting(db, 'analytics', val, user.id); changes.analytics = val;
+    }
+    if (!Object.keys(changes).length) throw bad('바꿀 내용이 없습니다');
+    await audit(db, user.id, 'kpi.settings', 'settings:kpi', { reason: str(b.reason, 300) || undefined, ...changes });
+    return { ok: true, ...changes };
   });
 }

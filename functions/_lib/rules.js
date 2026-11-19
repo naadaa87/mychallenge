@@ -55,6 +55,10 @@ export const DEFAULT_SETTINGS = {
     { code: 'cross_feedback', title: '8주차 교차 피드백', week: 8 },
     { code: 'demo_day', title: '12주차 데모데이', week: 12 },
   ],
+  // 이용 통계 수집. start 전에는 모으지 않는다(개인정보처리방침 변경 시행일).
+  analytics: { enabled: true, start: '2026-11-25' },
+  // KPI 월 목표 (0이면 목표 없음)
+  kpi_targets: { visitors: 0, views: 0, apps: 0, signups: 0, active: 0 },
   review_items: [
     { key: 'asset', label: '그룹 자산 활용', weight: 2 },
     { key: 'pain', label: '불편의 실체', weight: 2 },

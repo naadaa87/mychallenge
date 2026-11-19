@@ -464,6 +464,7 @@ CREATE TABLE IF NOT EXISTS analytics_events (
   label TEXT,                                -- click: 누른 글자
   zone TEXT,                                 -- click: header | hero | body | cta | footer | nav
   dur INTEGER,                               -- leave: 화면에 보인 시간(초)
+  scroll INTEGER,                            -- leave: 그 페이지를 가장 많이 내려 본 위치(%)
   device TEXT,                               -- mobile | tablet | desktop
   is_new INTEGER NOT NULL DEFAULT 0,         -- 이 브라우저의 첫 방문
   entry INTEGER NOT NULL DEFAULT 0,          -- 방문의 첫 페이지

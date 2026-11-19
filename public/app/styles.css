@@ -534,3 +534,31 @@ details.card[open] > summary::after { content: '접기'; }
 .badge-tile .badge-img { width: 36px; height: 36px; flex: none; }
 .h-ic { display: flex; align-items: center; gap: 8px; }
 .h-ic img { flex: none; }
+
+/* ───── KPI 지표 보강: 기간 직접 고르기, 월 목표, 페이지 상세 ───── */
+.kpi-range { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; }
+.kpi-range[hidden] { display: none; }
+.kpi-range input[type=date] { padding: 6px 9px; border: 1px solid var(--line); border-radius: 9px; background: #fff; font: inherit; font-size: .88rem; }
+.kpi-month { margin: 0 0 18px; }
+.kpi-goals { display: grid; gap: 14px; }
+@media (min-width: 900px) { .kpi-goals { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); } }
+.kpi-goal-h { display: flex; justify-content: space-between; gap: 8px; font-size: .88rem; flex-wrap: wrap; }
+.kpi-goal .progress { margin: 6px 0 4px; }
+.kpi-goal .dl { margin: 0; }
+.kpi-detail { border-color: #d9e2ff; }
+.kpi-detail .card-head h3 { overflow-wrap: anywhere; }
+.kpi-detail .kpi-grid { margin-top: 4px; }
+.kpi-detail-two { margin: 14px 0 0; }
+.kpi-detail h4.small { margin: 12px 0 6px; color: var(--ink-2); }
+.kpi-detail h4.small:first-child { margin-top: 0; }
+.kpi-mini { list-style: none; margin: 0 0 4px; padding: 0; }
+.kpi-mini li { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: .88rem; }
+.kpi-mini li:last-child { border-bottom: 0; }
+.kpi-mini li > span, .kpi-mini li > a { min-width: 0; overflow-wrap: anywhere; }
+.kpi-mini b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kpi-form-cols { display: grid; gap: 0 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 480px) { .kpi-form-cols { grid-template-columns: 1fr; } }
+.kpi-hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+.kpi-body code, .kpi-bar + * code { overflow-wrap: anywhere; }
+/* 넓은 표가 휴대폰에서 운영본부 화면 전체를 옆으로 밀어내지 않게 (표는 .table-wrap 안에서 넘긴다) */
+.adm-main { min-width: 0; }
