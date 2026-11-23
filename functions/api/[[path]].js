@@ -14,6 +14,7 @@ import { LEVELS, LEVEL_NAMES, FIELDS, BADGE_NAMES, BOARDS, EVENT_TYPES, EVENT_TO
 import { registerGroupRoutes, myGroupsSummary, loadGroup, membership, activeMembers, isActive, isManagerOf, isLeaderOf, groupAttendance, emptyStats, band, kstNow } from '../_lib/group-routes.js';
 import { registerAdminRoutes, runMigrations, isOwner, requireOwner } from '../_lib/admin-routes.js';
 import { registerKpiRoutes } from '../_lib/kpi-routes.js';
+import { registerCommunityRoutes, chatInfo } from '../_lib/community-routes.js';
 
 const routes = [];
 const on = (method, pattern, handler) => routes.push({ method, parts: pattern.split('/').filter(Boolean), handler });
@@ -236,7 +237,7 @@ async function meSummary(db, settings, u) {
   const groups = (await all(db, "SELECT c.id, c.title, c.stage, c.type, c.field_code, gm.role, gm.status AS member_status FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = ? AND gm.status IN ('active','applied') AND c.stage IN ('recruiting','active') ORDER BY c.updated_at DESC", u.id))
     .map(g => ({ ...g, type_name: GROUP_TYPES[g.type] || g.type }));
   const progress = await levelProgress(db, settings, u, pts, badges);
-  return { ...u, community_chat: SITE.communityChat || null, can_lead: !!u.can_lead || u.role === 'staff', asset_diag: parseJ(u.asset_diag, null), level_name: levelName(u.level), points: pts, badges: badges.map(b => ({ ...b, name: BADGE_NAMES[b.code] || b.code })), unread: unread?.c || 0, groups, progress, is_owner: u.role === 'staff' ? await isOwner(db, u) : false };
+  return { ...u, community_chat: chatInfo(settings), chat_status: u.chat_status || 'none', can_lead: !!u.can_lead || u.role === 'staff', asset_diag: parseJ(u.asset_diag, null), level_name: levelName(u.level), points: pts, badges: badges.map(b => ({ ...b, name: BADGE_NAMES[b.code] || b.code })), unread: unread?.c || 0, groups, progress, is_owner: u.role === 'staff' ? await isOwner(db, u) : false };
 }
 
 async function levelProgress(db, settings, u, pts, badges) {
@@ -649,6 +650,7 @@ registerGroupRoutes(on);
 registerAdminRoutes(on, { purgeOldApplications, levelProgress });
 // 이용 통계 수집(/t)과 KPI(/admin/kpi/*)는 _lib/kpi-routes.js 에 있다.
 registerKpiRoutes(on);
+registerCommunityRoutes(on);
 
 on('POST', '/admin/applications/:id', async ({ db, request, user, params }) => {
   requireStaff(user); const b = await readJson(request);

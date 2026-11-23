@@ -79,6 +79,7 @@ for (const [h, n, full] of [
   ['#/admin/broadcast', 'admin-broadcast'], ['#/admin/community?view=recent', 'admin-community'], ['#/admin/events?when=past', 'admin-events'], ['#/admin/events/1', 'admin-event'],
   ['#/admin/settings', 'admin-settings', true], ['#/admin/audit', 'admin-audit'], ['#/admin/data', 'admin-data'],
   ['#/admin/kpi', 'admin-kpi', true], ['#/admin/kpi?tab=traffic', 'admin-kpi-traffic', true], ['#/admin/kpi?tab=content', 'admin-kpi-content', true],
+  ['#/admin/chat', 'admin-chat', true], ['#/admin/chat?tab=compose&kind=groups', 'admin-chat-compose', true], ['#/admin/chat?tab=settings', 'admin-chat-settings', true], ['#/admin/onboarding?days=365', 'admin-onboarding', true],
   ['#/admin/kpi?tab=members', 'admin-kpi-members', true], ['#/admin/kpi?tab=groups', 'admin-kpi-groups', true], ['#/admin/kpi?tab=community', 'admin-kpi-community', true],
 ]) await shot(h, n, { full: !!full });
 await logout();
@@ -105,6 +106,8 @@ await login('e@test.kr', 'password1');
 await shot('#/papers/1', 'paper-summary-L2');
 await shot('#/groups/new', 'group-new-not-leader');
 await shot('#/me/leader', 'leader-apply');
+await shot('#/chat', 'member-chat', { full: true });
+await shot('#/dashboard', 'dashboard-e', { full: true });
 ws.close(); chrome.kill();
 if (errors.length) { console.log('\nJS 오류:'); errors.forEach(e => console.log(' -', e)); process.exit(1); }
 console.log('\n프런트 오류 없음 ✔');

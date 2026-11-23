@@ -1,6 +1,7 @@
 // 사람 — 회원 목록·상세, 운영진
 import { api, post, esc, nl2br, toast, go, reload, field, input, textarea, select, check, bindForms, bindActions, num, fmtDate, fmtLocal, ago, LEVEL_NAMES, LEVELS, FIELDS, ROLES, BADGES, EVENT_TYPES, lvChip, stageChip, typeChip, empty, modal, closeModal, progressBar } from '../../core.js';
 import { kpi, kv, pager, qs, notesBox, mountNotes, invalidateCounts, askReason } from './shared.js';
+import { chatChip, stateChip, ONBOARD_STEP_LIST } from './chat.js';
 
 const STATUS = { active: '활동', dormant: '휴면', removed: '제명·탈퇴' };
 const statusChip = s => s === 'active' ? '' : `<span class="chip ${s === 'removed' ? 'red' : 'amber'}">${STATUS[s] || s}</span>`;
@@ -38,6 +39,7 @@ export const people = {
     const attended = d.events.filter(e => e.status === 'attended').length;
     const lastApp = d.applications[0];
     const canEdit = u.role !== 'staff' || u.id === me.id || isOwner;
+    const ob = d.onboarding;
     const body = `
       <div class="kpi-grid kpi-4">
         ${kpi('활동 포인트', num(d.points.total) + '<small>점</small>', d.points.by_action.slice(0, 2).map(p => `${esc(p.label)} ${num(p.pts)}`).join(' · '))}
@@ -75,6 +77,12 @@ export const people = {
             ${kv([['이름', esc(u.name)], ['이메일', esc(u.email)], ['연락처', esc(u.phone || '-')], ['가입', fmtDate(u.created_at)], ['최근 접속', u.last_seen_at ? ago(u.last_seen_at) : '-'], ['관심 분야', esc(String(u.interests || '').split(',').filter(Boolean).map(x => FIELDS[x.trim()] || x).join(', ') || '-')], ['사업자', u.has_business ? '있음' : '없음'], ['오리엔테이션', u.onboarded ? '이수' : '미이수'], ['활동', `글 ${d.activity.posts} · 댓글 ${d.activity.comments} · 이의 ${d.activity.disputes}`]])}
             ${u.bio ? `<p class="small" style="margin:10px 0 0">${nl2br(u.bio)}</p>` : ''}
           </section>
+          ${ob ? `<section class="card"><div class="card-head"><h3>정착 단계</h3>${stateChip(ob.state)}</div>
+            <div class="check-list" style="margin-top:0">${ONBOARD_STEP_LIST.map(([k, n]) => `<div class="${ob.steps[k] ? 'ok' : ''}"><span>${ob.steps[k] ? '✓' : '·'}</span><span>${esc(n)}${k === 'chat' ? ' ' + chatChip(u.chat_status) : ''}${k === ob.next ? ' <small class="muted">← 다음 단계</small>' : ''}</span></div>`).join('')}</div>
+            <div class="btn-row" style="margin-top:10px">${ob.next ? `<button class="btn sm primary" data-act="nudge" ${ob.can_nudge ? '' : `data-force="1" data-confirm="최근에 안내를 보냈습니다. 그래도 '${esc(ob.next_name)}' 안내를 보낼까요?"`}>'${esc(ob.next_name)}' 안내 보내기</button>` : ''}
+              ${u.chat_status !== 'verified' ? '<button class="btn sm" data-act="chat" data-s="verified">단체카톡방 확인</button>' : ''}${['joined', 'verified', 'clicked'].includes(u.chat_status) ? '<button class="btn sm ghost" data-act="chat" data-s="left">나감으로 표시</button>' : ''}</div>
+            ${ob.nudge_history.length ? `<details style="margin-top:10px"><summary class="small"><b>보낸 안내</b> <span class="muted">${ob.nudge_history.length}건</span></summary><div class="list" style="margin-top:6px">${ob.nudge_history.map(n => `<div class="list-item small"><div class="grow">${esc(n.title)}<div class="meta">${esc(n.sent_by_name || '-')} · ${fmtDate(n.created_at, true)}</div></div></div>`).join('')}</div></details>` : '<p class="small muted" style="margin:10px 0 0">아직 보낸 안내가 없습니다.</p>'}
+          </section>` : ''}
           ${u.asset_diag ? `<section class="card"><div class="card-head"><h3>자기 자산 진단</h3></div><div class="app-form">${Object.entries(u.asset_diag).filter(([, v]) => v).map(([k, v]) => `<div><b>${esc({ time: '쓸 수 있는 시간', money: '쓸 수 있는 돈', skills: '기술', experience: '경험', relations: '사람·관계', space: '공간·장비', goal: '목표' }[k] || k)}</b><span>${nl2br(typeof v === 'object' ? JSON.stringify(v) : v)}</span></div>`).join('')}</div></section>` : ''}
           ${notesBox('user', u.id, d.notes, me.id, isOwner)}
           ${lastApp ? `<details class="card"><summary><b>가입 신청서</b> <small class="muted">${fmtDate(lastApp.created_at)}</small></summary><div class="app-form" style="margin-top:10px">${Object.entries(lastApp.form).filter(([, v]) => v).map(([k, v]) => `<div><b>${esc(k)}</b><span>${nl2br(v)}</span></div>`).join('')}</div></details>` : ''}
@@ -95,6 +103,8 @@ export const people = {
             { onMount(m) { bindForms(m, { async u(v) { const body = { reason: v.reason, evidence: v.reason }; if (v.level) body.level = v.level; if (v.status) body.status = v.status; if (v.badge) body.badge = v.badge; if (!v.level && !v.status && !v.badge) throw new Error('바꿀 항목을 골라 주세요'); if (v.status === 'removed' && !confirm('제명하면 바로 로그아웃되고 다시 로그인할 수 없습니다. 진행할까요?')) return; await post(`/admin/users/${u.id}`, body); closeModal(); toast('저장했습니다'); reload(); } }); } });
         },
         async temp() { if (!confirm(`${u.nickname}님의 임시 비밀번호를 만들까요? 지금 로그인된 기기는 모두 로그아웃됩니다.`)) return; const r = await post(`/admin/users/${u.id}`, { temp_password: true }); modal(`<h3>임시 비밀번호</h3><p>${esc(u.nickname)}님에게 직접 전해 주세요. 로그인한 뒤 내 정보에서 바꾸도록 안내합니다. 이 창을 닫으면 다시 볼 수 없습니다.</p><pre class="json" style="font-size:1.15rem">${esc(r.temp_password)}</pre><button class="btn primary" data-close-modal>닫기</button>`); },
+        async nudge(el) { const r = await post('/admin/onboarding/nudge', { ids: [u.id], force: !!el.dataset.force }); if (r.sent.length) toast(`'${ob.next_name}' 안내를 보냈습니다`); else toast(r.skipped[0]?.reason || '보내지 못했습니다', true); reload(); },
+        async chat(el) { await post('/admin/chat/members', { ids: [u.id], status: el.dataset.s }); invalidateCounts(); toast('바꿨습니다'); reload(); },
         async revoke(el) { await post(`/admin/users/${u.id}`, { revoke_badge_id: Number(el.dataset.id), reason: '운영진 회수' }); toast('회수했습니다'); reload(); },
         async lead(el) {
           const on = el.dataset.on === '1';

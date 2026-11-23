@@ -1,27 +1,73 @@
 import { fmtLocal, api, post, put, esc, nl2br, state, toast, go, reload, field, input, textarea, select, check, bindForms, bindActions, stat, num, pct, fmtDate, ago, won, LEVEL_NAMES, FIELDS, EVENT_TYPES, BADGES, ROLES, TYPE, attendChip, lvChip, stageChip, typeChip, pageHead, empty, progressBar, tabs, modal, closeModal } from '../core.js';
 
 // ---------------- 마챌 단체카톡방 안내 ----------------
-const CHAT_KEY = 'machal_chat_joined';
-const chatJoined = () => { try { return localStorage.getItem(CHAT_KEY) === '1'; } catch { return false; } };
-const markChatJoined = () => { try { localStorage.setItem(CHAT_KEY, '1'); } catch {} };
+// 참여 상태는 서버에 남긴다 (링크를 누름 → 참여했어요 → 운영진 확인). 운영본부가 같은 기록을 본다.
+const chatIn = me => ['joined', 'verified'].includes(me.chat_status);
+const CHAT_STATUS_TEXT = {
+  verified: ['운영진이 참여를 확인했습니다', 'green'],
+  joined: ['참여했다고 표시했습니다', 'blue'],
+  clicked: ['링크를 눌렀습니다', 'amber'],
+  left: ['대화방에서 나간 것으로 되어 있습니다', 'red'],
+  none: ['아직 들어오지 않았습니다', ''],
+};
 export function chatSteps(me) {
+  const c = me.community_chat || {};
   return `<ol class="steps-list small">
-    <li>아래 <b>단체카톡방 들어가기</b>를 누르면 카카오톡 오픈채팅방이 열립니다. 휴대폰은 카카오톡 앱으로, PC는 카카오톡 PC 앱이나 휴대폰으로 이어서 들어갑니다.</li>
+    <li><b>단체카톡방 들어가기</b>를 누르면 카카오톡 오픈채팅방이 열립니다. 휴대폰은 카카오톡 앱으로, PC는 카카오톡 PC 앱이나 휴대폰으로 이어서 들어갑니다.</li>
+    ${c.code ? `<li>참여코드를 물으면 <span class="kbd">${esc(c.code)}</span> 를 입력해 주세요. 회원끼리만 쓰는 코드라 밖에 알리지 말아 주세요.</li>` : ''}
     <li>대화방 프로필 이름은 마챌 닉네임 <b>${esc(me.nickname)}</b>(으)로 맞춰 주세요. 운영진과 다른 회원이 누구인지 알아보기 쉽습니다.</li>
     <li>들어오면 짧게 인사를 남겨 주세요. 관심 분야와 해 보고 싶은 것 한 가지면 충분합니다.</li>
-    <li>대화방에서는 정기모임 일정, 새 그룹 소식, 운영진 공지를 빠르게 받습니다. 그룹 참여, 출석, 기록은 홈페이지 회원 공간에서 합니다.</li>
+    <li>이 화면으로 돌아와 <b>참여했어요</b>를 눌러 주세요. 운영진이 대화방에서 닉네임을 확인하면 표시가 바뀝니다.</li>
   </ol>
-  <p class="small muted" style="margin:8px 0 0">광고, 투자 권유, 다른 모임 홍보는 올릴 수 없습니다. 대화방 주소는 회원끼리만 나눠 주세요.</p>`;
+  <p class="small muted" style="margin:8px 0 0">대화방에서는 정기모임 일정, 새 그룹 소식, 운영진 공지를 빠르게 받습니다. 그룹 참여, 출석, 기록은 홈페이지 회원 공간에서 합니다. 광고, 투자 권유, 다른 모임 홍보는 올릴 수 없고, 대화방 주소는 회원끼리만 나눠 주세요.</p>`;
 }
+const chatLink = (c, label, cls = 'btn primary') => `<a class="${cls}" href="${esc(c.url)}" target="_blank" rel="noopener" data-chat-link>${label}</a>`;
 function chatCard(me, { compact = false } = {}) {
   const c = me.community_chat; if (!c?.url) return '';
-  if (compact) return `<div class="card soft chat-card"><div class="card-head"><h3>💬 ${esc(c.name)}</h3><a class="btn sm" href="${esc(c.url)}" target="_blank" rel="noopener">들어가기</a></div><p class="small muted" style="margin:0">정기모임 일정, 새 그룹 소식, 운영진 공지를 대화방에서 빠르게 받아 보세요.</p></div>`;
+  if (compact) {
+    const [t, color] = CHAT_STATUS_TEXT[me.chat_status || 'none'] || CHAT_STATUS_TEXT.none;
+    return `<div class="card soft chat-card"><div class="card-head"><h3>💬 ${esc(c.name)}</h3>${chatLink(c, '들어가기', 'btn sm')}</div>
+      <p class="small" style="margin:0"><span class="chip ${color}">${t}</span> <a href="#/chat">참여 방법 보기</a></p></div>`;
+  }
   return `<div class="card chat-card is-new"><div class="card-head"><h3>💬 ${esc(c.name)}에 참여해 주세요</h3><span class="chip blue">회원 전용</span></div>
     <p class="small" style="margin:0 0 8px">마챌 회원이 모두 모여 있는 카카오톡 오픈채팅방입니다. 참여 방법은 이렇습니다.</p>
     ${chatSteps(me)}
-    <div class="btn-row" style="margin-top:12px"><a class="btn primary" href="${esc(c.url)}" target="_blank" rel="noopener" data-act="chatgo">단체카톡방 들어가기</a><button class="btn" data-act="chatdone">참여했어요</button></div></div>`;
+    <div class="btn-row" style="margin-top:12px">${chatLink(c, '단체카톡방 들어가기')}<button class="btn" data-act="chatdone">참여했어요</button></div></div>`;
 }
-const chatActions = () => ({ chatgo() { /* 링크는 그대로 열리고, 표시는 '참여했어요'에서 바꾼다 */ }, chatdone() { markChatJoined(); toast('고맙습니다. 대화방에서 만나요'); reload(); } });
+// 링크를 누른 사실만 조용히 남긴다. 페이지가 바뀌어도 요청이 끝나도록 keepalive를 쓰고, 링크 이동은 막지 않는다.
+function recordChatClick() {
+  try { fetch('/api/me/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'click' }), credentials: 'same-origin', keepalive: true }).catch(() => {}); } catch {}
+  if (state.me && (!state.me.chat_status || ['none', 'left'].includes(state.me.chat_status))) state.me.chat_status = 'clicked';
+}
+export function bindChat(root, { after } = {}) {
+  root.addEventListener('click', e => { const a = e.target.closest('[data-chat-link]'); if (a && root.contains(a)) { recordChatClick(); if (after) setTimeout(after, 60); } });
+}
+const chatActions = () => ({ async chatdone() {
+  const r = await post('/me/chat', { action: 'joined' });
+  if (state.me) state.me.chat_status = r.chat_status;
+  toast('고맙습니다. 대화방에서 만나요'); reload();
+} });
+
+// #/chat — 단체카톡방 참여 방법과 내 참여 상태
+export async function chat() {
+  const me = await api('/me'); state.me = me;
+  const c = me.community_chat;
+  if (!c?.url) return `<div class="wrap page" style="max-width:720px">${pageHead('마챌 단체카톡방')}${empty('지금은 단체카톡방 안내가 없습니다', '운영진이 대화방을 다시 열면 이 화면과 알림으로 알려 드립니다.', '<a class="btn" href="#/dashboard">홈으로</a>')}</div>`;
+  const st = me.chat_status || 'none';
+  const [t, color] = CHAT_STATUS_TEXT[st] || CHAT_STATUS_TEXT.none;
+  const html = `<div class="wrap page" style="max-width:720px">
+    ${pageHead(esc(c.name), '마챌 회원이 모두 모여 정기모임 일정, 새 그룹 소식, 운영진 공지를 나누는 카카오톡 오픈채팅방입니다.')}
+    <div class="stack">
+      <div class="card chat-card${chatIn(me) ? '' : ' is-new'}">
+        <div class="card-head"><h3>내 참여 상태</h3><span class="chip ${color}">${t}</span></div>
+        <p class="small" style="margin:0">${{ verified: '대화방에서 만나요. 닉네임을 바꿨다면 운영진에게 한 번 알려 주세요.', joined: '운영진이 대화방 참여자 목록에서 닉네임을 확인하면 "운영진 확인"으로 바뀝니다.', clicked: '대화방에 들어가셨다면 아래 "참여했어요"를 눌러 주세요.', left: '다시 들어오고 싶으면 언제든 아래 버튼으로 들어오시면 됩니다.', none: '아래 순서대로 들어와 주세요. 1분이면 됩니다.' }[st]}</p>
+        <div class="btn-row" style="margin-top:12px">${chatLink(c, '단체카톡방 들어가기')}${chatIn(me) ? '' : '<button class="btn" data-act="chatdone">참여했어요</button>'}</div>
+      </div>
+      ${c.intro ? `<div class="card soft"><h3>운영진 한마디</h3><p class="small" style="margin:0">${nl2br(c.intro)}</p></div>` : ''}
+      <div class="card"><h3>참여 방법</h3>${chatSteps(me)}</div>
+    </div></div>`;
+  return { html, mount(root) { bindChat(root); bindActions(root, chatActions()); } };
+}
 
 export async function onboarding({ me }) {
   if (me.onboarded) { go('#/dashboard'); return ''; }
@@ -45,9 +91,9 @@ export async function onboarding({ me }) {
     const c = (state.me || me).community_chat;
     if (!c?.url) { go('#/dashboard'); return; }
     modal(`<h3>환영합니다! 이제 ${esc(c.name)}에 참여해 주세요</h3><p class="small">마챌 회원이 모두 모여 정기모임 일정, 새 그룹 소식, 운영진 공지를 나누는 카카오톡 오픈채팅방입니다.</p>${chatSteps(state.me || me)}
-      <div class="btn-row" style="margin-top:14px"><a class="btn primary" href="${esc(c.url)}" target="_blank" rel="noopener" data-act="go">단체카톡방 들어가기</a><button class="btn" type="button" data-act="later">나중에 할게요</button></div>
-      <p class="small muted" style="margin:8px 0 0">나중에 들어가도 괜찮습니다. 대시보드와 내 정보 화면에서 언제든 다시 볼 수 있습니다.</p>`,
-      { onMount(mm) { bindActions(mm, { go() { markChatJoined(); closeModal(); go('#/dashboard'); }, later() { closeModal(); go('#/dashboard'); } }); } });
+      <div class="btn-row" style="margin-top:14px">${chatLink(c, '단체카톡방 들어가기')}<button class="btn" type="button" data-act="later">나중에 할게요</button></div>
+      <p class="small muted" style="margin:8px 0 0">나중에 들어가도 괜찮습니다. 홈 화면과 내 정보 화면에서 언제든 다시 볼 수 있습니다.</p>`,
+      { onMount(mm) { bindChat(mm, { after() { closeModal(); go('#/chat'); } }); bindActions(mm, { later() { closeModal(); go('#/dashboard'); } }); } });
   } }); } };
 }
 
@@ -62,7 +108,7 @@ export async function dashboard() {
     <div class="page-head"><div><h1>${esc(me.nickname)}님, 이번 주도 한 칸</h1><p>${lvChip(me.level)} · 포인트 ${num(me.points.total)}점 (이번 분기 ${num(me.points.quarter)}점)${me.can_lead ? ' · <span class="chip ink">그룹리더</span>' : ''}</p></div>
       <div class="btn-row">${canLead ? '<a class="btn primary" href="#/groups/new">그룹 만들기</a>' : ''}<a class="btn ${canLead ? '' : 'primary'}" href="#/groups">그룹 둘러보기</a><a class="btn" href="#/events">정기모임</a></div></div>
 
-    ${chatJoined() ? '' : `<div class="section" style="margin-top:0;margin-bottom:14px">${chatCard(me)}</div>`}
+    ${chatIn(me) ? '' : `<div class="section" style="margin-top:0;margin-bottom:14px">${chatCard(me)}</div>`}
     ${d.tasks.length ? `<div class="section" style="margin-top:0"><div class="stack">${d.tasks.map(t => `<div class="task-item ${t.type === 'warning' ? 'warn' : ''}"><span>${taskIc[t.type] || '·'} ${esc(t.text)}</span><a href="${t.link}">바로 가기 →</a></div>`).join('')}</div></div>` : ''}
 
     <div class="grid grid-2">
@@ -76,12 +122,12 @@ export async function dashboard() {
         ${prog && prog.next ? `<div class="card"><div class="card-head"><h3 class="h-ic"><img src="/assets/img/lv-${prog.next}.webp" width="30" height="30" alt="">다음 등급 · ${esc(prog.next_name)}</h3><a class="small" href="#/me">자세히</a></div><div class="stack">${prog.items.map(i => `<div><div class="row between small"><span>${i.done ? '✅' : '◻️'} ${esc(i.label)}</span><span class="muted">${i.manual ? '심사 시 확인' : `${num(i.cur)}/${num(i.goal)}`}</span></div>${i.manual ? '' : progressBar(i.cur, i.goal)}</div>`).join('')}</div></div>` : ''}
       </div>
       <div class="stack">
-        ${chatJoined() ? chatCard(me, { compact: true }) : ''}
+        ${chatIn(me) ? chatCard(me, { compact: true }) : ''}
         <div class="card"><div class="card-head"><h3>정기모임·일정</h3><a class="small" href="#/events">전체</a></div>${d.events.length ? `<div class="list">${d.events.map(e => `<a class="list-item" href="#/events" style="color:inherit"><div class="grow"><div class="title">${esc(e.title)}</div><div class="meta">${esc(e.type_name || EVENT_TYPES[e.type] || '')} · ${fmtLocal(e.starts_at)}${e.location ? ' · ' + esc(e.location) : ''}</div></div></a>`).join('')}</div>` : '<p class="muted small" style="margin:0">예정된 일정이 없습니다.</p>'}</div>
         <div class="card"><div class="card-head"><h3>커뮤니티 피드</h3><a class="small" href="#/community">더 보기</a></div>${d.feed.length ? d.feed.map(feedRow).join('') : '<p class="muted small" style="margin:0">아직 조용합니다. 그룹에서 첫 기록을 남기고 공유해 보세요.</p>'}</div>
       </div>
     </div></div>`;
-  return { html, mount(root) { bindActions(root, chatActions()); } };
+  return { html, mount(root) { bindChat(root); bindActions(root, chatActions()); } };
 }
 
 export function feedRow(f) {
@@ -112,7 +158,7 @@ export async function me({ me: cached }) {
         <div class="card soft small"><b>계정 정리</b><p class="muted" style="margin:4px 0 8px">탈퇴하면 개인정보는 지워지고, 그룹에 함께 남긴 출석·기록·성과는 이름 없이 남습니다.</p><button class="btn sm danger" data-act="withdraw">회원 탈퇴</button></div>
       </div>
     </div></div>`;
-  return { html, mount(root) { bindActions(root, {
+  return { html, mount(root) { bindChat(root); bindActions(root, {
     pw() { modal(`<h3>비밀번호 변경</h3><form class="form" data-form="pw">${field('지금 비밀번호', input('current', { type: 'password', required: true }))}${field('새 비밀번호 (8자 이상)', input('next', { type: 'password', required: true }))}<div class="btn-row"><button class="btn primary" type="submit">변경</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`, { onMount(m) { bindForms(m, { async pw(d) { await put('/me/password', d); closeModal(); toast('비밀번호를 바꿨습니다. 다른 기기의 로그인은 해제됐습니다'); } }); } }); },
     async logout() { await post('/auth/logout'); state.me = null; location.href = '/'; },
     withdraw() {

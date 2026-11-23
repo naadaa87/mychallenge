@@ -13,11 +13,13 @@ export const MENU = [
   ['promotions', '승급 심사', '받은 일', 'promotions'],
   ['disputes', '이의·신고', '받은 일', 'disputes'],
   ['users', '회원', '사람'],
+  ['onboarding', '신규 회원 정착', '사람'],
   ['staff', '운영진', '사람'],
   ['groups', '그룹 현황', '그룹'],
   ['rounds', '시즌', '그룹'],
   ['events', '정기모임·일정', '소통'],
   ['broadcast', '단체 알림', '소통'],
+  ['chat', '단체카톡방', '소통', 'chat'],
   ['community', '커뮤니티 관리', '소통', 'community'],
   ['settings', '규칙 설정', '설정'],
   ['audit', '감사 로그', '설정'],
@@ -88,6 +90,17 @@ export function mountShell(root) {
   });
   q.addEventListener('keydown', e => { if (e.key === 'Escape') { q.value = ''; close(); } if (e.key === 'Enter') { const a = box.querySelector('a'); if (a) { e.preventDefault(); location.hash = a.getAttribute('href'); } } });
   document.addEventListener('click', e => { if (!root.contains(e.target) || !e.target.closest('.adm-search')) close(); }, { capture: true });
+}
+
+// 가입 승인 안내문 (가입 신청·신규 회원 정착 화면에서 복사)
+export const inviteMessage = (code, email) => `안녕하세요, 마이챌린지(마챌) 운영본부입니다.\n가입 신청이 승인되었습니다.\n\n가입 페이지: ${location.origin}/app/#/register\n초대 코드: ${code}\n\n지원서에 적은 이메일(${email})로 가입해 주세요. 가입하고 5분짜리 오리엔테이션을 마치면 챌린저(L1)가 됩니다. 그다음 화면에서 마챌 단체카톡방 참여 방법을 안내해 드려요.`;
+export function copyBtn(text, label = '복사') { return `<button class="btn sm" type="button" data-copy="${esc(text)}">${label}</button>`; }
+export function bindCopy(root) {
+  root.addEventListener('click', async e => {
+    const b = e.target.closest('[data-copy]'); if (!b || !root.contains(b)) return;
+    const text = b.dataset.copySrc ? (root.querySelector(b.dataset.copySrc)?.value || '') : b.dataset.copy;
+    try { await navigator.clipboard.writeText(text); toast('복사했습니다'); } catch { toast('복사하지 못했습니다. 직접 선택해 복사해 주세요', true); }
+  });
 }
 
 export const STAGE_NAMES = { recruiting: '모집 중', active: '진행 중', closed: '종료', stopped: '중단' };
@@ -163,6 +176,7 @@ export const ACTION_LABELS = {
   'settings.update': '규칙 변경', 'settings.reset': '규칙 기본값 복원', 'round.create': '시즌 만들기', 'round.update': '시즌 수정',
   'event.create': '일정 생성', 'event.update': '일정 수정', 'event.cancel': '일정 취소', 'event.attend.mark': '출석 처리', 'event.attend.unmark': '출석 취소',
   'broadcast.send': '단체 알림 발송', 'post.hide': '게시물 숨김', 'post.update': '게시물 처리', 'comment.hide': '댓글 숨김', 'comment.show': '댓글 다시 보이기',
+  'chat.status': '단체카톡방 참여 상태 변경', 'chat.remind': '단체카톡방 참여 안내', 'chat.post': '단체카톡방 공지 기록', 'onboarding.nudge': '정착 단계 안내',
   'user.withdraw': '회원 탈퇴', 'member.withdraw': '회원 탈퇴', 'kpi.settings': 'KPI 목표·수집 설정', export: 'CSV 내려받기', 'backup.download': '전체 백업',
   // v1 기록 (예전 로그 표시용)
   'challenge.review': '(예전) 챌린지 심사', 'challenge.stage': '(예전) 챌린지 단계 변경', 'challenge.leader': '(예전) 그룹장 교체', 'challenge.complete': '(예전) 완주 처리', 'challenge.create': '(예전) 챌린지 제안',
@@ -171,7 +185,7 @@ export const ACTION_LABELS = {
   'member.accept': '(예전) 그룹원 수락', 'member.reject': '(예전) 그룹원 거절', 'member.remove': '(예전) 그룹원 이탈', 'member.role': '(예전) 역할 변경', 'hq.expense.add': '(예전) 재원 기록', 'hq.expense.delete': '(예전) 재원 기록 삭제',
 };
 export const actionLabel = a => ACTION_LABELS[a] || a;
-export const ACTION_GROUPS = [['', '전체 행동'], ['application', '가입'], ['group', '그룹'], ['session', '모임·출석'], ['leader', '그룹리더'], ['group_result', '매출 확인'], ['presentation', '발표'], ['paper', '페이퍼'], ['promotion', '승급'], ['user', '회원'], ['staff', '운영진'], ['settings', '규칙'], ['event', '일정'], ['broadcast', '알림'], ['post', '커뮤니티']];
+export const ACTION_GROUPS = [['', '전체 행동'], ['application', '가입'], ['group', '그룹'], ['session', '모임·출석'], ['leader', '그룹리더'], ['group_result', '매출 확인'], ['presentation', '발표'], ['paper', '페이퍼'], ['promotion', '승급'], ['user', '회원'], ['staff', '운영진'], ['settings', '규칙'], ['event', '일정'], ['broadcast', '알림'], ['chat', '단체카톡방'], ['onboarding', '신규 회원 정착'], ['post', '커뮤니티']];
 export function targetLink(target) {
   const m = String(target || '').match(/^(users|challenges|applications|events|posts|papers|leader_applications|group_results|event_presentations):(\d+)/);
   if (!m) return esc(target || '');
@@ -180,7 +194,7 @@ export function targetLink(target) {
   return `<a href="${href}">${name} #${m[2]}</a>`;
 }
 // 감사 로그 상세(JSON)를 읽기 쉬운 한 줄로
-const DETAIL_KEYS = { reason: '사유', note: '메모', from: '이전', to: '변경', stage: '단계', status: '상태', level: '등급', role: '역할', badge: '배지', evidence: '증빙', amount: '금액', category: '항목', recipients: '받는 사람', rows: '행 수', tables: '표 수', decision: '결정', total: '합계', bulk: '일괄', action: '동작', title: '제목', type: '유형' };
+const DETAIL_KEYS = { reason: '사유', note: '메모', from: '이전', to: '변경', stage: '단계', status: '상태', level: '등급', role: '역할', badge: '배지', evidence: '증빙', amount: '금액', category: '항목', recipients: '받는 사람', rows: '행 수', tables: '표 수', decision: '결정', total: '합계', bulk: '일괄', action: '동작', title: '제목', type: '유형', sent: '보냄', skipped: '건너뜀', kind: '종류', members: '소개한 회원', step: '단계' };
 export function fmtDetail(detail, max = 200) {
   if (!detail) return '';
   let o; try { o = JSON.parse(detail); } catch { return String(detail).slice(0, max); }

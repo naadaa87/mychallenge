@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS users (
   asset_diag TEXT,                           -- JSON, 자기 자산 진단
   can_lead INTEGER NOT NULL DEFAULT 0,       -- 운영진이 승인한 그룹리더 (v2.0)
   leader_since TEXT,
+  chat_status TEXT,                          -- 단체카톡방: NULL | clicked | joined | verified | left (v2.1)
+  chat_at TEXT,
+  welcomed_at TEXT,                          -- 단체카톡방 환영 인사에 소개한 때
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_seen_at TEXT
 );
@@ -492,5 +495,26 @@ CREATE TABLE IF NOT EXISTS event_presentations (
   summary TEXT,
   link TEXT,
   status TEXT NOT NULL DEFAULT 'applied',    -- applied | confirmed | presented | declined
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- v2.1 신규 회원 정착 안내 기록
+CREATE TABLE IF NOT EXISTS nudges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  step TEXT NOT NULL,                        -- orientation | chat | asset | event | group | attend | log | custom
+  title TEXT NOT NULL,
+  sent_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_nudges_user ON nudges(user_id, created_at);
+
+-- v2.1 단체카톡방에 올린 공지 기록 (운영진이 복사해 올린 글)
+CREATE TABLE IF NOT EXISTS chat_posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,                        -- welcome | events | groups | stories | custom
+  body TEXT NOT NULL,
+  member_ids TEXT,                           -- 환영 인사에 소개한 회원 id (쉼표)
+  posted_by INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

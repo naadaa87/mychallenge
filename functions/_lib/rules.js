@@ -1,3 +1,4 @@
+import { SITE } from '../_site/config.js';
 // 규칙 기본값 (v2.0 커뮤니티 운영 모델). 운영본부 설정(settings 테이블)에서 덮어쓸 수 있다.
 // 정기모임 → 학습·도전그룹 → 기록·공유 → 성과발표회. 수익 배분 방식은 실제 수익이 나는 그룹이 생긴 뒤 따로 정한다.
 
@@ -80,6 +81,10 @@ export const DEFAULT_SETTINGS = {
   analytics: { enabled: true, start: '2026-11-25' },
   // KPI 월 목표 (0이면 목표 없음)
   kpi_targets: { visitors: 0, views: 0, apps: 0, signups: 0, active: 0 },
+  // 마챌 단체카톡방(오픈채팅). 운영본부 → 단체카톡방에서 운영자가 바꿉니다.
+  community_chat: { enabled: true, name: SITE.communityChat?.name || '마챌 단체카톡방', url: SITE.communityChat?.url || '', code: '', intro: '' },
+  // 신규 회원 정착: 며칠 이내 가입자를 볼지, 며칠 접속이 없으면 '멈춤'으로 볼지, 같은 회원에게 안내를 다시 보내기까지 며칠을 둘지
+  onboarding: { window_days: 30, stall_days: 7, nudge_gap_days: 3 },
 };
 
 export function levelIndex(l) { const i = LEVELS.indexOf(l); return i < 0 ? 0 : i; }
@@ -131,3 +136,18 @@ export function attendanceStats(rows, policy) {
   const rate = counted ? Math.max(0, Math.round((counted - effAbs) / counted * 1000) / 10) : null;
   return { present, late, absent, excused, counted, late_as_absence: lateAbs, effective_absences: effAbs, rate, streak };
 }
+
+// ───────── 단체카톡방 · 신규 회원 정착 (v2.1) ─────────
+export const CHAT_STATUS = { none: '아직 안 들어옴', clicked: '링크만 누름', joined: '참여했다고 표시', verified: '운영진 확인', left: '나감' };
+export const CHAT_IN = ['joined', 'verified'];
+// 신규 회원이 자리 잡기까지의 단계 (순서대로 안내한다)
+export const ONBOARD_STEPS = [
+  ['orientation', '오리엔테이션', '오리엔테이션(5분)을 마쳐 주세요', '마챌의 원칙 세 가지를 읽고 확인 문항에 답하면 챌린저(L1)가 되어 그룹에 참여할 수 있습니다.', '#/onboarding'],
+  ['chat', '단체카톡방', '마챌 단체카톡방에 들어와 주세요', '정기모임 일정, 새 그룹 소식, 운영진 공지를 대화방에서 가장 빨리 받을 수 있습니다. 참여 방법을 확인해 주세요.', '#/chat'],
+  ['asset', '자기 자산 진단', '자기 자산 진단을 적어 보세요', '가진 시간, 기술, 경험을 정리해 두면 맞는 그룹을 찾기 쉽고, 그룹리더가 함께할 사람을 알아보기 좋습니다. 10분이면 됩니다.', '#/me/asset'],
+  ['event', '정기모임 참석', '다음 정기모임에서 만나요', '정기모임에서는 아이디어와 시장, 트렌드, AI 활용 이야기를 나누고 새 그룹을 소개합니다. 일정을 확인하고 신청해 주세요.', '#/events'],
+  ['group', '그룹 참여', '함께할 그룹을 찾아보세요', '지금 모집 중인 학습그룹과 도전그룹이 있습니다. 소개와 출석 규칙을 보고 마음에 드는 그룹에 신청해 보세요.', '#/groups'],
+  ['attend', '그룹 모임 출석', '첫 그룹 모임에 나와 주세요', '참여한 그룹의 모임 일정을 확인하고, 모임이 시작되면 출석 코드로 출석해 주세요.', '#/groups?mine=1'],
+  ['log', '첫 도전 기록', '첫 도전 기록을 남겨 보세요', '이번 주에 한 일, 배운 것, 막힌 것을 짧게 남기면 그룹리더와 다른 그룹원이 응원과 조언을 보냅니다.', '#/groups?mine=1'],
+];
+export const ONBOARD_STEP_NAMES = Object.fromEntries(ONBOARD_STEPS.map(([k, n]) => [k, n]));

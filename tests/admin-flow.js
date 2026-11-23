@@ -85,7 +85,7 @@ await go('#/admin/groups');
 ok(await ev(`getComputedStyle(document.querySelector('.adm-side')).display === 'none' && getComputedStyle(document.querySelector('.adm-mnav')).display !== 'none'`), '휴대폰에서는 사이드 메뉴 대신 메뉴 버튼이 보인다');
 await ev(`document.querySelector('.adm-mnav summary').click()`);
 await wait(200);
-ok(await ev(`document.querySelector('.adm-mnav').open && document.querySelectorAll('.adm-mnav-panel a').length === 19`), '메뉴 버튼을 누르면 전체 메뉴가 열린다');
+ok(await ev(`document.querySelector('.adm-mnav').open && document.querySelectorAll('.adm-mnav-panel a').length === 21`), '메뉴 버튼을 누르면 전체 메뉴가 열린다');
 await send('Emulation.clearDeviceMetricsOverride');
 
 // 6-1. KPI 지표 — 탭마다 숫자와 표가 뜬다
@@ -107,6 +107,35 @@ ok(kpiTracked === 1, 'KPI API 응답');
 await go('#/admin/kpi?tab=content');
 ok(await ev(`!!window.machalTrack && typeof window.machalTrack.goal === 'function'`), '회원 공간에 방문 기록 스크립트가 들어 있다');
 
+// 6-2. 단체카톡방 — 참여 현황, 확인 처리, 공지 만들기, 설정
+await go('#/admin/chat');
+ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/admin/chat"]') && document.querySelector('.adm-head h1').textContent.includes('단체카톡방') && document.querySelectorAll('tbody tr').length >= 1 && !document.querySelector('.error-box')`), '단체카톡방 참여 현황이 열린다');
+const target = await ev(`(() => { const b = [...document.querySelectorAll('button[data-act=set][data-s=verified]')][0]; if (!b) return null; const id = b.dataset.id; b.click(); return Number(id); })()`);
+await wait(1300);
+const chatAfter = await apiGet('/admin/chat?status=verified');
+ok(target && chatAfter.members.some(m => m.id === target), '확인 버튼을 누르면 운영진 확인으로 바뀐다');
+await go('#/admin/chat?tab=compose&kind=custom');
+await ev(`(() => { const t = document.querySelector('#compose-text'); t.value = '이번 주 정기모임은 목요일 저녁입니다'; document.querySelector('form[data-form=post] button[type=submit]').click(); })()`);
+await wait(1300);
+ok(await ev(`document.body.innerText.includes('올린 기록') && document.body.textContent.includes('이번 주 정기모임은 목요일 저녁입니다')`) && (await apiGet('/admin/chat/compose')).posts[0]?.kind === 'custom', '직접 쓴 공지를 기록하면 올린 기록에 남는다');
+await go('#/admin/chat?tab=compose&kind=welcome&days=60');
+ok(await ev(`!!document.querySelector('#compose-text') && document.querySelectorAll('.pill-tabs.sm a').length === 5`), '공지 만들기 탭에 문안 종류 다섯 가지가 보인다');
+await go('#/admin/chat?tab=settings');
+ok(await ev(`document.querySelector('form[data-form=cs] input[name=url]')?.value.startsWith('https://open.kakao.com/')`), '운영자는 단체카톡방 설정을 볼 수 있다');
+
+// 6-3. 신규 회원 정착
+await go('#/admin/onboarding?days=365');
+ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/admin/onboarding"]') && document.querySelectorAll('.ob-dots').length >= 1 && document.querySelectorAll('.hbar').length === 8 && !document.querySelector('.error-box')`), '신규 회원 정착 화면에 단계 점과 정착 단계 막대가 보인다');
+const obBefore = (await apiGet('/admin/onboarding?days=365')).nudges.length;
+await ev(`document.querySelector('button[data-act=nudge1]:not([data-force])')?.click()`);
+await wait(1300);
+ok((await apiGet('/admin/onboarding?days=365')).nudges.length > obBefore || await ev(`!document.querySelector('button[data-act=nudge1]:not([data-force])')`), '다음 단계 안내를 보내면 최근 보낸 안내에 쌓인다');
+const eId = (await apiGet('/admin/search?q=' + encodeURIComponent('챌린저E'))).users[0]?.id;
+await go('#/admin/users/' + eId);
+ok(await ev(`document.body.innerText.includes('정착 단계') && document.body.innerText.includes('단체카톡방')`), '회원 상세에 정착 단계와 단체카톡방 상태가 보인다');
+await go('#/admin');
+ok(await ev(`document.body.innerText.includes('단체카톡방 참여') && document.querySelectorAll('.kpi-grid.kpi-4 .kpi').length >= 8`), '현황에 단체카톡방 참여율과 새 회원 지표가 보인다');
+
 // 7. 일반 회원은 들어올 수 없다
 await send('Network.clearBrowserCookies');
 const member = await tokenOf('e@test.kr', 'password1');
@@ -114,6 +143,12 @@ await send('Network.setCookie', { name: 'machal_session', value: member, url: BA
 await send('Page.navigate', { url: 'about:blank' }); await wait(200);
 await go('#/admin/settings');
 await wait(600); const h7 = await ev('location.hash'); ok(h7 === '#/dashboard' && !(await ev(`!!document.querySelector('.adm')`)), '일반 회원이 운영 화면 주소로 오면 대시보드로 돌려보낸다 (' + h7 + ')');
+
+// 8. 회원 화면 — 단체카톡방 안내와 링크 (링크를 눌러도 화면이 막히지 않고 기록만 남는다)
+await go('#/chat');
+ok(await ev(`document.body.innerText.includes('내 참여 상태') && !!document.querySelector('a[data-chat-link][target=_blank]')`), '회원은 단체카톡방 참여 방법 화면을 볼 수 있다');
+const prevented = await ev(`(() => { const a = document.querySelector('a[data-chat-link]'); let p = null; document.addEventListener('click', e => { p = e.defaultPrevented; e.preventDefault(); }, { once: true }); a.click(); return p; })()`);
+ok(prevented === false, '단체카톡방 링크 클릭을 막지 않는다 (새 창으로 열린다)');
 
 ws.close(); chrome.kill();
 if (errors.length) { console.log('\nJS 오류:'); errors.forEach(e => console.log(' -', e)); }

@@ -11,7 +11,7 @@ const routes = [
   ['/', pub.home, 'any'], ['/levels', pub.toSite('/levels/'), 'any'], ['/apply', pub.toSite('/apply/'), 'any'], ['/apply/done', pub.toSite('/apply/'), 'any'],
   ['/login', pub.login, 'guest'], ['/register', pub.register, 'guest'], ['/setup', pub.setup, 'any'],
   // 회원
-  ['/onboarding', member.onboarding, 'user'], ['/dashboard', member.dashboard, 'user'], ['/me', member.me, 'user'], ['/me/points', member.points, 'user'], ['/me/asset', member.assetDiag, 'user'], ['/me/leader', member.leader, 'user'], ['/notifications', member.notifications, 'user'],
+  ['/onboarding', member.onboarding, 'user'], ['/chat', member.chat, 'user'], ['/dashboard', member.dashboard, 'user'], ['/me', member.me, 'user'], ['/me/points', member.points, 'user'], ['/me/asset', member.assetDiag, 'user'], ['/me/leader', member.leader, 'user'], ['/notifications', member.notifications, 'user'],
   ['/groups', group.board, 'user'], ['/groups/new', group.create, 'user'], ['/groups/:id', group.space, 'user'], ['/groups/:id/:tab', group.space, 'user'], ['/groups/:id/sessions/:sid', group.session, 'user'],
   // 예전 주소(알림 링크 등)는 그룹으로 보낸다
   ['/challenges', group.legacy, 'user'], ['/challenges/:id', group.legacy, 'user'], ['/challenges/:id/:x', group.legacy, 'user'], ['/settlements/:id', group.legacy, 'user'],

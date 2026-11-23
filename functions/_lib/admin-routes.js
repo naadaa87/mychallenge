@@ -7,6 +7,7 @@ import {
 } from './util.js';
 import { LEVELS, LEVEL_NAMES, FIELDS, BADGE_NAMES, GROUP_TYPES, GROUP_STAGES, GROUP_ROLES, GOAL_METRICS, EVENT_TYPES, EVENT_TOPICS, LEGACY_POINT_LABELS, DEFAULT_SETTINGS, levelIndex } from './rules.js';
 import { loadGroup, activeMembers, groupAttendance, emptyStats, closeSession, autoCloseSessions, kstNow } from './group-routes.js';
+import { onboardingRows, memberOnboarding } from './community-routes.js';
 
 // ───────────────────────── 스키마 보강 (기존 표에 열 추가·자료 옮기기) ─────────────────────────
 // 한 번씩만 실행하고 schema_migrations에 기록한다. 이미 있는 열을 더하려다 난 오류는 넘어간다.
@@ -44,6 +45,13 @@ export const MIGRATIONS = [
   ['2026-11-23-data-event-types', "UPDATE events SET type = CASE type WHEN 'machal_day' THEN 'regular' WHEN 'demo_day' THEN 'showcase' WHEN 'study' THEN 'workshop' ELSE type END WHERE type IN ('machal_day','demo_day','study')"],
   ['2026-11-23-data-boards', "UPDATE posts SET board = 'share' WHERE board = 'swap'"],
   ['2026-11-23-data-leaders', "UPDATE users SET can_lead = 1, leader_since = COALESCE(leader_since, datetime('now')) WHERE id IN (SELECT leader_id FROM challenges WHERE stage IN ('recruiting','active','closed'))"],
+  // v2.1 단체카톡방 · 신규 회원 정착
+  ['2026-11-23-users-chat-status', 'ALTER TABLE users ADD COLUMN chat_status TEXT'],
+  ['2026-11-23-users-chat-at', 'ALTER TABLE users ADD COLUMN chat_at TEXT'],
+  ['2026-11-23-users-welcomed-at', 'ALTER TABLE users ADD COLUMN welcomed_at TEXT'],
+  ['2026-11-23-nudges', "CREATE TABLE IF NOT EXISTS nudges (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, step TEXT NOT NULL, title TEXT NOT NULL, sent_by INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')))"],
+  ['2026-11-23-nudges-idx', 'CREATE INDEX IF NOT EXISTS idx_nudges_user ON nudges(user_id, created_at)'],
+  ['2026-11-23-chat-posts', "CREATE TABLE IF NOT EXISTS chat_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, body TEXT NOT NULL, member_ids TEXT, posted_by INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')))"],
 ];
 export async function runMigrations(db) {
   const done = new Set((await all(db, 'SELECT id FROM schema_migrations')).map(r => r.id));
@@ -86,6 +94,9 @@ async function segmentUsers(db, seg) {
   if (t === 'challenge') return all(db, "SELECT gm.user_id AS id FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.challenge_id = ? AND gm.status = 'active' AND u.status = 'active'", Number(seg.challenge_id));
   if (t === 'in_groups') return all(db, "SELECT DISTINCT gm.user_id AS id FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id JOIN users u ON u.id = gm.user_id WHERE c.stage IN ('recruiting','active') AND gm.status = 'active' AND u.status = 'active'");
   if (t === 'no_group') return all(db, "SELECT u.id FROM users u WHERE u.status = 'active' AND u.role = 'member' AND u.level <> 'L0' AND NOT EXISTS (SELECT 1 FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = u.id AND gm.status = 'active' AND c.stage IN ('recruiting','active'))");
+  if (t === 'chat_none') return all(db, "SELECT id FROM users WHERE role = 'member' AND status = 'active' AND onboarded = 1 AND (chat_status IS NULL OR chat_status IN ('clicked','left'))");
+  if (t === 'new_members') return all(db, "SELECT id FROM users WHERE role = 'member' AND status = 'active' AND created_at >= datetime('now','-30 days')");
+  if (t === 'not_onboarded') return all(db, "SELECT id FROM users WHERE role = 'member' AND status = 'active' AND onboarded = 0");
   if (t === 'staff') return all(db, "SELECT id FROM users WHERE role = 'staff' AND status = 'active'");
   if (t === 'leaders') return all(db, "SELECT id FROM users WHERE can_lead = 1 AND status = 'active'");
   throw bad('보낼 대상을 골라 주세요');
@@ -142,13 +153,21 @@ export function registerAdminRoutes(on, h) {
       first_sales: await c("SELECT COUNT(DISTINCT user_id) AS c FROM badges WHERE code = 'first_sale' AND revoked_at IS NULL"),
       completions: await c("SELECT COUNT(*) AS c FROM badges WHERE code = 'completion' AND revoked_at IS NULL"),
       papers_public: await c("SELECT COUNT(*) AS c FROM papers WHERE status IN ('approved','published') AND publish_scope = 'public'"),
+      chat_in: await c("SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND status = 'active' AND chat_status IN ('joined','verified')"),
+      chat_verified: await c("SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND status = 'active' AND chat_status = 'verified'"),
+      member_accounts: await c("SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND status = 'active'"),
     };
+    kpi.chat_rate = kpi.member_accounts ? Math.round(kpi.chat_in / kpi.member_accounts * 100) : null;
+    { const rows = await onboardingRows(db, settings, "u.created_at >= datetime('now', ?)", `-${settings.onboarding?.window_days || 30} days`);
+      kpi.newcomers = rows.length; kpi.newcomers_done = rows.filter(r => r.state === 'done').length; kpi.newcomers_stalled = rows.filter(r => r.state === 'stalled').length;
+      kpi.newcomers_window = settings.onboarding?.window_days || 30; }
     // v1.x 화면 호환용 이름
     kpi.weekly_checkin_rate = kpi.attendance_rate_30d;
     const funnel = [
       ['가입 신청', await c("SELECT COUNT(*) AS c FROM applications WHERE status <> 'purged'")],
       ['계정 생성', await c("SELECT COUNT(*) AS c FROM users WHERE role = 'member'")],
       ['오리엔테이션', await c("SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND level <> 'L0'")],
+      ['단체카톡방', await c("SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND chat_status IN ('joined','verified')")],
       ['그룹 참여', await c("SELECT COUNT(DISTINCT gm.user_id) AS c FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.status IN ('active','left','removed') AND u.role = 'member'")],
       ['그룹 모임 출석', await c("SELECT COUNT(DISTINCT a.user_id) AS c FROM session_attendance a JOIN users u ON u.id = a.user_id WHERE a.status IN ('present','late') AND u.role = 'member'")],
       ['그룹 완주', await c("SELECT COUNT(DISTINCT user_id) AS c FROM badges WHERE code = 'completion' AND revoked_at IS NULL")],
@@ -166,6 +185,7 @@ export function registerAdminRoutes(on, h) {
     const trends = { weeks, applications: await weekCounts('applications', 'created_at'), joins: await weekCounts('users', 'created_at'),
       sessions: await weekCounts('group_sessions', 'starts_at', "status = 'closed'", true), logs: await weekCounts('group_logs', 'created_at', 'deleted_at IS NULL') };
     const risks = await computeRisks(db, settings, today);
+    if (kpi.newcomers_stalled) risks.push({ level: 'mid', kind: 'newcomer', title: '신규 회원 정착', detail: `최근 ${kpi.newcomers_window}일 안에 가입한 회원 ${kpi.newcomers_stalled}명이 ${settings.onboarding?.stall_days || 7}일 넘게 접속하지 않았습니다. 다음 단계 안내를 보내 주세요`, link: '#/admin/onboarding?view=stalled' });
     const roundRow = await one(db, "SELECT * FROM rounds WHERE status IN ('open','active') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, start_date DESC LIMIT 1");
     const round = roundRow ? { ...roundRow, days_to_start: today < roundRow.start_date ? daysBetween(today, roundRow.start_date) : 0 } : null;
     const upcoming = await all(db, `SELECT e.id, e.type, e.title, e.starts_at, e.mode, (SELECT COUNT(*) FROM registrations r WHERE r.event_id = e.id AND r.status <> 'cancelled') AS registered,
@@ -224,7 +244,8 @@ export function registerAdminRoutes(on, h) {
       (SELECT COUNT(*) FROM promotion_requests WHERE status = 'pending') AS promotions,
       (SELECT COUNT(*) FROM disputes WHERE status IN ('open','mediating')) AS disputes,
       (SELECT COUNT(*) FROM posts WHERE reported > 0 AND hidden = 0) AS community,
-      (SELECT COUNT(*) FROM event_presentations p JOIN events e ON e.id = p.event_id WHERE p.status = 'applied' AND e.status <> 'cancelled') AS presentations`);
+      (SELECT COUNT(*) FROM event_presentations p JOIN events e ON e.id = p.event_id WHERE p.status = 'applied' AND e.status <> 'cancelled') AS presentations,
+      (SELECT COUNT(*) FROM users WHERE role = 'member' AND status = 'active' AND chat_status = 'joined') AS chat`);
     return { ...row, is_owner: await isOwner(db, user) };
   });
 
@@ -288,7 +309,7 @@ export function registerAdminRoutes(on, h) {
 
   on('GET', '/admin/users/:id', async ({ db, settings, user, params }) => {
     requireStaff(user);
-    const u = await one(db, 'SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, bio, onboarded, asset_diag, can_lead, leader_since, created_at, last_seen_at FROM users WHERE id = ?', params.id);
+    const u = await one(db, 'SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, bio, onboarded, asset_diag, can_lead, leader_since, chat_status, chat_at, welcomed_at, created_at, last_seen_at FROM users WHERE id = ?', params.id);
     if (!u) throw notfound();
     u.asset_diag = parseJ(u.asset_diag, null);
     const points = await all(db, 'SELECT action, SUM(points) AS pts, COUNT(*) AS n FROM points_ledger WHERE user_id = ? GROUP BY action ORDER BY pts DESC', u.id);
@@ -318,7 +339,8 @@ export function registerAdminRoutes(on, h) {
     };
     const progress = await h.levelProgress(db, settings, u, { total: pointsTotal }, badges.filter(b => !b.revoked_at));
     const notes = await notesOf(db, 'user', u.id);
-    return { user: u, is_owner: u.role === 'staff' ? !!(await one(db, "SELECT user_id FROM admin_roles WHERE user_id = ? AND role = 'owner'", u.id)) : false,
+    const onboarding = u.role === 'member' ? await memberOnboarding(db, settings, u.id) : null;
+    return { user: u, onboarding, is_owner: u.role === 'staff' ? !!(await one(db, "SELECT user_id FROM admin_roles WHERE user_id = ? AND role = 'owner'", u.id)) : false,
       points: { total: pointsTotal, by_action: points.map(r => ({ ...r, label: settings.points[r.action]?.label || LEGACY_POINT_LABELS[r.action] || r.action })) },
       badges: badges.map(b => ({ ...b, name: BADGE_NAMES[b.code] || b.code })), level_history: levelHistory, groups, events, leader_applications: leaderApps.map(a => ({ ...a, form: parseJ(a.form, {}) })),
       applications: applications.map(a => ({ ...a, form: parseJ(a.form, {}) })), consents, promotions, activity, progress, notes };

@@ -1,6 +1,6 @@
 // 받은 일 — 가입 신청, 그룹리더 신청, 매출 확인, 발표 신청, 페이퍼, 승급, 이의·신고
 import { api, post, esc, nl2br, toast, go, reload, field, textarea, check, bindForms, bindActions, num, won, fmtDate, fmtLocal, ago, LEVEL_NAMES, FIELDS, TYPE, EVENT_TYPES, lvChip, stageChip, typeChip, fieldChip, metricVal, empty, modal, closeModal } from '../../core.js';
-import { waitChip, qs, invalidateCounts } from './shared.js';
+import { waitChip, qs, invalidateCounts, inviteMessage, copyBtn, bindCopy } from './shared.js';
 
 const FORM_LABELS = [['job', '하는 일'], ['years', '경력'], ['hours_weekday', '평일 가능 시간'], ['hours_weekend', '주말 가능 시간'], ['interests', '관심 분야'], ['experience', '경험'], ['why_group', '그룹에 대해'], ['want_group', '관심 있는 그룹'], ['project_idea', '해 보고 싶은 것'], ['share_opinion', '(예전 문항) 수익 나눔에 대한 생각'], ['side_job_check', '겸업 확인'], ['can_attend', '참석 가능'], ['give', '줄 수 있는 것'], ['referrer', '추천인'], ['question', '질문']];
 function formValue(k, v) {
@@ -10,9 +10,6 @@ function formValue(k, v) {
   if (k === 'want_group') return esc({ study: '학습그룹', challenge: '도전그룹', both: '둘 다', meetup: '우선 정기모임부터' }[v] || v);
   return nl2br(v);
 }
-const inviteMessage = (code, email) => `안녕하세요, 마이챌린지(마챌) 운영본부입니다.\n가입 신청이 승인되었습니다.\n\n가입 페이지: ${location.origin}/app/#/register\n초대 코드: ${code}\n\n지원서에 적은 이메일(${email})로 가입해 주세요. 가입 후 5분짜리 오리엔테이션을 마치면 챌린저(L1)가 됩니다.`;
-function copyBtn(text, label = '복사') { return `<button class="btn sm" type="button" data-copy="${esc(text)}">${label}</button>`; }
-function bindCopy(root) { root.addEventListener('click', async e => { const b = e.target.closest('[data-copy]'); if (!b) return; try { await navigator.clipboard.writeText(b.dataset.copy); toast('복사했습니다'); } catch { toast('복사하지 못했습니다. 직접 선택해 복사해 주세요', true); } }); }
 const done = msg => { invalidateCounts(); toast(msg); reload(); };
 
 export const inbox = {

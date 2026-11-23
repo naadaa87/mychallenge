@@ -425,7 +425,7 @@ eq((await expectOk(c.get('/me', { as: 'b' }))).is_owner, true, 'b became owner')
 await expectOk(c.post('/admin/staff', { action: 'remove_owner', who: 'b@test.kr' }, { as: 'admin' }));
 // 대시보드 v2
 const d2 = await expectOk(c.get('/admin/dashboard', { as: 'admin' }));
-ok(d2.kpi && d2.funnel.length === 7 && d2.trends.weeks.length === 8 && d2.trends.applications.length === 8 && Array.isArray(d2.risks) && d2.overdue && d2.me.is_owner, 'dashboard v2 shape');
+ok(d2.kpi && d2.funnel.length === 8 && d2.funnel[3][0] === '단체카톡방' && 'chat_rate' in d2.kpi && 'newcomers' in d2.kpi && d2.trends.weeks.length === 8 && d2.trends.applications.length === 8 && Array.isArray(d2.risks) && d2.overdue && d2.me.is_owner, 'dashboard v2 shape');
 ok(d2.funnel[0][1] >= d2.funnel[1][1] - 1, 'funnel numbers');
 // 통합 검색 · 회원 목록/상세 · 메모
 const sr = await expectOk(c.get('/admin/search?q=test.kr', { as: 'admin' }));
@@ -508,7 +508,7 @@ const au2 = await expectOk(c.get('/admin/audit?limit=5', { as: 'admin' }));
 ok(au2.rows.length === 5 && au2.next_before, 'audit paging');
 ok((await expectOk(c.get(`/admin/audit?limit=5&before=${au2.next_before}`, { as: 'admin' }))).rows[0].id < au2.next_before, 'audit next page');
 const sys = await expectOk(c.get('/admin/system', { as: 'b' }));
-{ const { MIGRATIONS } = await import('../functions/_lib/admin-routes.js'); ok(sys.tables.length === 37 && sys.migrations.length === MIGRATIONS.length, 'system info'); }
+{ const { MIGRATIONS } = await import('../functions/_lib/admin-routes.js'); ok(sys.tables.length === 39 && sys.migrations.length === MIGRATIONS.length, 'system info'); }
 await expectFail(c.get('/admin/backup', { as: 'b' }), 403, 'backup owner only');
 const bk = await expectOk(c.get('/admin/backup', { as: 'admin' }));
 ok(bk.tables.users.length > 0 && !('password_hash' in bk.tables.users[0]) && !bk.tables.sessions, 'backup safe');
@@ -626,4 +626,74 @@ console.log('v1.3 이용 통계·KPI ok');
   ok(mm.community_chat && /^https:\/\/open\.kakao\.com\//.test(mm.community_chat.url), 'members get the community chat link');
   const pub = await expectOk(c.get('/session', { as: 'nobody' }));
   ok(pub.user === null, 'guests get no member data (chat link stays inside the member area)'); }
+// ───────── v2.1 단체카톡방 · 신규 회원 정착 ─────────
+{
+  await expectOk(c.post('/admin/staff', { action: 'grant', who: 'b@test.kr' }, { as: 'admin' }));
+  eq((await expectOk(c.get('/me', { as: 'e' }))).chat_status, 'none', 'chat status starts empty');
+  eq((await expectOk(c.post('/me/chat', { action: 'click' }, { as: 'e' }))).chat_status, 'clicked', 'link click recorded');
+  eq((await expectOk(c.post('/me/chat', { action: 'joined' }, { as: 'e' }))).chat_status, 'joined', 'self-reported join');
+  await expectFail(c.post('/me/chat', { action: 'nope' }, { as: 'e' }), 400, 'unknown chat action');
+  await expectFail(c.get('/admin/chat', { as: 'e' }), 403, 'chat admin staff only');
+  const ch = await expectOk(c.get('/admin/chat', { as: 'b' }));
+  ok(ch.stats.members >= 3 && ch.stats.joined >= 1 && ch.members.some(m => m.id === E.id && m.chat_status === 'joined') && ch.settings.url, 'chat overview');
+  ok((await expectOk(c.get('/admin/chat?status=joined', { as: 'b' }))).members.every(m => m.chat_status === 'joined'), 'chat filter');
+  await expectOk(c.post('/admin/chat/members', { ids: [E.id], status: 'verified' }, { as: 'b' }));
+  eq((await expectOk(c.post('/me/chat', { action: 'joined' }, { as: 'e' }))).chat_status, 'verified', 'self report does not downgrade staff check');
+  eq((await expectOk(c.get('/me', { as: 'e' }))).chat_status, 'verified', '/me reflects chat status');
+  eq((await expectOk(c.get('/dashboard', { as: 'e' }))).me.chat_status, 'verified', 'dashboard reflects chat status');
+  await expectFail(c.post('/admin/chat/members', { ids: [E.id], status: 'weird' }, { as: 'b' }), 400, 'bad chat status');
+  const r1 = await expectOk(c.post('/admin/chat/remind', {}, { as: 'b' }));
+  ok(!r1.sent.some(x => x.id === E.id) && r1.sent.length >= 1, 'reminders go to members not in the chat');
+  const r2 = await expectOk(c.post('/admin/chat/remind', { ids: r1.sent.map(x => x.id) }, { as: 'b' }));
+  ok(r2.sent.length === 0 && r2.skipped.every(x => /이미 보냄/.test(x.reason)), 'reminder gap respected');
+  const target = r1.sent[0].id;
+  ok((await db.prepare("SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND link = '#/chat'").bind(target).first()).c >= 1, 'reminder notification links to chat guide');
+  // 설정 (운영자만)
+  await expectFail(c.put('/admin/chat/settings', { url: 'https://open.kakao.com/o/x', reason: 't' }, { as: 'b' }), 403, 'chat settings owner only');
+  await expectFail(c.put('/admin/chat/settings', { enabled: true, url: 'https://open.kakao.com/o/x' }, { as: 'admin' }), 400, 'reason required');
+  await expectFail(c.put('/admin/chat/settings', { enabled: true, url: 'http://bad', reason: 't' }, { as: 'admin' }), 400, 'https only');
+  await expectOk(c.put('/admin/chat/settings', { enabled: true, name: '마챌 단톡', url: 'https://open.kakao.com/o/test123', code: '0412', intro: '반가워요', reason: '참여코드 추가', onboarding: { window_days: 60, stall_days: 5, nudge_gap_days: 2 } }, { as: 'admin' }));
+  const meE = await expectOk(c.get('/me', { as: 'e' }));
+  ok(meE.community_chat.code === '0412' && meE.community_chat.name === '마챌 단톡' && meE.community_chat.url.endsWith('test123'), 'members see updated chat settings');
+  await expectOk(c.put('/admin/chat/settings', { enabled: false, url: 'https://open.kakao.com/o/test123', reason: '잠시 끔' }, { as: 'admin' }));
+  eq((await expectOk(c.get('/me', { as: 'e' }))).community_chat, null, 'disabled chat hidden from members');
+  await expectFail(c.post('/admin/chat/remind', {}, { as: 'b' }), 400, 'no reminders while chat is off');
+  await expectOk(c.put('/admin/chat/settings', { enabled: true, name: '마챌 단체카톡방', url: 'https://open.kakao.com/o/gRd5SjYi', reason: '다시 켬', onboarding: { window_days: 30, stall_days: 7, nudge_gap_days: 3 } }, { as: 'admin' }));
+  // 공지 만들기와 기록
+  const cp = await expectOk(c.get('/admin/chat/compose?days=60', { as: 'b' }));
+  ok(Array.isArray(cp.newcomers) && Array.isArray(cp.events) && Array.isArray(cp.groups) && Array.isArray(cp.stories) && cp.chat, 'compose data');
+  const welcomeIds = cp.newcomers.slice(0, 2).map(u => u.id);
+  ok(welcomeIds.length >= 1, 'there are newcomers to welcome');
+  await expectOk(c.post('/admin/chat/posts', { kind: 'welcome', body: '새로 오신 분을 소개합니다', member_ids: welcomeIds }, { as: 'b' }));
+  const cp2 = await expectOk(c.get('/admin/chat/compose?days=60', { as: 'b' }));
+  ok(!cp2.newcomers.some(u => welcomeIds.includes(u.id)) && cp2.posts[0].kind === 'welcome', 'welcomed members leave the list, post history kept');
+  await expectFail(c.post('/admin/chat/posts', { kind: 'custom', body: '' }, { as: 'b' }), 400, 'empty post');
+  // 신규 회원 정착
+  await expectFail(c.get('/admin/onboarding', { as: 'e' }), 403, 'onboarding admin staff only');
+  const ob = await expectOk(c.get('/admin/onboarding?days=365', { as: 'b' }));
+  ok(ob.funnel.length === 8 && ob.funnel[0][0] === '가입' && ob.members.length >= 3 && ob.steps.length === 7 && ob.by_next.length === 7, 'onboarding overview');
+  const obE = ob.members.find(m => m.id === E.id);
+  ok(obE && obE.steps.orientation && obE.steps.chat && obE.done >= 2 && obE.total === 7, 'member steps computed');
+  ok(['new', 'progress', 'stalled', 'done'].includes(obE.state), 'member state');
+  // 방금 단체카톡방 안내를 받은 회원은 정한 기간 동안 다시 받지 않는다
+  const pending = ob.members.find(m => m.next && m.id === target) || ob.members.find(m => m.next);
+  ok(pending && !pending.can_nudge, 'recently reminded member waits for the gap');
+  const n1 = await expectOk(c.post('/admin/onboarding/nudge', { ids: [pending.id] }, { as: 'b' }));
+  ok(n1.sent.length === 0 && n1.skipped.length === 1, 'nudge gap respected');
+  const n2 = await expectOk(c.post('/admin/onboarding/nudge', { ids: [pending.id], force: true, note: '이번 주 목요일 정기모임에서 봬요' }, { as: 'b' }));
+  ok(n2.sent.length === 1 && n2.sent[0].step === pending.next, 'force nudge sends the next step');
+  const doneStep = Object.keys(obE.steps).find(k => obE.steps[k]);
+  ok((await expectOk(c.post('/admin/onboarding/nudge', { ids: [E.id], step: doneStep, force: true }, { as: 'b' }))).skipped[0].reason === '이미 한 단계', 'skip steps already done');
+  await expectFail(c.post('/admin/onboarding/nudge', { ids: [] }, { as: 'b' }), 400, 'nudge needs ids');
+  const ud = await expectOk(c.get(`/admin/users/${pending.id}`, { as: 'b' }));
+  ok(ud.onboarding && ud.onboarding.nudge_history.length >= 2 && ud.user.chat_status !== undefined, 'user detail shows onboarding and nudges');
+  // 단체 알림 대상
+  for (const t of ['chat_none', 'new_members', 'not_onboarded']) ok(typeof (await expectOk(c.get('/admin/broadcast/preview?type=' + t, { as: 'admin' }))).count === 'number', 'segment ' + t);
+  const d3 = await expectOk(c.get('/admin/dashboard', { as: 'admin' }));
+  ok(d3.kpi.chat_in >= 1 && d3.kpi.chat_rate != null && d3.kpi.newcomers >= 1, 'dashboard chat & newcomer kpis');
+  // 감사 로그
+  const au3 = await expectOk(c.get('/admin/audit?action=chat', { as: 'admin' }));
+  ok(au3.rows.some(r => r.action === 'chat.post') && au3.rows.some(r => r.action === 'chat.remind'), 'chat actions audited');
+  console.log('v2.1 단체카톡방·신규 회원 정착 ok');
+}
 console.log('\nAPI 전체 흐름 테스트 통과 ✔');

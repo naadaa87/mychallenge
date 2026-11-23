@@ -2,7 +2,7 @@
 import { api, post, put, esc, nl2br, toast, go, reload, field, input, textarea, select, check, bindForms, bindActions, num, fmtDate, fmtLocal, ago, LEVEL_NAMES, LEVELS, BOARDS, EVENT_TYPES, EVENT_TOPICS, lvChip, empty, modal, closeModal } from '../../core.js';
 import { kv, qs, askReason, invalidateCounts } from './shared.js';
 
-const SEGMENTS = [['all', '활동 중인 모든 회원'], ['level', '특정 등급 이상'], ['in_groups', '그룹에 참여 중인 회원'], ['no_group', '아직 그룹이 없는 회원'], ['challenge', '특정 그룹의 그룹원'], ['leaders', '그룹리더 전체'], ['staff', '운영진']];
+const SEGMENTS = [['all', '활동 중인 모든 회원'], ['level', '특정 등급 이상'], ['in_groups', '그룹에 참여 중인 회원'], ['no_group', '아직 그룹이 없는 회원'], ['challenge', '특정 그룹의 그룹원'], ['leaders', '그룹리더 전체'], ['chat_none', '단체카톡방에 아직 없는 회원'], ['new_members', '가입 30일 이내 회원'], ['not_onboarded', '오리엔테이션을 안 마친 회원'], ['staff', '운영진']];
 const segLabel = s => { const base = SEGMENTS.find(x => x[0] === s.type)?.[1] || ({ round: '시즌 참여자 (예전)' }[s.type]) || s.type; return s.type === 'level' ? `${s.level} ${LEVEL_NAMES[s.level] || ''} 이상` : s.type === 'challenge' ? `그룹 #${s.challenge_id}` : base; };
 
 export const comms = {

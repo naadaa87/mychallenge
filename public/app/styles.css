@@ -627,3 +627,15 @@ details.card[open] > summary::after { content: '접기'; }
 }
 .chat-card.is-new { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(36,87,245,.08); background: var(--blue-tint); }
 .chat-card .steps-list { margin-top: 4px; }
+
+/* v2.1 단체카톡방 · 신규 회원 정착 (운영본부) */
+.bulkbar .grow { flex: 1; }
+.bulkbar .mini-input { padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; font-size: .88rem; }
+.ob-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
+.ob-dots i { width: 10px; height: 10px; border-radius: 3px; background: var(--bg-2); border: 1px solid var(--line); }
+.ob-dots i.on { background: var(--blue); border-color: var(--blue); }
+.check-pick { display: grid; gap: 6px; max-height: 220px; overflow: auto; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.check-pick .check { align-items: flex-start; font-size: .9rem; }
+#compose-text { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font-size: .92rem; line-height: 1.65; resize: vertical; }
+#compose-text:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(36,87,245,.12); }
+.adm select[name=days] { padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; font-size: .88rem; }
