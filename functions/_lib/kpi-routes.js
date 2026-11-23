@@ -1,5 +1,5 @@
 // 이용 통계 수집(/api/t)과 운영본부 KPI API(/api/admin/kpi/*) — v1.3
-import { one, all, run, requireStaff, bad, audit, str, intv, J } from './util.js';
+import { one, all, run, requireStaff, bad, audit, str, intv, J, chunks } from './util.js';
 import { LEVELS, LEVEL_NAMES, FIELDS } from './rules.js';
 import { isOwner, requireOwner } from './admin-routes.js';
 
@@ -141,13 +141,16 @@ export function registerKpiRoutes(on) {
   }
 
   // 활동 회원: 회원 공간 방문 또는 기록(그룹 모임 출석·도전 기록·성과 기록·글·댓글·정기모임 출석)이 있는 회원
-  const ACT_UNION = `SELECT user_id AS uid, day FROM analytics_events WHERE user_id IS NOT NULL
-      UNION ALL SELECT user_id, ${K('checked_at')} FROM session_attendance WHERE status IN ('present','late') AND checked_at IS NOT NULL
-      UNION ALL SELECT user_id, ${K('created_at')} FROM group_logs WHERE deleted_at IS NULL
-      UNION ALL SELECT user_id, ${K('created_at')} FROM group_results WHERE deleted_at IS NULL
-      UNION ALL SELECT author_id, ${K('created_at')} FROM posts
-      UNION ALL SELECT author_id, ${K('created_at')} FROM comments
-      UNION ALL SELECT user_id, ${K('attended_at')} FROM registrations WHERE status = 'attended'`;
+  // D1은 한 compound SELECT에 SELECT를 5개까지만 허용한다. 활동 출처가 7가지라 두 묶음으로 나눠 합친다.
+  const ACT_UNION = `SELECT uid, day FROM (
+        SELECT user_id AS uid, day FROM analytics_events WHERE user_id IS NOT NULL
+        UNION ALL SELECT user_id, ${K('checked_at')} FROM session_attendance WHERE status IN ('present','late') AND checked_at IS NOT NULL
+        UNION ALL SELECT user_id, ${K('created_at')} FROM group_logs WHERE deleted_at IS NULL
+        UNION ALL SELECT user_id, ${K('created_at')} FROM group_results WHERE deleted_at IS NULL)
+      UNION ALL SELECT uid, day FROM (
+        SELECT author_id AS uid, ${K('created_at')} AS day FROM posts
+        UNION ALL SELECT author_id, ${K('created_at')} FROM comments
+        UNION ALL SELECT user_id, ${K('attended_at')} FROM registrations WHERE status = 'attended')`;
   const ACTIVE_SQL = `SELECT DISTINCT uid FROM (${ACT_UNION}) a JOIN users u ON u.id = a.uid WHERE u.role = 'member' AND a.day BETWEEN ? AND ?`;
   const activeCount = (db, s, e) => c1(db, `SELECT COUNT(*) AS c FROM (${ACTIVE_SQL})`, s, e);
   const memberTotal = db => c1(db, "SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND status = 'active' AND level <> 'L0'");
@@ -299,7 +302,8 @@ export function registerKpiRoutes(on) {
     const applyClickSessions = await c1(db, "SELECT COUNT(DISTINCT sid) AS c FROM analytics_events WHERE kind = 'click' AND target = '/apply/' AND day BETWEEN ? AND ?", s, e);
     const sessions = await c1(db, "SELECT COUNT(DISTINCT sid) AS c FROM analytics_events WHERE kind = 'view' AND day BETWEEN ? AND ?", s, e);
     const paperIds = rows.filter(r => /^\/papers\/\d+/.test(r.path)).map(r => Number(r.path.split('/')[2]));
-    const paperTitles = paperIds.length ? Object.fromEntries((await all(db, `SELECT p.id, c.title FROM papers p JOIN challenges c ON c.id = p.challenge_id WHERE p.id IN (${paperIds.map(() => '?').join(',')})`, ...paperIds)).map(r => [r.id, r.title])) : {};
+    const paperTitles = {};
+    for (const part of chunks([...new Set(paperIds)])) for (const r of await all(db, `SELECT p.id, c.title FROM papers p JOIN challenges c ON c.id = p.challenge_id WHERE p.id IN (${part.map(() => '?').join(',')})`, ...part)) paperTitles[r.id] = r.title;
     // 페이지 상세: 그 페이지에서 누른 것, 바로 들어온 출처, 앞뒤로 본 페이지
     let detail = null;
     if (query.path) {

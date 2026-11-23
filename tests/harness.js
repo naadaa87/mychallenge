@@ -6,10 +6,31 @@ import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+// 실제 D1의 제한을 로컬에서도 똑같이 건다 (https://developers.cloudflare.com/d1/platform/limits/)
+// - 한 compound SELECT(UNION·INTERSECT·EXCEPT)에 들어가는 SELECT는 5개까지
+// - 한 쿼리에 묶는 값(? 자리)은 100개까지
+export const D1_LIMITS = { compound: 5, params: 100 };
+export function checkD1Limits(sql, nParams) {
+  if (nParams > D1_LIMITS.params) throw new Error(`D1_ERROR: too many SQL variables (${nParams} > ${D1_LIMITS.params}) — 실제 D1과 동일하게 거부`);
+  // 따옴표 안은 건너뛰고, 괄호 깊이마다 UNION/INTERSECT/EXCEPT 개수를 센다
+  const stack = [0];
+  const src = String(sql);
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "'" || ch === '"') { const q = ch; i++; while (i < src.length && src[i] !== q) i++; continue; }
+    if (ch === '(') { stack.push(0); continue; }
+    if (ch === ')') { stack.pop(); if (!stack.length) stack.push(0); continue; }
+    if (/[A-Za-z]/.test(ch) && (i === 0 || !/[A-Za-z0-9_]/.test(src[i - 1]))) {
+      const m = /^(UNION|INTERSECT|EXCEPT)\b/i.exec(src.slice(i, i + 10));
+      if (m) { stack[stack.length - 1]++; if (stack[stack.length - 1] + 1 > D1_LIMITS.compound) throw new Error(`D1_ERROR: too many terms in compound SELECT (D1은 ${D1_LIMITS.compound}개까지) — 실제 D1과 동일하게 거부`); i += m[0].length - 1; }
+    }
+  }
+}
+
 class D1Stmt {
   constructor(db, sql) { this.db = db; this.sql = sql; this.params = []; }
   bind(...p) { for (const v of p) { if (v === undefined || typeof v === 'boolean') throw new Error(`D1_TYPE_ERROR: Type '${typeof v}' not supported for value binding (실제 D1과 동일하게 거부) — SQL: ${this.sql.slice(0, 80)}`); } this.params = p; return this; }
-  _prep() { return this.db.prepare(this.sql); }
+  _prep() { checkD1Limits(this.sql, this.params.length); return this.db.prepare(this.sql); }
   async first(col) { const r = this._prep().get(...this.params) ?? null; return col && r ? r[col] : r; }
   async all() { const results = this._prep().all(...this.params); return { results, success: true, meta: {} }; }
   async run() { const r = this._prep().run(...this.params); return { success: true, meta: { last_row_id: Number(r.lastInsertRowid), changes: r.changes } }; }

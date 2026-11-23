@@ -761,6 +761,12 @@ console.log('v1.3 이용 통계·KPI ok');
   await expectFail(c.post('/admin/cleanup', { task: 'sessions', reason: 'x' }, { as: 'b' }), 403, 'cleanup owner only');
   ok((await expectOk(c.post('/admin/cleanup', { task: 'sessions', reason: '월말 정리' }, { as: 'admin' }))).removed >= 1, 'cleanup removes expired sessions');
   ok((await expectOk(c.get('/admin/audit?action=cleanup', { as: 'admin' }))).rows.length >= 1 && (await expectOk(c.get('/admin/audit?action=staff.scopes', { as: 'admin' }))).rows.length >= 3, 'owner actions audited');
+  // D1 제한(한 쿼리에 값 100개)보다 큰 목록도 나눠서 처리한다
+  const many = Array.from({ length: 150 }, (_, i) => 900000 + i).concat([E.id]);
+  ok((await expectOk(c.post('/admin/chat/members', { ids: many, status: 'verified' }, { as: 'admin' }))).updated === many.length, 'bulk chat status with 151 ids');
+  const nb = await expectOk(c.post('/admin/onboarding/nudge', { ids: many }, { as: 'admin' }));
+  ok(nb.skipped.length >= 150, 'nudge with 151 ids');
+  await expectOk(c.post('/admin/chat/posts', { kind: 'welcome', body: '많은 회원 소개', member_ids: many.slice(0, 100) }, { as: 'admin' }));
   console.log('v2.2 총괄 관리 ok');
 }
 console.log('\nAPI 전체 흐름 테스트 통과 ✔');

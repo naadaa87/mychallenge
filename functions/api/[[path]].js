@@ -7,6 +7,7 @@ import {
   sessionCookie, clearCookie, currentUser, requireUser, requireStaff, requireLevel, isStaff, lvlAtLeast,
   addPoints, pointsOf, maybeAutoPromote, setLevel, grantBadge, badgeCount, notify, notifyStaff, audit,
   str, must, intv, getCookie, COOKIE, HttpError as HttpErr, markCookie, jsonWithCookies,
+  chunks,
 } from '../_lib/util.js';
 import { POLICY_VERSION, SITE } from '../_site/config.js';
 import { SCHEMA_STATEMENTS, SCHEMA_TABLES } from '../_lib/schema.generated.js';
@@ -578,8 +579,10 @@ on('GET', '/events', async ({ db, user }) => {
   requireLevel(user, 'L1');
   const rows = await all(db, "SELECT e.*, (SELECT COUNT(*) FROM registrations r WHERE r.event_id = e.id AND r.status <> 'cancelled') AS registered, (SELECT status FROM registrations r WHERE r.event_id = e.id AND r.user_id = ?) AS my_status FROM events e WHERE e.starts_at >= datetime('now','-21 days') AND (e.status <> 'cancelled' OR ?) ORDER BY e.starts_at", user.id, isStaff(user) ? 1 : 0);
   const ids = rows.map(r => r.id);
-  const pres = ids.length ? await all(db, `SELECT p.id, p.event_id, p.user_id, p.challenge_id, p.title, p.summary, p.link, p.status, u.nickname, c.title AS group_title FROM event_presentations p JOIN users u ON u.id = p.user_id LEFT JOIN challenges c ON c.id = p.challenge_id
-    WHERE p.event_id IN (${ids.map(() => '?').join(',')}) AND (p.status IN ('confirmed','presented') OR p.user_id = ? OR ?) ORDER BY p.created_at`, ...ids, user.id, isStaff(user) ? 1 : 0) : [];
+  const pres = [];
+  for (const part of chunks(ids)) pres.push(...await all(db, `SELECT p.id, p.event_id, p.user_id, p.challenge_id, p.title, p.summary, p.link, p.status, u.nickname, c.title AS group_title FROM event_presentations p JOIN users u ON u.id = p.user_id LEFT JOIN challenges c ON c.id = p.challenge_id
+    WHERE p.event_id IN (${part.map(() => '?').join(',')}) AND (p.status IN ('confirmed','presented') OR p.user_id = ? OR ?) ORDER BY p.created_at`, ...part, user.id, isStaff(user) ? 1 : 0));
+  pres.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
   // 내가 그룹리더·부리더인 진행 중 그룹 (성과발표회 발표 신청용)
   const myGroups = await all(db, "SELECT c.id, c.title FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = ? AND gm.status = 'active' AND gm.role IN ('leader','sub') AND c.stage IN ('recruiting','active','closed') ORDER BY c.updated_at DESC", user.id);
   return { my_groups: myGroups, events: rows.map(r => {

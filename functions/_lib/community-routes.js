@@ -2,7 +2,7 @@
 // - 회원: 단체카톡방 링크를 눌렀는지, 참여했다고 표시했는지 기록한다 (/me/chat)
 // - 운영본부: 단체카톡방 설정, 참여 현황, 참여 안내 다시 보내기, 카톡방에 올릴 공지 만들기와 기록,
 //             신규 회원의 정착 단계 확인과 단계별 안내 보내기
-import { bad, notfound, readJson, parseJ, J, one, all, run, insert, requireUser, requireStaff, notify, audit, str } from './util.js';
+import { bad, notfound, readJson, parseJ, J, one, all, run, insert, requireUser, requireStaff, notify, audit, str, chunks } from './util.js';
 import { CHAT_STATUS, CHAT_IN, ONBOARD_STEPS, ONBOARD_STEP_NAMES, FIELDS, GROUP_TYPES, EVENT_TYPES, EVENT_TOPICS, LEVEL_NAMES } from './rules.js';
 import { requireOwner, isOwner } from './admin-routes.js';
 import { kstNow } from './group-routes.js';
@@ -102,8 +102,7 @@ export function registerCommunityRoutes(on) {
     if (!ids.length) throw bad('회원을 골라 주세요');
     const status = ['verified', 'left', 'none', 'joined'].includes(b.status) ? b.status : null;
     if (!status) throw bad('바꿀 상태를 골라 주세요');
-    const ph = ids.map(() => '?').join(',');
-    await run(db, `UPDATE users SET chat_status = ?, chat_at = datetime('now') WHERE role = 'member' AND id IN (${ph})`, status === 'none' ? null : status, ...ids);
+    for (const part of chunks(ids)) await run(db, `UPDATE users SET chat_status = ?, chat_at = datetime('now') WHERE role = 'member' AND id IN (${part.map(() => '?').join(',')})`, status === 'none' ? null : status, ...part);
     await audit(db, user.id, 'chat.status', ids.length === 1 ? 'users:' + ids[0] : null, { ids, status });
     return { ok: true, updated: ids.length };
   });
@@ -177,7 +176,7 @@ export function registerCommunityRoutes(on) {
     const body = str(b.body, 4000); if (!body) throw bad('올린 내용을 적어 주세요');
     const ids = (Array.isArray(b.member_ids) ? b.member_ids : []).map(Number).filter(Boolean).slice(0, 100);
     const id = await insert(db, 'INSERT INTO chat_posts (kind, body, member_ids, posted_by) VALUES (?,?,?,?)', kind, body, ids.join(',') || null, user.id);
-    if (kind === 'welcome' && ids.length) await run(db, `UPDATE users SET welcomed_at = datetime('now') WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids);
+    if (kind === 'welcome') for (const part of chunks(ids)) await run(db, `UPDATE users SET welcomed_at = datetime('now') WHERE id IN (${part.map(() => '?').join(',')})`, ...part);
     await audit(db, user.id, 'chat.post', 'chat_posts:' + id, { kind, members: ids.length });
     return { ok: true, id };
   });
@@ -208,7 +207,8 @@ export function registerCommunityRoutes(on) {
     const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(Boolean).slice(0, 300);
     if (!ids.length) throw bad('안내를 보낼 회원을 골라 주세요');
     const step = b.step && STEP_KEYS.includes(b.step) ? b.step : null;
-    const rows = await onboardingRows(db, settings, `u.id IN (${ids.map(() => '?').join(',')})`, ...ids);
+    const rows = [];
+    for (const part of chunks(ids)) rows.push(...await onboardingRows(db, settings, `u.id IN (${part.map(() => '?').join(',')})`, ...part));
     const sent = [], skipped = [];
     for (const r of rows) {
       const target = step || r.next;

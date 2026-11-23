@@ -22,6 +22,9 @@ export const nowIso = () => new Date().toISOString().replace('T', ' ').slice(0, 
 export const today = () => new Date().toISOString().slice(0, 10);
 
 // ---------- DB helpers (D1) ----------
+// D1은 한 쿼리에 값(? 자리)을 100개까지만 받는다. IN (...) 목록은 이 크기로 나눠 보낸다.
+export const IN_CHUNK = 90;
+export function chunks(arr, n = IN_CHUNK) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
 export async function one(db, sql, ...params) { return db.prepare(sql).bind(...params).first(); }
 export async function all(db, sql, ...params) { const r = await db.prepare(sql).bind(...params).all(); return r.results || []; }
 export async function run(db, sql, ...params) { return db.prepare(sql).bind(...params).run(); }
