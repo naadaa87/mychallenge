@@ -16,8 +16,8 @@ const tmp = '/tmp/machal-og'; mkdirSync(tmp, { recursive: true }); mkdirSync(joi
 const font = w => pathToFileURL(join(fontDir, `Pretendard-${w}.woff2`)).href;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-const EYEBROW = { home: '사이드프로젝트 수익 도전 모임', about: '마챌 소개', 'how-it-works': '12주 운영 방식', rules: '수익 배분 규칙', levels: '등급과 포인트', programs: '프로그램', faq: '자주 묻는 질문', apply: '가입 신청', guide: '가이드', papers: '프로젝트 페이퍼', privacy: '정책', terms: '정책' };
-const TITLE = { home: '사이드프로젝트,\n12주 동안 함께 첫 매출까지', papers: '잘된 길도, 멈춘 길도\n기록으로 남깁니다', apply: '각자의 챌린지를\n함께 끝까지', guide: '실행에 필요한 글만\n모았습니다' };
+const EYEBROW = { home: '사이드프로젝트 커뮤니티', about: '마챌 소개', 'how-it-works': '함께하는 방식', goals: '수익목표', levels: '등급과 포인트', programs: '정기모임·프로그램', faq: '자주 묻는 질문', apply: '가입 신청', guide: '가이드', papers: '프로젝트 페이퍼', privacy: '정책', terms: '정책' };
+const TITLE = { home: '함께 배우고, 그룹으로 도전해서\n성과까지', goals: '함께 도전하는 최종 목표는\n성과와 수익입니다', 'how-it-works': '정기모임에서 시작해\n성과발표회까지', papers: '잘된 길도, 멈춘 길도\n기록으로 남깁니다', apply: '각자의 챌린지를\n함께 끝까지', guide: '실행에 필요한 글만\n모았습니다' };
 const items = [];
 for (const p of staticPages()) { if (p.noindex) continue; items.push({ file: `${p.slug}.png`, eyebrow: EYEBROW[p.slug] || '마이챌린지', title: TITLE[p.slug] || (p.ogTitle || p.title).replace(/^마이챌린지\(마챌\)\s*[—|]?\s*/, '') }); }
 items.push({ file: 'papers.png', eyebrow: EYEBROW.papers, title: TITLE.papers });

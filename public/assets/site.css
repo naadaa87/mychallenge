@@ -578,3 +578,31 @@ img { max-width: 100%; height: auto; }
   .scene-grid::-webkit-scrollbar { display: none; }
   .scene { scroll-snap-align: start; }
 }
+
+/* ===== v2.0 수익목표 · 모집 중인 그룹 ===== */
+.goal-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.goal-steps li { position: relative; background: #fff; border: 1px solid var(--line); border-radius: var(--r); padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 4px; }
+.goal-steps .gs-bar { display: block; height: 6px; width: calc(30% + var(--i) * 14%); border-radius: 99px; background: linear-gradient(90deg, var(--blue-200), var(--blue)); margin-bottom: 8px; }
+.goal-steps .gs-n { color: var(--blue); font-weight: 750; font-size: .82rem; }
+.goal-steps b { font-size: 1.12rem; letter-spacing: -.02em; }
+.goal-steps p { margin: 0; color: var(--ink-2); font-size: .92rem; line-height: 1.55; }
+.goal-steps small { color: var(--muted); font-size: .84rem; margin-top: auto; padding-top: 6px; }
+.goal-steps li:nth-child(4) { border-color: var(--blue-200); background: var(--blue-50); }
+@media (min-width: 720px) { .goal-steps { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1040px) {
+  .goal-steps { grid-template-columns: repeat(6, 1fr); align-items: end; gap: 10px; }
+  .goal-steps li { min-height: calc(200px + var(--i) * 18px); }
+  .goal-steps .gs-bar { width: 100%; }
+}
+.live-groups { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 10px; }
+@media (min-width: 860px) { .live-groups { grid-template-columns: 1fr 1fr; } }
+.live-groups li { display: flex; gap: 14px; align-items: flex-start; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+.live-groups b { display: block; letter-spacing: -.015em; }
+.live-groups small { display: block; color: var(--muted); font-size: .88rem; line-height: 1.5; }
+.live-groups .lg-meta { margin-top: 4px; color: var(--ink-2); }
+.lg-type { flex: none; display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 99px; background: var(--ink); color: #fff; font-size: .76rem; font-weight: 750; }
+.lg-type.is-study { background: #efeaff; color: #6d4aff; }
+.support-grid { margin-top: 1.2em; }
+.article-layout.goal-before { padding-bottom: 20px; }
+.goal-wrap { margin: 0 auto; }
+.article-layout.goal-after { padding-top: 32px; }

@@ -91,7 +91,7 @@ export async function currentUser(db, request) {
   const s = await one(db, 'SELECT user_id, expires_at FROM sessions WHERE token = ?', token);
   if (!s) return null;
   if (s.expires_at < nowIso()) { await run(db, 'DELETE FROM sessions WHERE token = ?', token); return null; }
-  const u = await one(db, 'SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, bio, onboarded, asset_diag, created_at FROM users WHERE id = ?', s.user_id);
+  const u = await one(db, 'SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, bio, onboarded, asset_diag, can_lead, leader_since, created_at FROM users WHERE id = ?', s.user_id);
   if (!u || u.status === 'removed') return null;
   return u;
 }
@@ -138,7 +138,7 @@ export async function maybeAutoPromote(db, settings, userId) {
   const days = await one(db, "SELECT (julianday('now') - julianday(created_at)) AS d FROM users WHERE id = ?", userId);
   if ((days?.d || 0) < (rule.min_days || 0)) return false;
   await setLevel(db, userId, 'L2', '조건 충족 자동 승급', null);
-  await notify(db, userId, '메이커가 되셨습니다', '그룹 챌린지에 그룹원으로 참여할 수 있습니다. 다음 라운드 모집을 확인해 보세요.', '#/challenges');
+  await notify(db, userId, '메이커가 되셨습니다', '정기모임에서 발제를 맡거나, 그룹리더를 신청해 직접 그룹을 이끌어 보세요.', '#/me');
   return true;
 }
 

@@ -11,10 +11,10 @@ const routes = [
   ['/', pub.home, 'any'], ['/levels', pub.toSite('/levels/'), 'any'], ['/apply', pub.toSite('/apply/'), 'any'], ['/apply/done', pub.toSite('/apply/'), 'any'],
   ['/login', pub.login, 'guest'], ['/register', pub.register, 'guest'], ['/setup', pub.setup, 'any'],
   // 회원
-  ['/onboarding', member.onboarding, 'user'], ['/dashboard', member.dashboard, 'user'], ['/me', member.me, 'user'], ['/me/points', member.points, 'user'], ['/me/asset', member.assetDiag, 'user'], ['/notifications', member.notifications, 'user'],
-  ['/challenges', group.board, 'user'], ['/challenges/new', group.propose, 'user'], ['/challenges/:id', group.detail, 'user'], ['/challenges/:id/edit', group.editProposal, 'user'],
-  ['/groups/:id', group.space, 'user'], ['/groups/:id/:tab', group.space, 'user'],
-  ['/settlements/:id', group.settlement, 'user'],
+  ['/onboarding', member.onboarding, 'user'], ['/dashboard', member.dashboard, 'user'], ['/me', member.me, 'user'], ['/me/points', member.points, 'user'], ['/me/asset', member.assetDiag, 'user'], ['/me/leader', member.leader, 'user'], ['/notifications', member.notifications, 'user'],
+  ['/groups', group.board, 'user'], ['/groups/new', group.create, 'user'], ['/groups/:id', group.space, 'user'], ['/groups/:id/:tab', group.space, 'user'], ['/groups/:id/sessions/:sid', group.session, 'user'],
+  // 예전 주소(알림 링크 등)는 그룹으로 보낸다
+  ['/challenges', group.legacy, 'user'], ['/challenges/:id', group.legacy, 'user'], ['/challenges/:id/:x', group.legacy, 'user'], ['/settlements/:id', group.legacy, 'user'],
   ['/papers', community.papers, 'any'], ['/papers/:id', community.paper, 'user'],
   ['/community', community.feed, 'user'], ['/community/new', community.newPost, 'user'], ['/community/posts/:id', community.post, 'user'], ['/community/board/:board', community.boardView, 'user'],
   ['/events', community.events, 'user'], ['/members', community.members, 'user'],
@@ -54,16 +54,17 @@ function renderChrome() {
     chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.4A8 8 0 1 1 21 12z"/></svg>',
     book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z"/><path d="M20 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/></svg>',
     user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+    cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg>',
     desk: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
   };
   if (!me) {
-    nav.innerHTML = `<a href="/about/">마챌 소개</a><a href="/how-it-works/">운영 방식</a><a href="/levels/">등급</a><a href="/papers/">프로젝트 페이퍼</a><a href="/guide/">가이드</a>`;
+    nav.innerHTML = `<a href="/about/">마챌 소개</a><a href="/how-it-works/">운영 방식</a><a href="/goals/">수익목표</a><a href="/papers/">프로젝트 페이퍼</a><a href="/guide/">가이드</a>`;
     right.innerHTML = `<a class="btn sm" href="#/login">로그인</a><a class="btn sm primary" href="/apply/">가입 신청</a>`;
     bottom.innerHTML = '';
   } else {
-    nav.innerHTML = `<a href="#/dashboard">홈</a><a href="#/challenges">챌린지</a><a href="#/community">커뮤니티</a><a href="#/papers">페이퍼</a><a href="#/events">일정</a>${me.role === 'staff' ? '<a href="#/admin">운영</a>' : ''}`;
+    nav.innerHTML = `<a href="#/dashboard">홈</a><a href="#/groups">그룹</a><a href="#/events">정기모임·일정</a><a href="#/community">커뮤니티</a><a href="#/papers">페이퍼</a>${me.role === 'staff' ? '<a href="#/admin">운영</a>' : ''}`;
     right.innerHTML = `<a class="bell" href="#/notifications" aria-label="알림">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>'}${me.unread ? `<span class="dot">${me.unread > 9 ? '9+' : me.unread}</span>` : ''}</a><a class="avatar" href="#/me" title="${esc(me.nickname)}">${esc((me.nickname || '?').slice(0, 1))}</a>`;
-    bottom.innerHTML = `<a href="#/dashboard">${ic.home}홈</a><a href="#/challenges">${ic.flag}챌린지</a><a href="#/community">${ic.chat}커뮤니티</a>${me.role === 'staff' ? `<a href="#/admin">${ic.desk}운영</a>` : `<a href="#/papers">${ic.book}페이퍼</a>`}<a href="#/me">${ic.user}나</a>`;
+    bottom.innerHTML = `<a href="#/dashboard">${ic.home}홈</a><a href="#/groups">${ic.flag}그룹</a><a href="#/events">${ic.cal}일정</a><a href="#/community">${ic.chat}커뮤니티</a>${me.role === 'staff' ? `<a href="#/admin">${ic.desk}운영</a>` : `<a href="#/me">${ic.user}나</a>`}`;
   }
   navActive();
 }

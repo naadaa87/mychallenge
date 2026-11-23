@@ -6,21 +6,19 @@ export const MENU = [
   ['home', '현황', null],
   ['kpi', 'KPI 지표', '분석'],
   ['applications', '가입 신청', '받은 일', 'applications'],
-  ['challenges', '챌린지 심사', '받은 일', 'challenges'],
-  ['agreements', '합의서 승인', '받은 일', 'agreements'],
-  ['settlements', '정산 검수', '받은 일', 'settlements'],
+  ['leaders', '그룹리더 신청', '받은 일', 'leaders'],
+  ['results', '매출 확인', '받은 일', 'results'],
+  ['presentations', '발표 신청', '받은 일', 'presentations'],
   ['papers', '페이퍼 검토', '받은 일', 'papers'],
   ['promotions', '승급 심사', '받은 일', 'promotions'],
   ['disputes', '이의·신고', '받은 일', 'disputes'],
   ['users', '회원', '사람'],
   ['staff', '운영진', '사람'],
-  ['groups', '그룹 현황', '챌린지'],
-  ['rounds', '라운드', '챌린지'],
-  ['payouts', '지급 관리', '돈', 'payouts'],
-  ['hq', '운영본부 재원', '돈'],
+  ['groups', '그룹 현황', '그룹'],
+  ['rounds', '시즌', '그룹'],
+  ['events', '정기모임·일정', '소통'],
   ['broadcast', '단체 알림', '소통'],
   ['community', '커뮤니티 관리', '소통', 'community'],
-  ['events', '일정·출석', '소통'],
   ['settings', '규칙 설정', '설정'],
   ['audit', '감사 로그', '설정'],
   ['data', '데이터·백업', '설정'],
@@ -48,7 +46,7 @@ function sideHtml(active, counts) {
 // 운영본부 화면 틀. body는 HTML 문자열, mount는 선택
 export async function shell(active, { title, sub = '', actions = '', crumbs = null }, body) {
   const counts = await getCounts();
-  const inbox = ['applications', 'challenges', 'agreements', 'settlements', 'papers', 'promotions', 'disputes'].reduce((s, k) => s + (counts[k] || 0), 0);
+  const inbox = ['applications', 'leaders', 'results', 'presentations', 'papers', 'promotions', 'disputes'].reduce((s, k) => s + (counts[k] || 0), 0);
   return `<div class="adm">
     <aside class="adm-side" aria-label="운영본부 메뉴">
       <div class="adm-side-head"><b>운영본부</b><span class="chip ${counts.is_owner ? 'ink' : ''}">${counts.is_owner ? '운영자' : '운영진'}</span></div>
@@ -57,7 +55,7 @@ export async function shell(active, { title, sub = '', actions = '', crumbs = nu
     <div class="adm-main">
       <div class="adm-top">
         <details class="adm-mnav"><summary><span>☰ 메뉴</span><b>${esc(labelOf(active))}</b>${inbox ? `<span class="adm-count hot">${inbox}</span>` : ''}</summary><div class="adm-mnav-panel">${sideHtml(active, counts)}</div></details>
-        <div class="adm-search"><input type="search" id="adm-q" placeholder="회원·챌린지·신청자 찾기" autocomplete="off" aria-label="통합 검색"><div class="adm-search-box" id="adm-q-box" hidden></div></div>
+        <div class="adm-search"><input type="search" id="adm-q" placeholder="회원·그룹·신청자 찾기" autocomplete="off" aria-label="통합 검색"><div class="adm-search-box" id="adm-q-box" hidden></div></div>
       </div>
       ${crumbs ? `<nav class="adm-crumbs">${crumbs.map(([l, h]) => h ? `<a href="${h}">${esc(l)}</a>` : `<span>${esc(l)}</span>`).join('<span class="sep">›</span>')}</nav>` : ''}
       <div class="adm-head"><div><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div>${actions ? `<div class="btn-row">${actions}</div>` : ''}</div>
@@ -82,7 +80,7 @@ export function mountShell(root) {
       if (my !== seq) return;
       const sec = (title, items) => items.length ? `<div class="adm-sr-title">${title}</div>${items.join('')}` : '';
       const html = sec('회원', r.users.map(u => `<a href="#/admin/users/${u.id}"><b>${esc(u.nickname)}</b><small>${esc(u.name)} · ${esc(u.email)} · ${u.level}${u.status !== 'active' ? ' · ' + ({ dormant: '휴면', removed: '제명' }[u.status] || u.status) : ''}</small></a>`))
-        + sec('챌린지', r.challenges.map(c => `<a href="#/admin/groups/${c.id}"><b>${esc(c.title)}</b><small>${{ solo: '솔로', group: '그룹', official: '오피셜' }[c.type] || c.type} · ${esc(stageName(c.stage))}</small></a>`))
+        + sec('그룹', r.challenges.map(c => `<a href="#/admin/groups/${c.id}"><b>${esc(c.title)}</b><small>${{ study: '학습그룹', challenge: '도전그룹' }[c.type] || '그룹'} · ${esc(stageName(c.stage))}</small></a>`))
         + sec('가입 신청', r.applications.map(a => `<a href="#/admin/applications?status=${a.status}&q=${encodeURIComponent(a.email)}"><b>${esc(a.name)}</b><small>${esc(a.email)} · ${{ pending: '대기', approved: '승인', joined: '가입 완료', rejected: '반려' }[a.status] || a.status}</small></a>`));
       box.innerHTML = html || '<div class="adm-sr-empty">찾는 결과가 없습니다</div>';
       box.hidden = false;
@@ -92,7 +90,7 @@ export function mountShell(root) {
   document.addEventListener('click', e => { if (!root.contains(e.target) || !e.target.closest('.adm-search')) close(); }, { capture: true });
 }
 
-export const STAGE_NAMES = { proposed: '보완 중', review: '심사 중', recruiting: '모집 중', agreement: '합의 중', active: '진행 중', settling: '정산 중', closed: '종료', rejected: '반려', stopped: '중단' };
+export const STAGE_NAMES = { recruiting: '모집 중', active: '진행 중', closed: '종료', stopped: '중단' };
 export const stageName = s => STAGE_NAMES[s] || s;
 
 // 상태 표시 — 색만으로 구분하지 않도록 기호와 글자를 같이 쓴다
@@ -139,7 +137,7 @@ export function askReason(title, { label = '사유', hint = '', button = '확인
   });
 }
 
-// 내부 메모 (회원·챌린지·신청서) — 회원에게는 보이지 않는다
+// 내부 메모 (회원·그룹·신청서) — 회원에게는 보이지 않는다
 export function notesBox(refType, refId, notes, meId, isOwner) {
   return `<div class="card adm-notes" data-ref-type="${refType}" data-ref-id="${refId}"><div class="card-head"><h3>내부 메모 <small class="muted">· 운영진만 봅니다</small></h3></div>
     <form class="form" data-form="note" style="gap:8px">${textarea('body', { rows: 2, placeholder: '통화 내용, 확인한 증빙, 다음에 볼 것 등' })}<div><button class="btn sm primary" type="submit">메모 남기기</button></div></form>
@@ -154,26 +152,31 @@ export function mountNotes(root) {
 // 감사 로그 행동 이름
 export const ACTION_LABELS = {
   setup: '초기 설정', 'application.approve': '가입 승인', 'application.reject': '가입 반려',
-  'challenge.review': '챌린지 심사', 'challenge.stage': '챌린지 단계 변경', 'challenge.leader': '그룹장 교체', 'challenge.complete': '완주 처리',
-  'agreement.approve': '합의서 승인', 'agreement.return': '합의서 보완 요청', 'paper.approve': '페이퍼 승인', 'paper.return': '페이퍼 보완 요청',
-  'settlement.review': '정산 검수', 'payout.paid': '지급 처리', 'payout.bulk.paid': '일괄 지급 처리', 'payout.bulk.held': '지급 보류', 'payout.bulk.pending': '지급 대기로 되돌림',
+  'group.create': '그룹 만들기', 'group.update': '그룹 정보 변경', 'group.stage': '그룹 단계 변경', 'group.leader': '그룹리더 교체', 'session.close': '모임 출석 마감',
+  'group.member.approve': '그룹원 승인', 'group.member.reject': '그룹원 거절', 'group.member.role': '그룹원 역할 변경', 'group.member.warn': '출석 경고', 'group.member.clear_warning': '경고 취소',
+  'group.member.remove': '그룹원 내보내기', 'group.member.restore': '그룹원 복귀', 'group.remove_member': '출석 기준 퇴출', 'group_result.verify': '매출 확인',
+  'leader.approve': '그룹리더 승인', 'leader.reject': '그룹리더 반려', 'leader.grant': '그룹리더 자격 부여', 'leader.revoke': '그룹리더 자격 해제',
+  'presentation.confirmed': '발표 확정', 'presentation.presented': '발표 완료', 'presentation.declined': '발표 반려', 'presentation.applied': '발표 확정 취소',
+  'paper.approve': '페이퍼 승인', 'paper.return': '페이퍼 보완 요청',
   'promotion.approve': '승급 승인', 'promotion.hold': '승급 보류', 'promotion.reject': '승급 반려',
   'dispute.update': '이의 처리', 'user.update': '회원 정보 변경', 'staff.grant': '운영진 지정', 'staff.revoke': '운영진 해제', 'staff.make_owner': '운영자 지정', 'staff.remove_owner': '운영자 해제',
-  'settings.update': '규칙 변경', 'settings.reset': '규칙 기본값 복원', 'round.create': '라운드 생성', 'round.update': '라운드 수정',
+  'settings.update': '규칙 변경', 'settings.reset': '규칙 기본값 복원', 'round.create': '시즌 만들기', 'round.update': '시즌 수정',
   'event.create': '일정 생성', 'event.update': '일정 수정', 'event.cancel': '일정 취소', 'event.attend.mark': '출석 처리', 'event.attend.unmark': '출석 취소',
   'broadcast.send': '단체 알림 발송', 'post.hide': '게시물 숨김', 'post.update': '게시물 처리', 'comment.hide': '댓글 숨김', 'comment.show': '댓글 다시 보이기',
-  'challenge.create': '챌린지 제안', 'settlement.create': '정산표 작성', 'user.withdraw': '회원 탈퇴', 'payout.held': '지급 보류', 'payout.pending': '지급 대기로 되돌림',
-  'member.accept': '그룹원 수락', 'member.reject': '그룹원 거절', 'member.remove': '그룹원 이탈 처리', 'member.role': '그룹원 역할 변경',
-  'kpi.settings': 'KPI 목표·수집 설정',
-  'hq.expense.add': '재원 사용 기록', 'hq.expense.delete': '재원 기록 삭제', export: 'CSV 내려받기', 'backup.download': '전체 백업', 'member.withdraw': '회원 탈퇴',
+  'user.withdraw': '회원 탈퇴', 'member.withdraw': '회원 탈퇴', 'kpi.settings': 'KPI 목표·수집 설정', export: 'CSV 내려받기', 'backup.download': '전체 백업',
+  // v1 기록 (예전 로그 표시용)
+  'challenge.review': '(예전) 챌린지 심사', 'challenge.stage': '(예전) 챌린지 단계 변경', 'challenge.leader': '(예전) 그룹장 교체', 'challenge.complete': '(예전) 완주 처리', 'challenge.create': '(예전) 챌린지 제안',
+  'agreement.approve': '(예전) 합의서 승인', 'agreement.return': '(예전) 합의서 보완 요청', 'settlement.review': '(예전) 정산 검수', 'settlement.create': '(예전) 정산표 작성',
+  'payout.paid': '(예전) 지급 처리', 'payout.bulk.paid': '(예전) 일괄 지급', 'payout.bulk.held': '(예전) 지급 보류', 'payout.bulk.pending': '(예전) 지급 대기', 'payout.held': '(예전) 지급 보류', 'payout.pending': '(예전) 지급 대기',
+  'member.accept': '(예전) 그룹원 수락', 'member.reject': '(예전) 그룹원 거절', 'member.remove': '(예전) 그룹원 이탈', 'member.role': '(예전) 역할 변경', 'hq.expense.add': '(예전) 재원 기록', 'hq.expense.delete': '(예전) 재원 기록 삭제',
 };
 export const actionLabel = a => ACTION_LABELS[a] || a;
-export const ACTION_GROUPS = [['', '전체 행동'], ['application', '가입'], ['challenge', '챌린지'], ['agreement', '합의서'], ['settlement', '정산'], ['payout', '지급'], ['paper', '페이퍼'], ['promotion', '승급'], ['user', '회원'], ['member', '그룹원'], ['staff', '운영진'], ['settings', '규칙'], ['event', '일정'], ['broadcast', '알림'], ['post', '게시물'], ['hq', '재원'], ['kpi', 'KPI'], ['export', '내려받기'], ['backup', '백업']];
+export const ACTION_GROUPS = [['', '전체 행동'], ['application', '가입'], ['group', '그룹'], ['session', '모임·출석'], ['leader', '그룹리더'], ['group_result', '매출 확인'], ['presentation', '발표'], ['paper', '페이퍼'], ['promotion', '승급'], ['user', '회원'], ['staff', '운영진'], ['settings', '규칙'], ['event', '일정'], ['broadcast', '알림'], ['post', '커뮤니티']];
 export function targetLink(target) {
-  const m = String(target || '').match(/^(users|challenges|applications|events|posts|settlements|papers):(\d+)/);
+  const m = String(target || '').match(/^(users|challenges|applications|events|posts|papers|leader_applications|group_results|event_presentations):(\d+)/);
   if (!m) return esc(target || '');
-  const href = { users: `#/admin/users/${m[2]}`, challenges: `#/admin/groups/${m[2]}`, applications: '#/admin/applications', events: `#/admin/events/${m[2]}`, posts: `#/community/posts/${m[2]}`, settlements: `#/settlements/${m[2]}`, papers: '#/admin/papers' }[m[1]];
-  const name = { users: '회원', challenges: '챌린지', applications: '신청서', events: '일정', posts: '게시물', settlements: '정산', papers: '페이퍼' }[m[1]];
+  const href = { users: `#/admin/users/${m[2]}`, challenges: `#/admin/groups/${m[2]}`, applications: '#/admin/applications', events: `#/admin/events/${m[2]}`, posts: `#/community/posts/${m[2]}`, papers: '#/admin/papers', leader_applications: '#/admin/leaders?view=decided', group_results: '#/admin/results?view=all', event_presentations: '#/admin/presentations' }[m[1]];
+  const name = { users: '회원', challenges: '그룹', applications: '신청서', events: '일정', posts: '게시물', papers: '페이퍼', leader_applications: '그룹리더 신청', group_results: '성과 기록', event_presentations: '발표' }[m[1]];
   return `<a href="${href}">${name} #${m[2]}</a>`;
 }
 // 감사 로그 상세(JSON)를 읽기 쉬운 한 줄로

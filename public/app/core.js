@@ -45,17 +45,23 @@ export function ago(s) {
 
 export const LEVEL_NAMES = { L0: '게스트', L1: '챌린저', L2: '메이커', L3: '어치버', L4: '리더', L5: '마스터' };
 export const LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'];
-export const STAGE = { proposed: ['보완 중', 'amber'], review: ['심사 중', 'amber'], recruiting: ['모집 중', 'green'], agreement: ['합의 중', 'blue'], active: ['진행 중', 'blue'], settling: ['정산 중', 'purple'], closed: ['종료', ''], rejected: ['반려', 'red'], stopped: ['중단', 'red'] };
-export const TYPE = { solo: '솔로', group: '그룹', official: '오피셜' };
+export const STAGE = { recruiting: ['모집 중', 'green'], active: ['진행 중', 'blue'], closed: ['종료', ''], stopped: ['중단', 'red'] };
+export const TYPE = { study: '학습그룹', challenge: '도전그룹' };
 export const FIELDS = { 'S-01': '콘텐츠·미디어', 'S-02': '디지털 상품', 'S-03': '커머스', 'S-04': '서비스·프리랜싱', 'S-05': '공간·오프라인', 'S-06': '웹·앱·자동화' };
-export const ROLES = { leader: '그룹장', accounting: '회계', record: '기록', maker: '제작', marketing: '마케팅·판매', general: '일반 참여' };
-export const BOARDS = { question: '질문', share: '공유', review: '후기', notice: '공지', swap: '품앗이' };
-export const EVENT_TYPES = { machal_day: '마챌데이', demo_day: '데모데이', seminar: '세미나', study: '스터디', office_hour: '오피스아워', workshop: '워크숍' };
-export const BADGES = { first_sale: '첫 매출', repeat_sale: '반복 매출', completion: '라운드 완주', leader_completion: '그룹장 완주', contributor: '페이퍼 기고', founder: '창립 멤버', mentor: '강사·멘토' };
+export const ROLES = { leader: '그룹리더', sub: '부리더', member: '그룹원' };
+export const BOARDS = { notice: '공지', share: '정보·자료', idea: '아이디어', trend: '시장·트렌드·AI', question: '질문', group: '그룹 소식', review: '후기' };
+export const EVENT_TYPES = { regular: '정기모임', showcase: '성과발표회', seminar: '세미나·특강', workshop: '워크숍', office_hour: '오피스아워', networking: '네트워킹' };
+export const EVENT_TOPICS = { idea: '사업 아이디어', market: '시장 분석', trend: '트렌드', ai: 'AI 활용', sideproject: '사이드프로젝트 사례', group: '그룹 진행 공유' };
+export const BADGES = { first_sale: '첫 매출', repeat_sale: '반복 매출', completion: '그룹 완주', leader_completion: '그룹리더 완주', contributor: '페이퍼 기고', founder: '창립 멤버', mentor: '강사·멘토' };
+export const GOAL_METRICS = { revenue: ['매출', '원'], customers: ['유료 고객', '명'], sales: ['판매', '건'], users: ['사용자·구독자', '명'], content: ['발행한 콘텐츠', '개'], study: ['학습 과제', '개'], custom: ['직접 정한 지표', ''] };
+export const LOG_KINDS = { progress: '진행 기록', study: '학습 노트', resource: '자료 공유', retro: '회고', notice: '공지' };
+export const ATTEND = { present: ['출석', 'green'], late: ['지각', 'amber'], absent: ['결석', 'red'], excused: ['공결', 'blue'] };
+export const attendChip = s => s ? `<span class="chip ${ATTEND[s]?.[1] || ''}">${ATTEND[s]?.[0] || s}</span>` : '<span class="chip">미확인</span>';
+export const metricVal = (metric, v, unit) => { const u = unit ?? GOAL_METRICS[metric]?.[1] ?? ''; return u === '원' ? won(v) : num(v) + u; };
 
 export const lvChip = l => `<span class="chip lv-${l}" style="background:transparent;border-color:currentColor">${esc(LEVEL_NAMES[l] || l)}</span>`;
 export const stageChip = s => { const [n, c] = STAGE[s] || [s, '']; return `<span class="chip ${c}">${n}</span>`; };
-export const typeChip = t => `<span class="chip ${t === 'official' ? 'ink' : ''}">${TYPE[t] || t}</span>`;
+export const typeChip = t => `<span class="chip ${t === 'study' ? 'purple' : 'ink'}">${TYPE[t] || t}</span>`;
 export const fieldChip = f => `<span class="chip">${esc(FIELDS[f] || f)}</span>`;
 
 export function empty(title, sub = '', action = '') { return `<div class="empty"><strong>${esc(title)}</strong>${sub ? `<span>${esc(sub)}</span>` : ''}${action ? `<div style="margin-top:12px">${action}</div>` : ''}</div>`; }

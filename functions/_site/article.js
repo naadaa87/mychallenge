@@ -51,11 +51,11 @@ export function guidePage(g) {
 </article>
 <aside class="side">
   ${related.length ? `<div class="side-box"><b>함께 읽기</b><ul>${related.map(r => `<li><a href="/guide/${r.slug}/">${esc(r.short)}</a></li>`).join('')}</ul></div>` : ''}
-  <div class="side-box side-cta"><b>읽었다면 해 볼 차례</b><p>마이챌린지는 12주 동안 그룹으로 사이드프로젝트를 실행하는 모임입니다.</p><a class="btn btn-primary" href="/apply/">가입 신청</a><a class="side-link" href="/how-it-works/">운영 방식 보기</a></div>
+  <div class="side-box side-cta"><b>읽었다면 해 볼 차례</b><p>마이챌린지는 정기모임에서 함께 배우고, 학습그룹·도전그룹으로 성과에 도전하는 커뮤니티입니다.</p><a class="btn btn-primary" href="/apply/">가입 신청</a><a class="side-link" href="/how-it-works/">운영 방식 보기</a></div>
 </aside>
 </div>
 ${related.length ? `<section class="sec sec-tint"><div class="wrap"><div class="sec-head"><p class="eyebrow">이어서 읽기</p><h2>이 글과 함께 많이 읽는 가이드</h2></div><div class="g-grid g-grid-3">${related.map(guideCard).join('')}</div></div></section>` : ''}
-${h.cta('혼자 읽고 끝내지 않으려면', '다음 라운드에서 관심사가 비슷한 사람들과 12주 동안 직접 해 보세요.')}`,
+${h.cta('혼자 읽고 끝내지 않으려면', '정기모임에서 관심이 맞는 사람을 만나고, 그룹으로 직접 해 보세요.')}`,
   };
 }
 

@@ -2,7 +2,7 @@
 import { api, put, esc, num, won, fmtDate, fmtLocal, ago, LEVEL_NAMES, BOARDS, EVENT_TYPES, lvChip, stageChip, typeChip, empty, toast, go, reload, modal, closeModal, bindForms, field, input, check, textarea, progressBar } from '../../core.js';
 import { columns, hbars, qs } from './shared.js';
 
-const TABS = [['summary', '요약'], ['traffic', '방문·유입'], ['content', '콘텐츠'], ['members', '회원'], ['groups', '모임·참여'], ['community', '커뮤니티']];
+const TABS = [['summary', '요약'], ['traffic', '방문·유입'], ['content', '콘텐츠'], ['members', '회원'], ['groups', '그룹·출석'], ['community', '커뮤니티']];
 const RANGES = [[7, '7일'], [30, '30일'], [90, '90일'], [365, '1년']];
 const ZONES = { header: '머리글', hero: '첫 화면', body: '본문', cta: '맺음 띠', footer: '바닥글', nav: '메뉴', goal: '목표' };
 const AREAS = { site: '공개 사이트', paper: '프로젝트 페이퍼', app: '회원 공간' };
@@ -96,7 +96,7 @@ async function summary(P, query) {
     ? `<div class="notice warn">방문 통계 수집이 꺼져 있습니다. 회원·모임·커뮤니티 지표는 실제 기록으로 그대로 보이지만 방문·페이지·클릭 숫자는 쌓이지 않습니다.${C.is_owner ? ' <b>목표·수집 설정</b>에서 다시 켤 수 있습니다.' : ''}</div>`
     : `<div class="notice">방문 통계는 <b>${fmtDate(C.start)}</b>부터 모읍니다. 개인정보처리방침에 이용 통계 항목을 더하고 7일 뒤 시행하기로 했기 때문입니다. 그 전까지 회원·모임·커뮤니티 지표는 실제 기록으로 그대로 보입니다.</div>`;
   const groups = [...new Set(d.cards.map(c => c.group))];
-  const GROUP_NOTE = { 유입: '사람들이 얼마나 들어오나', 전환: '들어온 사람이 회원이 되나', 참여: '회원이 실제로 움직이나', 모임: '모임이 만들어지고 채워지나', 성과: '라운드의 결과' };
+  const GROUP_NOTE = { 유입: '사람들이 얼마나 들어오나', 전환: '들어온 사람이 회원이 되나', 참여: '회원이 실제로 움직이나', 그룹: '그룹이 만들어지고 채워지나', 성과: '그룹이 낸 결과' };
   return {
     period: d.period,
     note: colNote + (!d.tracking_since ? '<div class="notice">방문 통계는 이번 업데이트 이후부터 쌓입니다. 방문·페이지뷰·머문 시간은 하루쯤 지나면 보이기 시작합니다. 회원·모임·커뮤니티 지표는 지금 바로 정확합니다.</div>'
@@ -198,7 +198,7 @@ async function members(P, query) {
     { label: '회원', html: r => `<a href="#/admin/users/${r.id}"><b>${esc(r.nickname)}</b></a> ${lvChip(r.level)}${r.status !== 'active' ? ' <span class="chip">휴면</span>' : ''}<br><small class="muted">${esc(r.name || '')}</small>`, get: r => r.nickname },
     { label: '가입', get: r => fmtDate(r.created_at) }, { label: '최근 접속', get: r => r.last_seen_at ? ago(r.last_seen_at) : '-', csv: r => r.last_seen_at || '' },
     { label: '활동한 날', key: 'active_days', num: 1 }, { label: '화면', key: 'views', num: 1 }, { label: '머문 시간', num: 1, get: r => dur(r.secs || 0), csv: r => r.secs },
-    { label: '체크인', key: 'checkins', num: 1 }, { label: '완료 기록', key: 'done', num: 1 }, { label: '글·댓글', key: 'talk', num: 1 }, { label: '출석', key: 'attended', num: 1 }, { label: '진행 모임', key: 'groups', num: 1 }, { label: '포인트', key: 'points', num: 1 },
+    { label: '그룹 모임 출석', key: 'checkins', num: 1 }, { label: '도전 기록', key: 'done', num: 1 }, { label: '글·댓글', key: 'talk', num: 1 }, { label: '정기모임 출석', key: 'attended', num: 1 }, { label: '참여 그룹', key: 'groups', num: 1 }, { label: '포인트', key: 'points', num: 1 },
   ];
   const SORTS = { active: (a, b) => b.active_days - a.active_days || b.views - a.views, recent: (a, b) => (a.created_at < b.created_at ? 1 : -1), seen: (a, b) => String(b.last_seen_at || '').localeCompare(String(a.last_seen_at || '')), points: (a, b) => b.points - a.points, quiet: (a, b) => a.active_days - b.active_days || String(a.last_seen_at || '').localeCompare(String(b.last_seen_at || '')) };
   const listHtml = (sort, q) => table('members', listCols, d.list.filter(r => !q || (r.nickname + ' ' + (r.name || '')).includes(q)).sort(SORTS[sort]), { emptyText: '회원이 없습니다' });
@@ -228,28 +228,27 @@ async function members(P, query) {
 async function groups(P, query) {
   const d = await api('/admin/kpi/groups' + qs({ ...P }));
   const L = labelsFor(d.period, d.labels); const t = d.totals;
-  const STAGE = { proposed: '보완 중', review: '심사 중', recruiting: '모집 중', agreement: '합의 중', active: '진행 중', settling: '정산 중', closed: '종료', stopped: '중단' };
+  const STAGE = { recruiting: '모집 중', active: '진행 중', closed: '종료', stopped: '중단' };
   return {
     period: d.period,
     body: `<div class="kpi-grid kpi-4">
-        ${T('새로 개설된 모임', t.opened, null, '개', `그룹·오피셜 제안 수 · 솔로 ${t.solo}개 별도`)}${T('진행 중인 모임', t.running, null, '개', '모집·합의·진행·정산 단계')}${T('모임 평균 인원', t.avg_size, null, '명', `진행 그룹 기준 · 충원율 ${pct(t.fill_rate)}(최대 ${t.max}명) · ${t.min}명 이상 ${pct(t.min_met)}`)}${T('회원 모임 참여율', t.participation, null, '%', `정회원 ${t.members}명 중 진행 중인 그룹에 있는 ${t.in_group}명`)}
-        ${T('지원 수락률', t.accept_rate, null, '%', '그룹원 지원 중 받아들인 비율')}${T('중도 이탈률', t.dropout_rate, null, '%', '그룹에 들어온 사람 중 이탈·제외된 비율', { better: 'down' })}${T('완주율', t.completion_rate, null, '%', '끝난 모임 중 중단 없이 종료한 비율')}${T('일정 참석률', d.attendance.rate, null, '%', `이 기간 일정 신청 ${d.attendance.registered}명 중 출석 ${d.attendance.attended}명`)}
+        ${T('새로 만든 그룹', t.opened, null, '개', `학습그룹 ${t.study}개 · 도전그룹 ${t.challenge}개`)}${T('모집·진행 중인 그룹', t.running, null, '개', '지금 기준')}${T('그룹 평균 인원', t.avg_size, null, '명', `진행 그룹 기준 · 정원 대비 ${pct(t.fill_rate)}`)}${T('회원 그룹 참여율', t.participation, null, '%', `정회원 ${t.members}명 중 그룹에 있는 ${t.in_group}명`)}
+        ${T('그룹 모임 출석률', t.group_attendance, null, '%', `이 기간 마감한 모임 ${num(t.sessions)}번 · 공결 제외`)}${T('출석 경고', t.warnings, null, '건', `출석 기준 퇴출 ${num(t.removed)}명`, { better: 'down' })}${T('중도 이탈률', t.dropout_rate, null, '%', '그룹에 들어온 사람 중 나가거나 퇴출된 비율', { better: 'down' })}${T('정기모임·일정 참석률', d.attendance.rate, null, '%', `이 기간 신청 ${d.attendance.registered}명 중 출석 ${d.attendance.attended}명`)}
       </div>
-      <div class="trend-grid trend-3">${chart('새 모임 개설', d.series.opened, L, '개')}
-        <div class="card"><h3 class="small card-title">분야별 개설 <small class="muted">이 기간</small></h3>${hbars(d.by_field.map(f => [f.name, f.n]), { unit: '개' })}</div>
-        <div class="card"><h3 class="small card-title">단계별 모임 <small class="muted">지금</small></h3>${hbars(d.stages.map(s => [STAGE[s.stage] || s.stage, s.n]), { unit: '개' })}</div></div>
-      ${sec('모임별 참여 현황', table('groups', [
-        { label: '모임', html: r => `<a href="#/admin/groups/${r.id}"><b>${esc(r.title)}</b></a><br><small class="muted">${esc(r.leader)} · ${esc(r.field_name || '')}${r.round_name ? ' · ' + esc(r.round_name) : ''}</small>`, get: r => r.title },
+      <div class="trend-grid trend-3">${chart('새 그룹', d.series.opened, L, '개')}${chart('마감한 그룹 모임', d.series.sessions, L, '번')}
+        <div class="card"><h3 class="small card-title">단계별 그룹 <small class="muted">지금</small></h3>${hbars(d.stages.map(s => [STAGE[s.stage] || s.stage, s.n]), { unit: '개' })}<h3 class="small card-title" style="margin-top:14px">분야별 개설 <small class="muted">이 기간</small></h3>${hbars(d.by_field.map(f => [f.name, f.n]), { unit: '개' })}</div></div>
+      ${sec('그룹별 참여·출석·성과', table('groups', [
+        { label: '그룹', html: r => `<a href="#/admin/groups/${r.id}"><b>${esc(r.title)}</b></a><br><small class="muted">${esc(r.leader)} · ${esc(r.field_name || '')}</small>`, get: r => r.title },
         { label: '단계', html: r => `${typeChip(r.type)} ${stageChip(r.stage)}`, get: r => STAGE[r.stage] || r.stage },
-        { label: '지원', key: 'applied', num: 1 }, { label: '수락', key: 'accepted', num: 1 },
-        { label: `활동 인원/${t.max}`, num: 1, html: r => `${r.active}${r.min_met ? '' : ' <span class="chip amber">최소 미달</span>'}`, get: r => r.active },
-        { label: '충원율', num: 1, get: r => pct(r.fill_rate) }, { label: '체크인 참여율', num: 1, get: r => pct(r.checkin_rate) },
-        { label: '완료 기록', key: 'done', num: 1 }, { label: '이탈', key: 'left_n', num: 1 }, { label: '외부 매출', num: 1, get: r => r.revenue ? won(r.revenue) : '-', csv: r => r.revenue },
-      ], d.groups, { emptyText: '아직 그룹 모임이 없습니다' }), { csv: 'groups', flush: true, sub: '진행 중인 모임 먼저' })}
-      ${sec('일정(오프라인·온라인 모임) 참석', table('events', [
+        { label: '신청', key: 'applied', num: 1 }, { label: '받음', key: 'accepted', num: 1 },
+        { label: '활동 인원', num: 1, get: r => `${r.active}/${r.capacity}`, csv: r => r.active }, { label: '정원 대비', num: 1, get: r => pct(r.fill_rate) },
+        { label: '마감한 모임', key: 'sessions', num: 1 }, { label: '출석률', num: 1, get: r => pct(r.checkin_rate) }, { label: '경고', key: 'warnings', num: 1 }, { label: '출석 퇴출', key: 'removed_att', num: 1 },
+        { label: '도전 기록', key: 'done', num: 1 }, { label: '성과 기록', key: 'results', num: 1 }, { label: '목표 진행', num: 1, get: r => r.goal_rate == null ? '-' : pct(r.goal_rate), csv: r => r.goal_rate }, { label: '매출 기록', num: 1, get: r => r.revenue ? won(r.revenue) : '-', csv: r => r.revenue },
+      ], d.groups, { emptyText: '아직 그룹이 없습니다' }), { csv: 'groups', flush: true, sub: '모집·진행 중인 그룹 먼저' })}
+      ${sec('정기모임·일정 참석', table('events', [
         { label: '일정', html: r => `<a href="#/admin/events/${r.id}"><b>${esc(r.title)}</b></a>${r.status === 'cancelled' ? ' <span class="chip red">취소</span>' : ''}<br><small class="muted">${esc(EVENT_TYPES[r.type] || r.type)}</small>`, get: r => r.title },
         { label: '일시', get: r => fmtLocal(r.starts_at) }, { label: '정원', num: 1, get: r => r.capacity || '제한 없음' },
-        { label: '신청', key: 'registered', num: 1 }, { label: '출석', key: 'attended', num: 1 }, { label: '참석률', num: 1, get: r => pct(r.attend_rate) }, { label: '정원 대비 신청', num: 1, get: r => pct(r.fill_rate) },
+        { label: '신청', key: 'registered', num: 1 }, { label: '출석', key: 'attended', num: 1 }, { label: '참석률', num: 1, get: r => pct(r.attend_rate) }, { label: '발표', key: 'presentations', num: 1 }, { label: '정원 대비 신청', num: 1, get: r => pct(r.fill_rate) },
       ], d.events, { emptyText: '이 기간에 열린 일정이 없습니다' }), { csv: 'events', flush: true, sub: '이 기간에 열린 일정' })}`,
   };
 }

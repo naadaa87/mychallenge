@@ -1,84 +1,79 @@
 // 자동 생성 파일입니다. 직접 고치지 말고 node scripts/build-site.mjs 를 실행하세요.
-export const ASSET_VERSION = "2b88e3f5";
+export const ASSET_VERSION = "e73e80b7";
 export const ROUTES = [
  {
   "path": "/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 1
  },
  {
   "path": "/about/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.8
  },
  {
   "path": "/how-it-works/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.8
  },
  {
-  "path": "/rules/",
-  "lastmod": "2026-11-09",
+  "path": "/goals/",
+  "lastmod": "2026-11-23",
   "priority": 0.8
  },
  {
   "path": "/levels/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.8
  },
  {
   "path": "/programs/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.8
  },
  {
   "path": "/faq/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.8
  },
  {
   "path": "/apply/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.8
  },
  {
   "path": "/guide/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.8
  },
  {
   "path": "/privacy/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.3
  },
  {
   "path": "/terms/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.3
  },
  {
   "path": "/guide/side-project-start/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.7
  },
  {
   "path": "/guide/side-job-ideas/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.7
  },
  {
   "path": "/guide/first-sale-12-weeks/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.7
  },
  {
   "path": "/guide/why-group/",
-  "lastmod": "2026-11-09",
-  "priority": 0.7
- },
- {
-  "path": "/guide/profit-sharing/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.7
  },
  {
@@ -88,22 +83,22 @@ export const ROUTES = [
  },
  {
   "path": "/guide/side-income-tax/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.7
  },
  {
   "path": "/guide/avoid-side-job-course-scams/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.7
  },
  {
   "path": "/guide/weekly-checkin/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.7
  },
  {
   "path": "/guide/project-paper/",
-  "lastmod": "2026-11-09",
+  "lastmod": "2026-11-23",
   "priority": 0.7
  },
  {
@@ -119,7 +114,7 @@ export const GUIDES_META = [
   "description": "퇴근 후 사이드프로젝트가 3주를 못 넘기는 건 대개 아이디어 탓이 아닙니다. 시작 전에 정할 시간·자산·첫 고객 세 가지와 첫 4주 계획 예시를 정리했습니다.",
   "category": "시작하기",
   "published": "2026-11-09",
-  "modified": "2026-11-09"
+  "modified": "2026-11-23"
  },
  {
   "slug": "side-job-ideas",
@@ -127,7 +122,7 @@ export const GUIDES_META = [
   "description": "직장인 부업 추천 글을 아무리 읽어도 고르기 어려운 건 기준이 없어서입니다. 여섯 갈래로 나눈 부업 유형과, 고를 때 쓰는 여섯 가지 질문을 정리했습니다.",
   "category": "시작하기",
   "published": "2026-11-09",
-  "modified": "2026-11-09"
+  "modified": "2026-11-23"
  },
  {
   "slug": "first-sale-12-weeks",
@@ -135,23 +130,15 @@ export const GUIDES_META = [
   "description": "첫 매출은 금액보다 모르는 사람이 돈을 냈다는 사실이 중요합니다. 12주를 좁히기·선언·첫 공개·판매·회고로 나눠 주차별 할 일과 끝났다고 말할 기준을 정리했습니다.",
   "category": "시작하기",
   "published": "2026-11-09",
-  "modified": "2026-11-09"
+  "modified": "2026-11-23"
  },
  {
   "slug": "why-group",
   "title": "혼자 하던 사이드프로젝트가 멈추는 이유, 그룹으로 하면 달라지는 것",
-  "description": "의지가 약해서가 아니라 구조가 없어서 멈춥니다. 혼자 할 때 생기는 세 가지 빈틈과, 그룹으로 할 때 새로 생기는 돈·역할·속도 문제를 어떻게 다루는지 정리했습니다.",
+  "description": "의지가 약해서가 아니라 구조가 없어서 멈춥니다. 혼자 할 때 생기는 세 가지 빈틈과, 그룹으로 할 때 새로 생기는 참여·속도·역할 문제를 어떻게 다루는지 정리했습니다.",
   "category": "함께하기",
   "published": "2026-11-09",
-  "modified": "2026-11-09"
- },
- {
-  "slug": "profit-sharing",
-  "title": "함께 만든 사이드프로젝트 수익, 어떻게 나눌까: 배분 순서와 합의서",
-  "description": "동업이 틀어지는 건 대개 돈을 번 뒤입니다. 비용 회수부터 운영 몫, 그룹장 몫, 기여율 배분까지 순서를 정하고 시작 전 합의서에 적어야 할 항목을 정리했습니다.",
-  "category": "돈과 제도",
-  "published": "2026-11-09",
-  "modified": "2026-11-09"
+  "modified": "2026-11-23"
  },
  {
   "slug": "side-job-company-rules",
@@ -167,7 +154,7 @@ export const GUIDES_META = [
   "description": "부업으로 받은 돈에서 3.3%나 8.8%가 빠졌다면 원천징수입니다. 사업소득과 기타소득의 차이, 기타소득 300만 원 분리과세, 직장인이 5월에 신고해야 하는 경우를 정리했습니다.",
   "category": "돈과 제도",
   "published": "2026-11-09",
-  "modified": "2026-11-09"
+  "modified": "2026-11-23"
  },
  {
   "slug": "avoid-side-job-course-scams",
@@ -175,23 +162,23 @@ export const GUIDES_META = [
   "description": "한국소비자원에 접수된 고액 온라인 부업 강의 피해는 2024년 11건에서 2025년 42건으로 늘었고, 결제 금액 대부분이 100만~400만 원이었습니다. 피해 유형과 결제 전 확인할 일곱 가지를 정리했습니다.",
   "category": "돈과 제도",
   "published": "2026-11-09",
-  "modified": "2026-11-09"
+  "modified": "2026-11-23"
  },
  {
   "slug": "weekly-checkin",
-  "title": "주간 체크인 15분 진행법: 지난주 한 일, 이번 주 목표, 막힌 점",
+  "title": "그룹 모임 진행법: 15분 체크인으로 지난주 한 일, 이번 주 목표, 막힌 점 나누기",
   "description": "그룹 프로젝트가 흐지부지되는 건 회의가 짧아서가 아니라 기록이 없어서입니다. 15분 안에 끝나는 주간 체크인 진행 순서와 기록 양식, 자주 생기는 문제 대처법을 정리했습니다.",
   "category": "운영 노하우",
   "published": "2026-11-09",
-  "modified": "2026-11-09"
+  "modified": "2026-11-23"
  },
  {
   "slug": "project-paper",
   "title": "프로젝트 페이퍼 쓰는 법: 멈춘 프로젝트도 기록으로 남겨야 하는 이유",
-  "description": "프로젝트 페이퍼는 12주 동안 무엇을 만들고 얼마를 팔았으며 무엇을 배웠는지 남기는 회고 문서입니다. 꼭 들어갈 항목과 숫자 공개 원칙, 잘 쓴 페이퍼의 특징을 정리했습니다.",
+  "description": "프로젝트 페이퍼는 그룹이 함께한 기간 동안 무엇을 만들고 얼마를 팔았으며 무엇을 배웠는지 남기는 회고 문서입니다. 꼭 들어갈 항목과 숫자 공개 원칙, 잘 쓴 페이퍼의 특징을 정리했습니다.",
   "category": "운영 노하우",
   "published": "2026-11-09",
-  "modified": "2026-11-09"
+  "modified": "2026-11-23"
  },
  {
   "slug": "n-job-statistics",

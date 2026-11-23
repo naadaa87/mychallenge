@@ -8,21 +8,21 @@ const ld = obj => `<script type="application/ld+json">${JSON.stringify(obj).repl
 
 export const NAV = [
   ['/about/', '마챌 소개'],
-  ['/how-it-works/', '운영 방식'],
-  ['/rules/', '수익 배분'],
-  ['/levels/', '등급'],
+  ['/how-it-works/', '함께하는 방식'],
+  ['/goals/', '수익목표'],
+  ['/programs/', '정기모임'],
   ['/guide/', '가이드'],
   ['/papers/', '프로젝트 페이퍼'],
 ];
 
 export const FOOT = [
-  ['마이챌린지', [['/about/', '마챌 소개'], ['/how-it-works/', '12주 운영 방식'], ['/rules/', '수익 배분 규칙'], ['/levels/', '등급과 포인트'], ['/programs/', '프로그램']]],
+  ['마이챌린지', [['/about/', '마챌 소개'], ['/how-it-works/', '함께하는 방식'], ['/goals/', '수익목표'], ['/programs/', '정기모임·프로그램'], ['/levels/', '등급과 포인트']]],
   ['시작하기', [['/apply/', '가입 신청'], ['/faq/', '자주 묻는 질문'], ['/papers/', '프로젝트 페이퍼'], ['/app/#/login', '회원 로그인']]],
-  ['가이드', [['/guide/side-project-start/', '사이드프로젝트 시작하기'], ['/guide/side-income-tax/', '부업 소득 세금'], ['/guide/side-job-company-rules/', '회사 겸업 규정'], ['/guide/', '전체 글 보기']]],
+  ['가이드', [['/guide/side-project-start/', '사이드프로젝트 시작하기'], ['/guide/why-group/', '그룹으로 하면 달라지는 것'], ['/guide/side-income-tax/', '부업 소득 세금'], ['/guide/', '전체 글 보기']]],
 ];
 
 export function orgLd(base) {
-  return { '@context': 'https://schema.org', '@type': 'Organization', '@id': base + '/#org', name: SITE.fullName, alternateName: [SITE.name, SITE.alt, 'My Challenge'], url: base + '/', logo: base + '/icon-512.png', description: `${SITE.fullName}는 사이드프로젝트로 첫 매출을 만들려는 사람들이 관심사별 그룹을 짜서 12주 동안 함께 실행하는 모임입니다.` };
+  return { '@context': 'https://schema.org', '@type': 'Organization', '@id': base + '/#org', name: SITE.fullName, alternateName: [SITE.name, SITE.alt, 'My Challenge'], url: base + '/', logo: base + '/icon-512.png', description: `${SITE.fullName}는 정기모임에서 사업 아이디어와 시장, 트렌드, AI 활용, 사이드프로젝트를 함께 살피고, 학습그룹과 도전그룹으로 성과와 수익에 도전하는 커뮤니티입니다.` };
 }
 export function websiteLd(base) {
   return { '@context': 'https://schema.org', '@type': 'WebSite', '@id': base + '/#website', name: SITE.fullName, alternateName: [SITE.name, SITE.alt], url: base + '/', inLanguage: 'ko-KR', publisher: { '@id': base + '/#org' } };
@@ -51,7 +51,7 @@ function header(path) {
     <details class="mnav">
       <summary aria-label="메뉴 열기"><span></span><span></span><span></span></summary>
       <div class="mnav-panel">
-        <nav aria-label="모바일 메뉴">${links}<a href="/programs/">프로그램</a><a href="/faq/">자주 묻는 질문</a></nav>
+        <nav aria-label="모바일 메뉴">${links}<a href="/levels/">등급과 포인트</a><a href="/faq/">자주 묻는 질문</a></nav>
         <div class="mnav-cta auth-guest"><a class="btn btn-line" href="/app/#/login">로그인</a><a class="btn btn-primary" href="/apply/">가입 신청</a></div>
         <div class="mnav-cta auth-member" hidden><a class="btn btn-primary" href="/app/#/dashboard">내 대시보드</a></div>
       </div>
@@ -68,8 +68,8 @@ function footer() {
     <div class="sf-top">
       <div class="sf-brand">
         <a class="brand" href="/" title="마이챌린지 홈">${logo}<span class="brand-name">마이챌린지<small>마챌</small></span></a>
-        <p>사이드프로젝트로 첫 매출을 만드는 사람들이 모여 12주 동안 함께 실행하고, 결과를 기록으로 남기는 모임입니다.</p>
-        <ul class="sf-principles"><li>수익을 보장하지 않습니다</li><li>실행한 사람이 발언합니다</li><li>돈과 소유는 시작 전에 합의합니다</li></ul>
+        <p>정기모임에서 함께 배우고, 학습그룹과 도전그룹으로 목표에 도전하고, 기록과 성과를 나누는 사이드프로젝트 커뮤니티입니다.</p>
+        <ul class="sf-principles"><li>수익을 보장하지 않습니다</li><li>실행한 사람이 발언합니다</li><li>기록하고 나눕니다</li></ul>
       </div>
       ${FOOT.map(([t, items]) => `<div class="sf-col"><h2>${t}</h2><ul>${items.map(([h, l]) => `<li><a href="${h}">${l}</a></li>`).join('')}</ul></div>`).join('')}
     </div>

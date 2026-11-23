@@ -53,7 +53,7 @@ async function shot(target, name, { full = false } = {}) {
 await shot('/', 'site-home', { full: true });
 await shot('/about/', 'site-about', { full: true });
 await shot('/how-it-works/', 'site-how', { full: true });
-await shot('/rules/', 'site-rules', { full: true });
+await shot('/goals/', 'site-goals', { full: true });
 await shot('/levels/', 'site-levels', { full: true });
 await shot('/programs/', 'site-programs', { full: true });
 await shot('/faq/', 'site-faq');
@@ -72,11 +72,10 @@ await shot('#/register', 'register');
 await login('admin@machal.kr', 'adminpass1');
 await shot('#/admin', 'admin-home', { full: true });
 for (const [h, n, full] of [
-  ['#/admin/applications?status=joined', 'admin-applications'], ['#/admin/challenges', 'admin-challenges'], ['#/admin/agreements', 'admin-agreements'], ['#/admin/settlements', 'admin-settlements'],
+  ['#/admin/applications?status=joined', 'admin-applications'], ['#/admin/leaders?view=decided', 'admin-leaders'], ['#/admin/results?view=all', 'admin-results'], ['#/admin/presentations', 'admin-presentations'],
   ['#/admin/papers', 'admin-papers'], ['#/admin/promotions', 'admin-promotions'], ['#/admin/disputes', 'admin-disputes'],
   ['#/admin/users', 'admin-users'], ['#/admin/users/3', 'admin-user', true], ['#/admin/staff', 'admin-staff'],
   ['#/admin/groups?view=all', 'admin-groups'], ['#/admin/groups/1', 'admin-group', true], ['#/admin/rounds', 'admin-rounds'],
-  ['#/admin/payouts?status=paid', 'admin-payouts'], ['#/admin/hq', 'admin-hq'],
   ['#/admin/broadcast', 'admin-broadcast'], ['#/admin/community?view=recent', 'admin-community'], ['#/admin/events?when=past', 'admin-events'], ['#/admin/events/1', 'admin-event'],
   ['#/admin/settings', 'admin-settings', true], ['#/admin/audit', 'admin-audit'], ['#/admin/data', 'admin-data'],
   ['#/admin/kpi', 'admin-kpi', true], ['#/admin/kpi?tab=traffic', 'admin-kpi-traffic', true], ['#/admin/kpi?tab=content', 'admin-kpi-content', true],
@@ -85,23 +84,27 @@ for (const [h, n, full] of [
 await logout();
 await login('a@test.kr', 'password1');
 await shot('#/dashboard', 'dashboard');
-await shot('#/challenges', 'challenges');
-await shot('#/challenges/1', 'challenge-detail');
-await shot('#/groups/1', 'group-home');
-await shot('#/groups/1/checkin', 'group-checkin');
-await shot('#/groups/1/ledger', 'group-ledger');
-await shot('#/groups/1/agreement', 'group-agreement', { full: true });
-await shot('#/groups/1/settlement', 'group-settlement');
-await shot('#/settlements/1', 'settlement', { full: true });
+await shot('#/groups', 'groups');
+await shot('#/groups/new', 'group-new', { full: true });
+await shot('#/groups/1', 'group-home', { full: true });
+await shot('#/groups/1/sessions', 'group-sessions', { full: true });
+await shot('#/groups/1/records', 'group-records');
+await shot('#/groups/1/goals', 'group-goals', { full: true });
+await shot('#/groups/1/members', 'group-members', { full: true });
+await shot('#/groups/1/settings', 'group-settings', { full: true });
 await shot('#/groups/1/paper', 'group-paper');
+await shot('#/challenges/1', 'legacy-challenge');
 await shot('#/papers/1', 'paper');
 await shot('#/community', 'community');
-await shot('#/events', 'events');
+await shot('#/community/board/group', 'community-group');
+await shot('#/events', 'events', { full: true });
 await shot('#/me', 'me');
+await shot('#/me/leader', 'me-leader');
 await logout();
 await login('e@test.kr', 'password1');
 await shot('#/papers/1', 'paper-summary-L2');
-await shot('#/challenges/new', 'propose-solo');
+await shot('#/groups/new', 'group-new-not-leader');
+await shot('#/me/leader', 'leader-apply');
 ws.close(); chrome.kill();
 if (errors.length) { console.log('\nJS 오류:'); errors.forEach(e => console.log(' -', e)); process.exit(1); }
 console.log('\n프런트 오류 없음 ✔');

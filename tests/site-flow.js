@@ -19,7 +19,7 @@ const fails = []; const ok = (c, m) => { console.log(`${c ? '✔' : '✗'} ${m}`
 // 1. 가입 신청서
 const email = `flow${Date.now()}@test.kr`;
 await go(BASE + '/apply/');
-await ev(`(() => { const f = document.querySelector('#apply-form'); f.name.value = '흐름테스트'; f.email.value = '${email}'; f.hours_weekday.value = '주중 5시간'; f.querySelector('[name=interests][value="S-02"]').checked = true; f.side_job_check.value = 'yes'; f.consent_privacy.checked = true; return true; })()`);
+await ev(`(() => { const f = document.querySelector('#apply-form'); f.name.value = '흐름테스트'; f.email.value = '${email}'; f.hours_weekday.value = '주중 5시간'; f.querySelector('[name=interests][value="S-02"]').checked = true; f.side_job_check.value = 'yes'; f.want_group.value = 'challenge'; f.project_idea.value = 'AI로 상세페이지 만들기'; f.consent_privacy.checked = true; return true; })()`);
 await ev(`document.querySelector('#apply-form button[type=submit]').click()`);
 await wait(700);
 ok(await ev(`document.querySelector('.form-msg').textContent.includes('결과 공개')`), '결과 공개 동의 없이 보내면 막는다');
@@ -30,7 +30,7 @@ const login = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: {
 const token = login.headers.getSetCookie().find(c => c.startsWith('machal_session=')).match(/machal_session=([^;]+)/)[1];
 const apps = await (await fetch(BASE + '/api/admin/applications?status=pending', { headers: { cookie: 'machal_session=' + token } })).json();
 const app = apps.find(a => a.email === email);
-ok(app && app.form.interests === 'S-02' && app.form.side_job_check === 'yes', '운영 화면에서 신청서 내용이 그대로 보인다');
+ok(app && app.form.interests === 'S-02' && app.form.side_job_check === 'yes' && app.form.want_group === 'challenge' && app.form.project_idea, '운영 화면에서 신청서 내용(관심 있는 그룹 포함)이 그대로 보인다');
 
 // 2. 예전 해시 주소
 await go(BASE + '/#/login');
@@ -48,10 +48,14 @@ ok((await ev('location.hash')) === '#/dashboard', '/app/ 첫 화면은 로그인
 // 4. 홈 숫자, 등급 기준값 반영
 await send('Network.clearBrowserCookies');
 await go(BASE + '/');
-ok(await ev(`!document.querySelector('[data-live=stats]').hidden && /\\d/.test(document.querySelector('[data-stat=members]').textContent)`), '홈의 실제 숫자 섹션이 채워진다(챌린지 기록이 있을 때)');
-ok(await ev(`(() => { const r = document.querySelector('[data-live=round]'); return !r.hidden && r.textContent.includes('모집 중'); })()`), '모집 중인 라운드가 있으면 홈에 안내가 뜬다');
-await go(BASE + '/rules/');
-ok(await ev(`!!document.querySelector('[data-live=hq] table') && document.querySelector('[data-live=hq]').innerText.includes('사례집')`), '수익 배분 규칙 페이지에 운영본부 몫과 쓰임이 공개된다');
+ok(await ev(`!document.querySelector('[data-live=stats]').hidden && /\\d/.test(document.querySelector('[data-stat=members]').textContent)`), '홈의 실제 숫자 섹션이 채워진다(그룹 기록이 있을 때)');
+ok(await ev(`(() => { const r = document.querySelector('[data-live=round]'); return !r.hidden && r.textContent.includes('모집 중'); })()`), '신규 회원 모집 중인 시즌이 있으면 홈에 안내가 뜬다');
+ok(await ev(`(() => { const g = document.querySelector('[data-live=groups]'); return !!g && (g.hidden || g.querySelectorAll('.live-groups li').length >= 1); })()`), '모집 중인 그룹이 있으면 홈에 그룹 목록이 뜬다');
+const rr = await fetch(BASE + '/rules/', { redirect: 'manual' });
+ok(rr.status === 301 && rr.headers.get('location') === '/goals/', '예전 수익 배분 주소(/rules/)는 수익목표로 옮겨 간다');
+await go(BASE + '/goals/');
+ok(await ev(`document.querySelectorAll('.goal-steps li').length === 6 && document.body.innerText.includes('아직 정하지 않았습니다') && !document.body.innerText.includes('합의서')`), '수익목표 페이지: 여섯 단계, 수익 나눔은 추후 결정, 합의서 없음');
+ok(await ev(`!!document.querySelector('.sh-nav a[href="/goals/"]')`), '머리글 메뉴에 수익목표가 있다');
 await go(BASE + '/levels/');
 const lvPts = String((await (await fetch(BASE + '/api/public/levels')).json()).rules.L2.points);
 ok((await ev(`document.querySelector('[data-rule="L2.points"]').textContent`)) === lvPts, `등급 페이지가 운영본부 설정값(지금 ${lvPts}점)을 반영한다`);

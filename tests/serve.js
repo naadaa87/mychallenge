@@ -21,6 +21,8 @@ const sitemap = await import('../functions/sitemap.xml.js');
 const rss = await import('../functions/rss.xml.js');
 const port = Number(process.argv[2] || 8788);
 const env = { DB: db, SITE_URL: process.env.SITE_URL || `http://localhost:${port}` };
+// public/_redirects (Cloudflare Pages와 같은 형식: 원래주소 새주소 상태코드)
+const REDIRECTS = existsSync(join(root, '_redirects')) ? readFileSync(join(root, '_redirects'), 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => l.split(/\s+/)) : [];
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' };
 
 async function send(res, out) {
@@ -47,6 +49,8 @@ http.createServer(async (req, res) => {
     if (p === '/sitemap.xml') return send(res, await sitemap.onRequestGet({ request, env }));
     if (p === '/rss.xml') return send(res, await rss.onRequestGet({ request, env }));
 
+    const rd = REDIRECTS.find(([from]) => from === p);
+    if (rd) { res.writeHead(Number(rd[2] || 302), { location: rd[1] }); return res.end(); }
     const file = normalize(join(root, p));
     if (!file.startsWith(root)) { res.writeHead(400); return res.end(); }
     const serve = (f, status = 200) => { res.writeHead(status, { 'content-type': MIME[extname(f)] || 'application/octet-stream', ...(f.includes('/app/') ? { 'x-robots-tag': 'noindex' } : {}) }); res.end(readFileSync(f)); };

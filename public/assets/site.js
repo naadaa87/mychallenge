@@ -41,43 +41,42 @@
   const getJson = async path => { const r = await fetch('/api' + path, { credentials: 'same-origin' }); if (!r.ok) throw new Error(r.status); return r.json(); };
   const num = n => Number(n || 0).toLocaleString('ko-KR');
 
+  const escH = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const stats = $('[data-live="stats"]') || $('[data-live="round"]') || $('[data-live="groups"]') ? getJson('/public/stats') : null;
+
   // 홈: 실제 숫자 (불러오지 못하면 섹션을 숨긴 채로 둔다)
   const statsSec = $('[data-live="stats"]');
-  if (statsSec) {
-    getJson('/public/stats').then(s => {
-      const c0 = s.closed || {};
-      // 진행 중이거나 끝난 챌린지, 공개 페이퍼가 하나라도 생기기 전에는 0만 늘어선 화면을 보여 주지 않는다
-      if (!(s.active_challenges || s.papers || c0.with_sales || c0.without_sales || c0.stopped)) return;
-      for (const k of ['members', 'active_challenges', 'first_sales', 'papers']) { const el = $(`[data-stat="${k}"]`, statsSec); if (el) el.textContent = num(s[k]); }
-      const c = s.closed || {}; const total = (c.with_sales || 0) + (c.without_sales || 0) + (c.stopped || 0);
+  if (statsSec && stats) {
+    stats.then(s => {
+      const c = s.closed || {};
+      // 그룹이나 공개 페이퍼가 하나라도 생기기 전에는 0만 늘어선 화면을 보여 주지 않는다
+      if (!(s.active_challenges || s.papers || s.sessions_held || c.with_sales || c.without_sales || c.stopped)) return;
+      for (const k of ['members', 'active_challenges', 'sessions_held', 'first_sales', 'papers']) { const el = $(`[data-stat="${k}"]`, statsSec); if (el) el.textContent = num(s[k]); }
+      const total = (c.with_sales || 0) + (c.without_sales || 0) + (c.stopped || 0);
       const note = $('[data-stat="closed_note"]', statsSec);
-      if (note) note.textContent = total ? `끝난 챌린지 ${num(total)}건 중 매출 발생 ${num(c.with_sales)}건 · 매출 없이 종료 ${num(c.without_sales)}건 · 중단 ${num(c.stopped)}건` : '첫 라운드가 끝나면 끝난 챌린지의 결과가 여기에 함께 표시됩니다.';
+      if (note) note.textContent = total ? `마무리한 그룹 ${num(total)}개 중 매출 기록 있음 ${num(c.with_sales)} · 매출 없이 마무리 ${num(c.without_sales)} · 중단 ${num(c.stopped)}` : '그룹들이 마무리되면 끝난 그룹의 결과도 여기에 함께 표시됩니다.';
       statsSec.hidden = false;
     }).catch(() => {});
   }
 
-  // 모집 중인 라운드 안내 (홈·가입 신청)
+  // 모집 중인 시즌 안내 (홈·가입 신청)
   const roundEls = $$('[data-live="round"]');
-  if (roundEls.length) {
-    getJson('/public/stats').then(s => {
+  if (roundEls.length && stats) {
+    stats.then(s => {
       const r = s.round; if (!r) return;
       const md = d => { const m = String(d || '').match(/^\d{4}-(\d{2})-(\d{2})/); return m ? `${Number(m[1])}월 ${Number(m[2])}일` : ''; };
-      const text = `${r.name} 모집 중${r.recruit_until ? ` · ${md(r.recruit_until)} 마감` : ''} · ${md(r.start_date)} 시작`;
+      const text = `${r.name} 신규 회원 모집 중${r.recruit_until ? ` · ${md(r.recruit_until)} 마감` : ''}`;
       roundEls.forEach(el => { el.textContent = text; el.hidden = false; });
     }).catch(() => {});
   }
 
-  // 수익 배분 규칙: 운영본부 몫과 쓰임 (분기별 공개)
-  const hqSec = $('[data-live="hq"]');
-  if (hqSec) {
-    getJson('/public/hq-report').then(d => {
-      const q = (d.quarters || []).filter(r => r.income || r.spent);
-      if (!q.length) return;
-      const won = n => Number(n || 0).toLocaleString('ko-KR') + '원';
-      const cats = d.categories || {};
-      const ql = s => String(s).replace(/^(\d{4})-Q(\d)$/, '$1년 $2분기');
-      hqSec.innerHTML = `<p>최근 ${q.length}개 분기의 기록입니다. 금액은 정산 검수가 끝난 건 기준이고, 쓴 돈은 영수증과 함께 운영본부가 보관합니다.</p>
-        <div class="table-wrap"><table><thead><tr><th>분기</th><th class="num">운영본부 몫</th><th class="num">정산 대행 수수료</th><th class="num">쓴 돈</th><th>쓴 곳</th></tr></thead><tbody>${q.map(r => `<tr><td>${ql(r.quarter)}</td><td class="num">${won(r.hq_share)}</td><td class="num">${won(r.fee)}</td><td class="num">${won(r.spent)}</td><td>${Object.entries(r.by_category || {}).filter(([, v]) => v).map(([k, v]) => `${cats[k] || k} ${won(v)}`).join(' · ') || '-'}</td></tr>`).join('')}</tbody></table></div>`;
+  // 지금 모집 중인 그룹 (홈·수익목표)
+  const grpSec = $('[data-live="groups"]');
+  if (grpSec && stats) {
+    stats.then(s => {
+      const list = s.recruiting || []; if (!list.length) return;
+      $('.live-groups', grpSec).innerHTML = list.map(g => `<li><span class="lg-type ${g.type === 'study' ? 'is-study' : ''}">${escH(g.type_name)}</span><div><b>${escH(g.title)}</b><small>${escH(g.summary || '')}</small><small class="lg-meta">${g.schedule_text ? escH(g.schedule_text) + ' · ' : ''}${num(g.members)}/${num(g.capacity)}명</small></div></li>`).join('');
+      grpSec.hidden = false;
     }).catch(() => {});
   }
 
@@ -98,13 +97,12 @@
   // 프로그램 페이지: 다가오는 일정
   const evSec = $('[data-live="events"]');
   if (evSec) {
-    const TYPES = { machal_day: '마챌데이', demo_day: '데모데이', seminar: '세미나', study: '스터디', office_hour: '오피스아워', workshop: '워크숍' };
     const LV = { L0: '게스트', L1: '챌린저', L2: '메이커', L3: '어치버', L4: '리더', L5: '마스터' };
-    const escH = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const MODE = { offline: '오프라인', online: '온라인', hybrid: '온·오프라인' };
     const fmt = s => { const d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? s : `${d.getMonth() + 1}월 ${d.getDate()}일 (${'일월화수목금토'[d.getDay()]}) ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
     getJson('/public/events').then(list => {
       if (!list.length) return;
-      $('.event-list', evSec).innerHTML = list.map(e => `<li><span class="ev-type">${escH(TYPES[e.type] || e.type)}</span><div><b>${escH(e.title)}</b><small>${escH(fmt(e.starts_at))}${e.location ? ' · ' + escH(e.location) : ''} · ${escH(LV[e.min_level] || '')}부터</small></div></li>`).join('');
+      $('.event-list', evSec).innerHTML = list.map(e => `<li><span class="ev-type">${escH(e.type_name || e.type)}</span><div><b>${escH(e.title)}</b><small>${escH(fmt(e.starts_at))} · ${escH(MODE[e.mode] || '오프라인')}${e.location ? ' · ' + escH(e.location) : ''} · ${escH(LV[e.min_level] || '')}부터</small>${(e.topic_names || []).length ? `<small>${e.topic_names.map(escH).join(' · ')}</small>` : ''}</div></li>`).join('');
       evSec.hidden = false;
     }).catch(() => {});
   }

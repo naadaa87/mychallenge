@@ -1,18 +1,49 @@
-// 운영본부 콘솔 API (v1.2) — /api/admin/* 의 조회·관리 기능
-// 승인 큐(가입·심사·합의서·정산·페이퍼·승급·이의)의 '처리' 엔드포인트는 [[path]].js 에 있고,
-// 여기에는 운영 현황, 회원·그룹 모니터링, 지급, 재원, 알림, 커뮤니티, 일정, 감사, 백업을 모았다.
+// 운영본부 콘솔 API (v2.0) — /api/admin/* 의 조회·관리 기능
+// 승인 큐(가입·페이퍼·승급·이의)의 '처리' 엔드포인트는 [[path]].js 에 있고, 그룹 운영 API는 group-routes.js 에 있다.
+// 여기에는 운영 현황, 회원·그룹리더·그룹 모니터링, 알림, 커뮤니티, 일정, 감사, 백업을 모았다.
 import {
   bad, forbid, notfound, readJson, parseJ, J, one, all, run, insert, getSettings,
   requireStaff, notify, audit, str, must, intv, addPoints, maybeAutoPromote, inviteCode,
 } from './util.js';
-import { LEVELS, LEVEL_NAMES, FIELDS, BADGE_NAMES, ROLE_WEIGHTS, DEFAULT_SETTINGS, levelIndex } from './rules.js';
+import { LEVELS, LEVEL_NAMES, FIELDS, BADGE_NAMES, GROUP_TYPES, GROUP_STAGES, GROUP_ROLES, GOAL_METRICS, EVENT_TYPES, EVENT_TOPICS, LEGACY_POINT_LABELS, DEFAULT_SETTINGS, levelIndex } from './rules.js';
+import { loadGroup, activeMembers, groupAttendance, emptyStats, closeSession, autoCloseSessions, kstNow } from './group-routes.js';
 
-// ───────────────────────── 스키마 보강 (기존 표에 열 추가) ─────────────────────────
+// ───────────────────────── 스키마 보강 (기존 표에 열 추가·자료 옮기기) ─────────────────────────
+// 한 번씩만 실행하고 schema_migrations에 기록한다. 이미 있는 열을 더하려다 난 오류는 넘어간다.
 export const MIGRATIONS = [
   ['2026-11-14-rounds-recruit-until', 'ALTER TABLE rounds ADD COLUMN recruit_until TEXT'],
   ['2026-11-14-events-status', "ALTER TABLE events ADD COLUMN status TEXT NOT NULL DEFAULT 'scheduled'"],
   ['2026-11-14-comments-hidden', 'ALTER TABLE comments ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0'],
   ['2026-11-19-analytics-scroll', 'ALTER TABLE analytics_events ADD COLUMN scroll INTEGER'],
+  // v2.0 커뮤니티 운영 모델
+  ['2026-11-23-users-can-lead', 'ALTER TABLE users ADD COLUMN can_lead INTEGER NOT NULL DEFAULT 0'],
+  ['2026-11-23-users-leader-since', 'ALTER TABLE users ADD COLUMN leader_since TEXT'],
+  ['2026-11-23-ch-description', 'ALTER TABLE challenges ADD COLUMN description TEXT'],
+  ['2026-11-23-ch-goal-text', 'ALTER TABLE challenges ADD COLUMN goal_text TEXT'],
+  ['2026-11-23-ch-goal-metric', 'ALTER TABLE challenges ADD COLUMN goal_metric TEXT'],
+  ['2026-11-23-ch-goal-unit', 'ALTER TABLE challenges ADD COLUMN goal_unit TEXT'],
+  ['2026-11-23-ch-goal-target', 'ALTER TABLE challenges ADD COLUMN goal_target REAL'],
+  ['2026-11-23-ch-start', 'ALTER TABLE challenges ADD COLUMN start_date TEXT'],
+  ['2026-11-23-ch-end', 'ALTER TABLE challenges ADD COLUMN end_date TEXT'],
+  ['2026-11-23-ch-schedule', 'ALTER TABLE challenges ADD COLUMN schedule_text TEXT'],
+  ['2026-11-23-ch-capacity', 'ALTER TABLE challenges ADD COLUMN capacity INTEGER NOT NULL DEFAULT 8'],
+  ['2026-11-23-ch-join-mode', "ALTER TABLE challenges ADD COLUMN join_mode TEXT NOT NULL DEFAULT 'approval'"],
+  ['2026-11-23-ch-recruit-open', 'ALTER TABLE challenges ADD COLUMN recruit_open INTEGER NOT NULL DEFAULT 1'],
+  ['2026-11-23-ch-policy', 'ALTER TABLE challenges ADD COLUMN policy TEXT'],
+  ['2026-11-23-ch-place', 'ALTER TABLE challenges ADD COLUMN place TEXT'],
+  ['2026-11-23-ch-chat', 'ALTER TABLE challenges ADD COLUMN chat_url TEXT'],
+  ['2026-11-23-ch-closed-at', 'ALTER TABLE challenges ADD COLUMN closed_at TEXT'],
+  ['2026-11-23-gm-leave-note', 'ALTER TABLE group_members ADD COLUMN leave_note TEXT'],
+  ['2026-11-23-events-mode', "ALTER TABLE events ADD COLUMN mode TEXT NOT NULL DEFAULT 'offline'"],
+  ['2026-11-23-events-online-url', 'ALTER TABLE events ADD COLUMN online_url TEXT'],
+  ['2026-11-23-events-topics', 'ALTER TABLE events ADD COLUMN topics TEXT'],
+  // 예전 자료를 새 모델로 옮긴다 (수익 배분·합의서 단계는 없어졌다)
+  ['2026-11-23-data-stage', "UPDATE challenges SET stage = CASE WHEN stage IN ('agreement','settling') THEN 'active' WHEN stage IN ('proposed','review','rejected') THEN 'stopped' ELSE stage END WHERE stage NOT IN ('recruiting','active','closed','stopped')"],
+  ['2026-11-23-data-type', "UPDATE challenges SET type = 'challenge' WHERE type NOT IN ('study','challenge')"],
+  ['2026-11-23-data-roles', "UPDATE group_members SET role = 'member' WHERE role NOT IN ('leader','sub','member')"],
+  ['2026-11-23-data-event-types', "UPDATE events SET type = CASE type WHEN 'machal_day' THEN 'regular' WHEN 'demo_day' THEN 'showcase' WHEN 'study' THEN 'workshop' ELSE type END WHERE type IN ('machal_day','demo_day','study')"],
+  ['2026-11-23-data-boards', "UPDATE posts SET board = 'share' WHERE board = 'swap'"],
+  ['2026-11-23-data-leaders', "UPDATE users SET can_lead = 1, leader_since = COALESCE(leader_since, datetime('now')) WHERE id IN (SELECT leader_id FROM challenges WHERE stage IN ('recruiting','active','closed'))"],
 ];
 export async function runMigrations(db) {
   const done = new Set((await all(db, 'SELECT id FROM schema_migrations')).map(r => r.id));
@@ -40,8 +71,6 @@ export async function requireOwner(db, user) {
   return user;
 }
 
-const HQ_CATEGORIES = { casebook: '사례집·쇼케이스', mentors: '강사비·오피스아워', website: '홈페이지 운영', advance: '다음 라운드 선지원', other: '기타' };
-const quarterSql = col => `strftime('%Y', ${col}) || '-Q' || ((CAST(strftime('%m', ${col}) AS INTEGER) + 2) / 3)`;
 const kstDate = (d = new Date()) => new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10);
 const daysBetween = (a, b) => Math.floor((Date.parse(b) - Date.parse(a)) / 86400e3);
 
@@ -53,11 +82,12 @@ async function segmentUsers(db, seg) {
   const t = seg.type;
   if (t === 'all') return all(db, "SELECT id FROM users WHERE status = 'active'");
   if (t === 'level') { const lv = LEVELS.includes(seg.level) ? seg.level : 'L1'; const list = LEVELS.slice(levelIndex(lv)); return all(db, `SELECT id FROM users WHERE status = 'active' AND level IN (${list.map(() => '?').join(',')})`, ...list); }
-  if ((t === 'challenge' && !Number(seg.challenge_id)) || (t === 'round' && !Number(seg.round_id))) throw bad('대상 챌린지나 라운드를 골라 주세요');
+  if (t === 'challenge' && !Number(seg.challenge_id)) throw bad('대상 그룹을 골라 주세요');
   if (t === 'challenge') return all(db, "SELECT gm.user_id AS id FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.challenge_id = ? AND gm.status = 'active' AND u.status = 'active'", Number(seg.challenge_id));
-  if (t === 'round') return all(db, "SELECT DISTINCT gm.user_id AS id FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id JOIN users u ON u.id = gm.user_id WHERE c.round_id = ? AND gm.status = 'active' AND u.status = 'active'", Number(seg.round_id));
+  if (t === 'in_groups') return all(db, "SELECT DISTINCT gm.user_id AS id FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id JOIN users u ON u.id = gm.user_id WHERE c.stage IN ('recruiting','active') AND gm.status = 'active' AND u.status = 'active'");
+  if (t === 'no_group') return all(db, "SELECT u.id FROM users u WHERE u.status = 'active' AND u.role = 'member' AND u.level <> 'L0' AND NOT EXISTS (SELECT 1 FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = u.id AND gm.status = 'active' AND c.stage IN ('recruiting','active'))");
   if (t === 'staff') return all(db, "SELECT id FROM users WHERE role = 'staff' AND status = 'active'");
-  if (t === 'leaders') return all(db, "SELECT DISTINCT c.leader_id AS id FROM challenges c JOIN users u ON u.id = c.leader_id WHERE c.stage IN ('recruiting','agreement','active','settling') AND u.status = 'active'");
+  if (t === 'leaders') return all(db, "SELECT id FROM users WHERE can_lead = 1 AND status = 'active'");
   throw bad('보낼 대상을 골라 주세요');
 }
 
@@ -73,112 +103,114 @@ export function registerAdminRoutes(on, h) {
     await h.purgeOldApplications(db);
     const c = async (sql, ...p) => (await one(db, sql, ...p))?.c || 0;
     const today = kstDate();
-
     const queues = {
       applications: await c("SELECT COUNT(*) AS c FROM applications WHERE status = 'pending'"),
-      challenges: await c("SELECT COUNT(*) AS c FROM challenges WHERE stage = 'review'"),
-      agreements: await c("SELECT COUNT(*) AS c FROM agreements WHERE status = 'signed'"),
-      settlements: await c("SELECT COUNT(*) AS c FROM settlements WHERE status IN ('confirming','disputed')"),
+      leaders: await c("SELECT COUNT(*) AS c FROM leader_applications WHERE status = 'pending'"),
+      results: await c("SELECT COUNT(*) AS c FROM group_results WHERE metric = 'revenue' AND verified_at IS NULL AND deleted_at IS NULL"),
       papers: await c("SELECT COUNT(*) AS c FROM papers WHERE status = 'review'"),
+      presentations: await c("SELECT COUNT(*) AS c FROM event_presentations p JOIN events e ON e.id = p.event_id WHERE p.status = 'applied' AND e.status <> 'cancelled'"),
       promotions: await c("SELECT COUNT(*) AS c FROM promotion_requests WHERE status = 'pending'"),
       disputes: await c("SELECT COUNT(*) AS c FROM disputes WHERE status IN ('open','mediating')"),
     };
-    // 처리 기한(MC-05): 가입 3일, 페이퍼 5일, 심사·승급·이의·정산 7일
+    // 처리 기한: 가입 3일, 그룹리더 신청 5일, 페이퍼 5일, 매출 확인·승급·이의 7일, 발표 신청은 일정 3일 전까지
     const overdue = {
       applications: await c("SELECT COUNT(*) AS c FROM applications WHERE status = 'pending' AND created_at < datetime('now','-3 days')"),
-      challenges: await c("SELECT COUNT(*) AS c FROM challenges WHERE stage = 'review' AND updated_at < datetime('now','-7 days')"),
-      agreements: await c("SELECT COUNT(*) AS c FROM agreements WHERE status = 'signed' AND created_at < datetime('now','-3 days')"),
-      settlements: await c("SELECT COUNT(*) AS c FROM settlements WHERE status IN ('confirming','disputed') AND created_at < datetime('now','-7 days')"),
+      leaders: await c("SELECT COUNT(*) AS c FROM leader_applications WHERE status = 'pending' AND created_at < datetime('now','-5 days')"),
+      results: await c("SELECT COUNT(*) AS c FROM group_results WHERE metric = 'revenue' AND verified_at IS NULL AND deleted_at IS NULL AND created_at < datetime('now','-7 days')"),
       papers: await c("SELECT COUNT(*) AS c FROM papers WHERE status = 'review' AND submitted_at < datetime('now','-5 days')"),
+      presentations: await c("SELECT COUNT(*) AS c FROM event_presentations p JOIN events e ON e.id = p.event_id WHERE p.status = 'applied' AND e.status <> 'cancelled' AND e.starts_at < datetime('now','+9 hours','+3 days')"),
       promotions: await c("SELECT COUNT(*) AS c FROM promotion_requests WHERE status = 'pending' AND created_at < datetime('now','-7 days')"),
       disputes: await c("SELECT COUNT(*) AS c FROM disputes WHERE status IN ('open','mediating') AND created_at < datetime('now','-7 days')"),
     };
-
-    const expected = await c("SELECT COUNT(*) AS c FROM group_members gm JOIN challenges ch ON ch.id = gm.challenge_id JOIN checkins ci ON ci.challenge_id = ch.id WHERE gm.status = 'active' AND ch.stage IN ('active','settling') AND ci.created_at >= datetime('now','-7 days')");
-    const submitted = await c("SELECT COUNT(*) AS c FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id WHERE ci.created_at >= datetime('now','-7 days')");
+    const since30 = new Date(Date.now() + 9 * 3600e3 - 30 * 86400e3).toISOString().slice(0, 16);
+    const att30 = await one(db, `SELECT SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END) AS ok, SUM(CASE WHEN a.status IN ('present','late','absent') THEN 1 ELSE 0 END) AS n
+      FROM session_attendance a JOIN group_sessions s ON s.id = a.session_id WHERE s.status = 'closed' AND s.starts_at >= ?`, since30);
     const kpi = {
-      north_star: await c(`SELECT COUNT(DISTINCT b.user_id) AS c FROM badges b WHERE b.code = 'completion' AND b.revoked_at IS NULL AND (
-        EXISTS (SELECT 1 FROM badges f WHERE f.user_id = b.user_id AND f.code = 'first_sale' AND f.revoked_at IS NULL)
-        OR EXISTS (SELECT 1 FROM group_members gm JOIN challenges ch ON ch.id = gm.challenge_id WHERE gm.user_id = b.user_id AND gm.status IN ('active','left') AND ch.public_numbers LIKE '%"has_sales":true%'))`),
+      north_star: await c(`SELECT COUNT(DISTINCT a.user_id) AS c FROM session_attendance a JOIN group_sessions s ON s.id = a.session_id JOIN users u ON u.id = a.user_id
+        WHERE s.status = 'closed' AND s.starts_at >= ? AND a.status IN ('present','late') AND u.role = 'member'`, since30),
       members: await c("SELECT COUNT(*) AS c FROM users WHERE status = 'active' AND role = 'member' AND level <> 'L0'"),
       active_7d: await c("SELECT COUNT(*) AS c FROM users WHERE status = 'active' AND role = 'member' AND level <> 'L0' AND last_seen_at >= datetime('now','-7 days')"),
-      active_groups: await c("SELECT COUNT(*) AS c FROM challenges WHERE stage IN ('active','settling') AND type <> 'solo'"),
-      weekly_checkin_rate: expected ? Math.round(submitted / expected * 100) : null,
+      active_groups: await c("SELECT COUNT(*) AS c FROM challenges WHERE stage IN ('recruiting','active')"),
+      study_groups: await c("SELECT COUNT(*) AS c FROM challenges WHERE stage IN ('recruiting','active') AND type = 'study'"),
+      challenge_groups: await c("SELECT COUNT(*) AS c FROM challenges WHERE stage IN ('recruiting','active') AND type = 'challenge'"),
+      leaders: await c("SELECT COUNT(*) AS c FROM users WHERE can_lead = 1 AND status = 'active'"),
+      sessions_30d: await c("SELECT COUNT(*) AS c FROM group_sessions WHERE status = 'closed' AND starts_at >= ?", since30),
+      attendance_rate_30d: att30?.n ? Math.round(att30.ok / att30.n * 100) : null,
+      warnings_30d: await c("SELECT COUNT(*) AS c FROM group_warnings WHERE created_at >= datetime('now','-30 days')"),
+      removed_30d: await c("SELECT COUNT(*) AS c FROM group_members WHERE status = 'removed' AND leave_type = 'attendance' AND left_at >= datetime('now','-30 days')"),
+      logs_7d: await c("SELECT COUNT(*) AS c FROM group_logs WHERE deleted_at IS NULL AND created_at >= datetime('now','-7 days')"),
       first_sales: await c("SELECT COUNT(DISTINCT user_id) AS c FROM badges WHERE code = 'first_sale' AND revoked_at IS NULL"),
       completions: await c("SELECT COUNT(*) AS c FROM badges WHERE code = 'completion' AND revoked_at IS NULL"),
       papers_public: await c("SELECT COUNT(*) AS c FROM papers WHERE status IN ('approved','published') AND publish_scope = 'public'"),
     };
+    // v1.x 화면 호환용 이름
+    kpi.weekly_checkin_rate = kpi.attendance_rate_30d;
     const funnel = [
       ['가입 신청', await c("SELECT COUNT(*) AS c FROM applications WHERE status <> 'purged'")],
       ['계정 생성', await c("SELECT COUNT(*) AS c FROM users WHERE role = 'member'")],
       ['오리엔테이션', await c("SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND level <> 'L0'")],
-      ['메이커 이상', await c("SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND level IN ('L2','L3','L4','L5')")],
-      ['그룹 참여', await c("SELECT COUNT(DISTINCT gm.user_id) AS c FROM group_members gm JOIN challenges ch ON ch.id = gm.challenge_id JOIN users u ON u.id = gm.user_id WHERE ch.type <> 'solo' AND gm.status IN ('active','left') AND u.role = 'member'")],
-      ['라운드 완주', await c("SELECT COUNT(DISTINCT user_id) AS c FROM badges WHERE code = 'completion' AND revoked_at IS NULL")],
-      ['첫 매출', kpi.first_sales],
+      ['그룹 참여', await c("SELECT COUNT(DISTINCT gm.user_id) AS c FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.status IN ('active','left','removed') AND u.role = 'member'")],
+      ['그룹 모임 출석', await c("SELECT COUNT(DISTINCT a.user_id) AS c FROM session_attendance a JOIN users u ON u.id = a.user_id WHERE a.status IN ('present','late') AND u.role = 'member'")],
+      ['그룹 완주', await c("SELECT COUNT(DISTINCT user_id) AS c FROM badges WHERE code = 'completion' AND revoked_at IS NULL")],
+      ['성과 기록', await c("SELECT COUNT(DISTINCT r.user_id) AS c FROM group_results r JOIN users u ON u.id = r.user_id WHERE r.deleted_at IS NULL AND u.role = 'member'")],
     ];
-
     // 최근 8주 추이 (한국 시간, 월요일 시작)
     const thisMon = mondayOf(today);
     const weeks = Array.from({ length: 8 }, (_, i) => addDays(thisMon, (i - 7) * 7));
-    const weekCounts = async (table, col) => {
-      const rows = await all(db, `SELECT date(datetime(${col}, '+9 hours'), '-6 days', 'weekday 1') AS wk, COUNT(*) AS c FROM ${table} WHERE datetime(${col}, '+9 hours') >= ? GROUP BY wk`, weeks[0] + ' 00:00:00');
+    const weekCounts = async (table, col, where = '1 = 1', kst = false) => {
+      const expr = kst ? `substr(${col}, 1, 10)` : `datetime(${col}, '+9 hours')`;
+      const rows = await all(db, `SELECT date(${expr}, '-6 days', 'weekday 1') AS wk, COUNT(*) AS c FROM ${table} WHERE ${where} AND ${expr} >= ? GROUP BY wk`, weeks[0] + (kst ? '' : ' 00:00:00'));
       const m = Object.fromEntries(rows.map(r => [r.wk, r.c]));
       return weeks.map(w => m[w] || 0);
     };
-    const trends = { weeks, applications: await weekCounts('applications', 'created_at'), joins: await weekCounts('users', 'created_at'), checkins: await weekCounts('checkin_entries', 'submitted_at'), done_logs: await weekCounts('done_logs', 'created_at') };
-
+    const trends = { weeks, applications: await weekCounts('applications', 'created_at'), joins: await weekCounts('users', 'created_at'),
+      sessions: await weekCounts('group_sessions', 'starts_at', "status = 'closed'", true), logs: await weekCounts('group_logs', 'created_at', 'deleted_at IS NULL') };
     const risks = await computeRisks(db, settings, today);
-
     const roundRow = await one(db, "SELECT * FROM rounds WHERE status IN ('open','active') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, start_date DESC LIMIT 1");
-    const round = roundRow ? { ...roundRow, week: today >= roundRow.start_date ? Math.min(12, Math.floor(daysBetween(roundRow.start_date, today) / 7) + 1) : 0, days_to_start: today < roundRow.start_date ? daysBetween(today, roundRow.start_date) : 0 } : null;
-    const pay = await one(db, "SELECT COUNT(*) AS n, COALESCE(SUM(net),0) AS s FROM settlement_payouts WHERE status = 'pending'");
+    const round = roundRow ? { ...roundRow, days_to_start: today < roundRow.start_date ? daysBetween(today, roundRow.start_date) : 0 } : null;
+    const upcoming = await all(db, `SELECT e.id, e.type, e.title, e.starts_at, e.mode, (SELECT COUNT(*) FROM registrations r WHERE r.event_id = e.id AND r.status <> 'cancelled') AS registered,
+      (SELECT COUNT(*) FROM event_presentations p WHERE p.event_id = e.id AND p.status IN ('applied','confirmed')) AS presentations FROM events e WHERE e.status <> 'cancelled' AND e.starts_at >= datetime('now','+9 hours') ORDER BY e.starts_at LIMIT 4`);
     const byLevel = await all(db, "SELECT level, COUNT(*) AS c FROM users WHERE status = 'active' GROUP BY level");
-
     return {
       me: { is_owner: await isOwner(db, user) },
-      queues, overdue, kpi, funnel, trends, risks, round,
-      payouts: { pending_count: pay?.n || 0, pending_sum: pay?.s || 0 },
-      levels: byLevel,
-      // v1.1 호환
-      active_groups: kpi.active_groups, weekly_checkin_rate: kpi.weekly_checkin_rate, first_sales: kpi.first_sales, completions: kpi.completions,
+      queues, overdue, kpi, funnel, trends, risks, round, levels: byLevel,
+      events: upcoming.map(e => ({ ...e, type_name: EVENT_TYPES[e.type] || e.type })),
+      active_groups: kpi.active_groups, first_sales: kpi.first_sales, completions: kpi.completions,
     };
   });
 
+  // 주의가 필요한 그룹 — 모임이 끊긴 그룹, 출석을 안 받은 모임, 출석률이 낮은 그룹, 퇴출 결정을 기다리는 그룹원, 기간이 지난 그룹
   async function computeRisks(db, settings, today) {
     const risks = [];
-    const actives = await all(db, "SELECT c.id, c.title, c.updated_at, (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'active') AS members FROM challenges c WHERE c.stage = 'active'");
-    for (const ch of actives) {
-      const cks = await all(db, 'SELECT id, week_no, created_at FROM checkins WHERE challenge_id = ? ORDER BY week_no DESC LIMIT 2', ch.id);
-      const link = `#/admin/groups/${ch.id}`;
-      if (!cks.length) {
-        if (ch.updated_at < new Date(Date.now() - 10 * 86400e3).toISOString().replace('T', ' ').slice(0, 19)) risks.push({ level: 'high', kind: 'stalled', title: ch.title, detail: '시작한 지 10일이 넘었는데 체크인이 한 번도 열리지 않았습니다', link });
-        continue;
+    const now = kstNow();
+    const groups = await all(db, `SELECT c.id, c.title, c.stage, c.end_date, c.created_at, c.policy, (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'active') AS members,
+      (SELECT MAX(starts_at) FROM group_sessions s WHERE s.challenge_id = c.id AND s.status = 'closed') AS last_session,
+      (SELECT MIN(starts_at) FROM group_sessions s WHERE s.challenge_id = c.id AND s.status IN ('scheduled','open') AND s.starts_at >= ?) AS next_session,
+      (SELECT COUNT(*) FROM group_sessions s WHERE s.challenge_id = c.id AND s.status = 'scheduled' AND s.starts_at < ?) AS unchecked
+      FROM challenges c WHERE c.stage IN ('recruiting','active')`, now, new Date(Date.now() + 9 * 3600e3 - 86400e3).toISOString().slice(0, 16));
+    for (const g of groups) {
+      const link = `#/admin/groups/${g.id}`;
+      const ageDays = Math.floor((Date.now() - Date.parse(g.created_at.replace(' ', 'T') + 'Z')) / 86400e3);
+      const lastDays = g.last_session ? Math.floor((Date.now() - Date.parse(g.last_session + ':00+09:00')) / 86400e3) : null;
+      if (g.stage === 'active' && !g.next_session && (lastDays == null ? ageDays > 14 : lastDays > 14)) risks.push({ level: lastDays == null || lastDays > 21 ? 'high' : 'mid', kind: 'stalled', title: g.title, detail: lastDays == null ? `진행 중인데 ${ageDays}일째 마감한 모임이 없고, 잡힌 일정도 없습니다` : `마지막 모임이 ${lastDays}일 전이고 다음 일정이 없습니다`, link });
+      if (g.unchecked) risks.push({ level: 'mid', kind: 'unchecked', title: g.title, detail: `출석을 받지 않은 지난 모임이 ${g.unchecked}개 있습니다`, link });
+      if (g.stage === 'recruiting' && g.members < 2 && ageDays > 14) risks.push({ level: 'low', kind: 'lonely', title: g.title, detail: `모집을 연 지 ${ageDays}일이 지났는데 그룹원이 ${g.members}명입니다. 정기모임에서 소개해 보세요`, link });
+      if (g.end_date && g.end_date < today && g.stage === 'active') risks.push({ level: 'low', kind: 'overdue', title: g.title, detail: `정한 기간(${g.end_date})이 지났습니다. 연장하거나 종료해 주세요`, link });
+      const recent = await all(db, "SELECT id FROM group_sessions WHERE challenge_id = ? AND status = 'closed' ORDER BY starts_at DESC LIMIT 3", g.id);
+      if (recent.length >= 2) {
+        const r = await one(db, `SELECT SUM(CASE WHEN status IN ('present','late') THEN 1 ELSE 0 END) AS ok, SUM(CASE WHEN status IN ('present','late','absent') THEN 1 ELSE 0 END) AS n FROM session_attendance WHERE session_id IN (${recent.map(() => '?').join(',')})`, ...recent.map(x => x.id));
+        const rate = r?.n ? Math.round(r.ok / r.n * 100) : null;
+        if (rate != null && rate < 60) risks.push({ level: rate < 40 ? 'high' : 'mid', kind: 'low_attendance', title: g.title, detail: `최근 모임 ${recent.length}번의 출석률이 ${rate}%입니다`, link });
       }
-      const last = cks[0];
-      const ageDays = (Date.now() - Date.parse(last.created_at.replace(' ', 'T') + 'Z')) / 86400e3;
-      if (ageDays > 10) risks.push({ level: 'high', kind: 'stalled', title: ch.title, detail: `마지막 체크인(${last.week_no}주차)이 ${Math.floor(ageDays)}일 전입니다`, link });
-      else if (ageDays > 3 && ch.members) {
-        const subs = (await one(db, 'SELECT COUNT(*) AS c FROM checkin_entries WHERE checkin_id = ?', last.id))?.c || 0;
-        if (subs / ch.members < 0.5) risks.push({ level: 'mid', kind: 'low_checkin', title: ch.title, detail: `${last.week_no}주차 체크인 제출 ${subs}/${ch.members}명`, link });
-      }
-      if (cks.length === 2) {
-        const absent = await all(db, `SELECT u.id, u.nickname FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.challenge_id = ? AND gm.status = 'active' AND (gm.joined_at IS NULL OR gm.joined_at <= ?)
-          AND NOT EXISTS (SELECT 1 FROM checkin_entries e WHERE e.user_id = gm.user_id AND e.checkin_id IN (?, ?))`, ch.id, cks[1].created_at, cks[0].id, cks[1].id);
-        for (const a of absent) risks.push({ level: 'mid', kind: 'absence', title: `${a.nickname} · ${ch.title}`, detail: '2주 연속 체크인 미제출 — 다음 주도 없으면 무단 이탈 기준(3주)에 해당합니다', link: `#/admin/users/${a.id}` });
+      const pol = parseJ(g.policy, {}) || {};
+      const kickAt = pol.kick_warnings ?? settings.attendance_default.kick_warnings;
+      if (kickAt > 0) {
+        const cand = await all(db, `SELECT u.id, u.nickname, COUNT(*) AS n FROM group_warnings w JOIN users u ON u.id = w.user_id JOIN group_members gm ON gm.challenge_id = w.challenge_id AND gm.user_id = w.user_id AND gm.status = 'active'
+          WHERE w.challenge_id = ? AND w.cleared_at IS NULL GROUP BY u.id HAVING n >= ?`, g.id, kickAt);
+        for (const k of cand) risks.push({ level: 'mid', kind: 'kick', title: `${k.nickname} · ${g.title}`, detail: `출석 경고 ${k.n}회로 퇴출 기준에 닿았습니다. 그룹리더의 결정을 기다리는 중입니다`, link });
       }
     }
-    for (const m of await all(db, "SELECT m.challenge_id, m.due_date, c.title FROM milestones m JOIN challenges c ON c.id = m.challenge_id WHERE c.stage = 'active' AND m.code = 'first_public' AND m.done_at IS NULL AND m.due_date < ?", today)) {
-      risks.push({ level: 'high', kind: 'first_public', title: m.title, detail: `첫 공개 마감(${m.due_date})이 지났습니다. 8주차까지 공개가 없으면 계속 여부를 함께 정합니다`, link: `#/admin/groups/${m.challenge_id}` });
-    }
-    const gap = settings.share_alert_gap || 0.2;
-    for (const g of await all(db, "SELECT gm.challenge_id, gm.planned_share, gm.actual_share, u.nickname, c.title FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id JOIN users u ON u.id = gm.user_id WHERE c.stage IN ('active','settling') AND gm.planned_share IS NOT NULL AND gm.actual_share IS NOT NULL")) {
-      if (Math.abs(g.actual_share - g.planned_share) >= gap - 1e-9) risks.push({ level: 'mid', kind: 'share_gap', title: `${g.nickname} · ${g.title}`, detail: `예정 기여율 ${Math.round(g.planned_share * 100)}% → 실제 ${Math.round(g.actual_share * 100)}%. 근거를 확인해 주세요`, link: `#/admin/groups/${g.challenge_id}` });
-    }
-    for (const p of await all(db, "SELECT s.id, c.title, COUNT(*) AS n, SUM(p.net) AS amt FROM settlement_payouts p JOIN settlements s ON s.id = p.settlement_id JOIN challenges c ON c.id = s.challenge_id WHERE p.status = 'pending' AND s.reviewed_at IS NOT NULL AND s.reviewed_at < datetime('now','-7 days') GROUP BY s.id")) {
-      risks.push({ level: 'high', kind: 'payout_late', title: p.title, detail: `검수 후 7일이 지났는데 지급 대기 ${p.n}건(${Number(p.amt).toLocaleString('ko-KR')}원)이 남아 있습니다`, link: '#/admin/payouts' });
-    }
-    return risks.sort((a, b) => (a.level === b.level ? 0 : a.level === 'high' ? -1 : 1)).slice(0, 30);
+    return risks.sort((a, b) => ({ high: 0, mid: 1, low: 2 }[a.level] - { high: 0, mid: 1, low: 2 }[b.level])).slice(0, 30);
   }
 
   // 사이드 메뉴 숫자 (가벼운 조회)
@@ -186,14 +218,13 @@ export function registerAdminRoutes(on, h) {
     requireStaff(user);
     const row = await one(db, `SELECT
       (SELECT COUNT(*) FROM applications WHERE status = 'pending') AS applications,
-      (SELECT COUNT(*) FROM challenges WHERE stage = 'review') AS challenges,
-      (SELECT COUNT(*) FROM agreements WHERE status = 'signed') AS agreements,
-      (SELECT COUNT(*) FROM settlements WHERE status IN ('confirming','disputed')) AS settlements,
+      (SELECT COUNT(*) FROM leader_applications WHERE status = 'pending') AS leaders,
+      (SELECT COUNT(*) FROM group_results WHERE metric = 'revenue' AND verified_at IS NULL AND deleted_at IS NULL) AS results,
       (SELECT COUNT(*) FROM papers WHERE status = 'review') AS papers,
       (SELECT COUNT(*) FROM promotion_requests WHERE status = 'pending') AS promotions,
       (SELECT COUNT(*) FROM disputes WHERE status IN ('open','mediating')) AS disputes,
       (SELECT COUNT(*) FROM posts WHERE reported > 0 AND hidden = 0) AS community,
-      (SELECT COUNT(*) FROM settlement_payouts WHERE status = 'pending') AS payouts`);
+      (SELECT COUNT(*) FROM event_presentations p JOIN events e ON e.id = p.event_id WHERE p.status = 'applied' AND e.status <> 'cancelled') AS presentations`);
     return { ...row, is_owner: await isOwner(db, user) };
   });
 
@@ -242,33 +273,40 @@ export function registerAdminRoutes(on, h) {
     if (LEVELS.includes(query.level)) { where.push('u.level = ?'); p.push(query.level); }
     if (['active', 'dormant', 'removed'].includes(query.status)) { where.push('u.status = ?'); p.push(query.status); }
     if (query.role === 'staff' || query.role === 'member') { where.push('u.role = ?'); p.push(query.role); }
+    if (query.leader) where.push('u.can_lead = 1');
     const order = { points: 'points DESC', seen: 'u.last_seen_at IS NULL, u.last_seen_at DESC', name: 'u.nickname', level: "u.level DESC, u.created_at DESC" }[query.sort] || 'u.created_at DESC';
     const per = 50; const page = Math.max(1, Number(query.page || 1));
     const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const total = (await one(db, `SELECT COUNT(*) AS c FROM users u ${w}`, ...p))?.c || 0;
-    const rows = await all(db, `SELECT u.id, u.email, u.name, u.nickname, u.level, u.role, u.status, u.has_business, u.interests, u.created_at, u.last_seen_at,
+    const rows = await all(db, `SELECT u.id, u.email, u.name, u.nickname, u.level, u.role, u.status, u.has_business, u.interests, u.can_lead, u.created_at, u.last_seen_at,
       (SELECT COALESCE(SUM(points),0) FROM points_ledger pl WHERE pl.user_id = u.id) AS points,
       (SELECT COUNT(*) FROM badges b WHERE b.user_id = u.id AND b.revoked_at IS NULL) AS badge_count,
-      (SELECT COUNT(*) FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = u.id AND gm.status = 'active' AND c.stage IN ('recruiting','agreement','active','settling')) AS active_groups
+      (SELECT COUNT(*) FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = u.id AND gm.status = 'active' AND c.stage IN ('recruiting','active')) AS active_groups
       FROM users u ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...p, per, (page - 1) * per);
     return { rows, total, page, per };
   });
 
   on('GET', '/admin/users/:id', async ({ db, settings, user, params }) => {
     requireStaff(user);
-    const u = await one(db, 'SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, bio, onboarded, asset_diag, created_at, last_seen_at FROM users WHERE id = ?', params.id);
+    const u = await one(db, 'SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, bio, onboarded, asset_diag, can_lead, leader_since, created_at, last_seen_at FROM users WHERE id = ?', params.id);
     if (!u) throw notfound();
     u.asset_diag = parseJ(u.asset_diag, null);
     const points = await all(db, 'SELECT action, SUM(points) AS pts, COUNT(*) AS n FROM points_ledger WHERE user_id = ? GROUP BY action ORDER BY pts DESC', u.id);
     const pointsTotal = points.reduce((s, r) => s + (r.pts || 0), 0);
     const badges = await all(db, 'SELECT b.*, g.nickname AS granted_by_name FROM badges b LEFT JOIN users g ON g.id = b.granted_by WHERE b.user_id = ? ORDER BY b.created_at', u.id);
     const levelHistory = await all(db, 'SELECT h.*, d.nickname AS decided_by_name FROM level_history h LEFT JOIN users d ON d.id = h.decided_by WHERE h.user_id = ? ORDER BY h.created_at DESC', u.id);
-    const groups = await all(db, `SELECT c.id, c.title, c.stage, c.type, gm.role, gm.status, gm.planned_share, gm.actual_share, gm.joined_at, gm.left_at, gm.leave_type,
-      (SELECT COUNT(*) FROM checkins ci WHERE ci.challenge_id = c.id AND (gm.joined_at IS NULL OR ci.created_at >= gm.joined_at)) AS checkins,
-      (SELECT COUNT(*) FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id WHERE ci.challenge_id = c.id AND e.user_id = gm.user_id) AS submitted,
-      (SELECT COALESCE(SUM(e.hours),0) FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id WHERE ci.challenge_id = c.id AND e.user_id = gm.user_id) AS hours,
-      (SELECT COUNT(*) FROM done_logs d WHERE d.challenge_id = c.id AND d.user_id = gm.user_id AND d.confirmed_at IS NOT NULL AND d.cancelled_at IS NULL) AS done_confirmed
+    const groupRows = await all(db, `SELECT c.id, c.title, c.stage, c.type, c.policy, gm.role, gm.status, gm.joined_at, gm.left_at, gm.leave_type, gm.leave_note,
+      (SELECT COUNT(*) FROM group_logs l WHERE l.challenge_id = c.id AND l.user_id = gm.user_id AND l.deleted_at IS NULL) AS logs,
+      (SELECT COUNT(*) FROM group_results r WHERE r.challenge_id = c.id AND r.user_id = gm.user_id AND r.deleted_at IS NULL) AS results,
+      (SELECT COUNT(*) FROM group_warnings w WHERE w.challenge_id = c.id AND w.user_id = gm.user_id AND w.cleared_at IS NULL) AS warnings
       FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = ? ORDER BY gm.created_at DESC`, u.id);
+    const groups = [];
+    for (const g of groupRows) {
+      const c = await loadGroup(db, settings, g.id);
+      const st = (await groupAttendance(db, c, [u.id]))[u.id] || emptyStats();
+      groups.push({ ...g, policy: undefined, type_name: GROUP_TYPES[g.type], role_name: GROUP_ROLES[g.role] || g.role, attendance: st, min_rate: c.policy.min_rate });
+    }
+    const leaderApps = await all(db, 'SELECT id, status, form, note, created_at, decided_at FROM leader_applications WHERE user_id = ? ORDER BY created_at DESC', u.id);
     const events = await all(db, 'SELECT e.id, e.title, e.type, e.starts_at, r.status FROM registrations r JOIN events e ON e.id = r.event_id WHERE r.user_id = ? ORDER BY e.starts_at DESC LIMIT 20', u.id);
     const applications = await all(db, 'SELECT id, status, created_at, decided_at, form FROM applications WHERE email = ? ORDER BY created_at DESC', u.email);
     const consents = await all(db, "SELECT kind, version, created_at FROM consents WHERE subject_type = 'user' AND subject_id = ? ORDER BY created_at", u.id);
@@ -281,8 +319,8 @@ export function registerAdminRoutes(on, h) {
     const progress = await h.levelProgress(db, settings, u, { total: pointsTotal }, badges.filter(b => !b.revoked_at));
     const notes = await notesOf(db, 'user', u.id);
     return { user: u, is_owner: u.role === 'staff' ? !!(await one(db, "SELECT user_id FROM admin_roles WHERE user_id = ? AND role = 'owner'", u.id)) : false,
-      points: { total: pointsTotal, by_action: points.map(r => ({ ...r, label: settings.points[r.action]?.label || r.action })) },
-      badges: badges.map(b => ({ ...b, name: BADGE_NAMES[b.code] || b.code })), level_history: levelHistory, groups, events,
+      points: { total: pointsTotal, by_action: points.map(r => ({ ...r, label: settings.points[r.action]?.label || LEGACY_POINT_LABELS[r.action] || r.action })) },
+      badges: badges.map(b => ({ ...b, name: BADGE_NAMES[b.code] || b.code })), level_history: levelHistory, groups, events, leader_applications: leaderApps.map(a => ({ ...a, form: parseJ(a.form, {}) })),
       applications: applications.map(a => ({ ...a, form: parseJ(a.form, {}) })), consents, promotions, activity, progress, notes };
   });
 
@@ -351,163 +389,172 @@ export function registerAdminRoutes(on, h) {
   });
 
   // ─────────────────────────────── 그룹 현황 ───────────────────────────────
-  on('GET', '/admin/groups', async ({ db, user, query }) => {
+  // 그룹 현황 — 순조·주의·위험을 출석률과 모임 간격으로 본다
+  on('GET', '/admin/groups', async ({ db, settings, user, query }) => {
     requireStaff(user);
-    const where = ["c.stage NOT IN ('rejected')"]; const p = [];
-    const stageSets = { running: ['active', 'settling'], forming: ['proposed', 'review', 'recruiting', 'agreement'], done: ['closed', 'stopped'] };
+    const where = []; const p = [];
+    const stageSets = { running: ['active'], forming: ['recruiting'], done: ['closed', 'stopped'] };
     if (stageSets[query.view]) { where.push(`c.stage IN (${stageSets[query.view].map(() => '?').join(',')})`); p.push(...stageSets[query.view]); }
-    if (query.round) { where.push('c.round_id = ?'); p.push(Number(query.round)); }
-    if (['solo', 'group', 'official'].includes(query.type)) { where.push('c.type = ?'); p.push(query.type); }
-    const rows = await all(db, `SELECT c.id, c.title, c.type, c.stage, c.field_code, c.round_id, c.updated_at, c.created_at, c.public_numbers, u.nickname AS leader, r.name AS round_name
-      FROM challenges c JOIN users u ON u.id = c.leader_id LEFT JOIN rounds r ON r.id = c.round_id WHERE ${where.join(' AND ')} ORDER BY CASE c.stage WHEN 'active' THEN 0 WHEN 'settling' THEN 1 WHEN 'agreement' THEN 2 WHEN 'recruiting' THEN 3 WHEN 'review' THEN 4 ELSE 5 END, c.updated_at DESC LIMIT 300`, ...p);
-    const map = async sql => Object.fromEntries((await all(db, sql)).map(r => [r.cid, r]));
-    const members = await map("SELECT challenge_id AS cid, COUNT(*) AS n FROM group_members WHERE status = 'active' GROUP BY challenge_id");
-    const cks = await map('SELECT challenge_id AS cid, COUNT(*) AS n, MAX(week_no) AS last_week, MAX(created_at) AS last_at FROM checkins GROUP BY challenge_id');
-    const recent = await map(`SELECT ci.challenge_id AS cid, COUNT(DISTINCT ci.id) AS cks, COUNT(e.id) AS subs FROM checkins ci LEFT JOIN checkin_entries e ON e.checkin_id = ci.id
-      WHERE ci.week_no >= (SELECT MAX(c2.week_no) - 1 FROM checkins c2 WHERE c2.challenge_id = ci.challenge_id) GROUP BY ci.challenge_id`);
-    const money = await map("SELECT challenge_id AS cid, SUM(CASE WHEN kind = 'revenue' AND is_external = 1 THEN amount ELSE 0 END) AS revenue, SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END) AS expenses FROM ledger_entries GROUP BY challenge_id");
-    const ms = await map('SELECT challenge_id AS cid, COUNT(*) AS total, SUM(CASE WHEN done_at IS NOT NULL THEN 1 ELSE 0 END) AS done FROM milestones GROUP BY challenge_id');
-    const act = await map(`SELECT cid, MAX(t) AS last FROM (
-      SELECT ci.challenge_id AS cid, e.submitted_at AS t FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id
-      UNION ALL SELECT challenge_id, created_at FROM ledger_entries UNION ALL SELECT challenge_id, created_at FROM done_logs) GROUP BY cid`);
-    return rows.map(c => {
-      const n = members[c.id]?.n || 0; const rc = recent[c.id];
-      const rate = rc && rc.cks && n ? Math.round(rc.subs / (rc.cks * n) * 100) : null;
-      const last = act[c.id]?.last || null;
-      const idle = last ? Math.floor((Date.now() - Date.parse(last.replace(' ', 'T') + 'Z')) / 86400e3) : null;
-      const health = c.stage !== 'active' ? 'na' : (rate == null || (idle != null && idle > 10)) ? 'bad' : rate < 60 || (idle != null && idle > 6) ? 'warn' : 'good';
-      return { ...c, field_name: FIELDS[c.field_code], public_numbers: parseJ(c.public_numbers, null), members: n, checkins: cks[c.id]?.n || 0, last_week: cks[c.id]?.last_week || 0, checkin_rate: rate,
-        revenue: money[c.id]?.revenue || 0, expenses: money[c.id]?.expenses || 0, milestones: { done: ms[c.id]?.done || 0, total: ms[c.id]?.total || 0 }, last_activity: last, idle_days: idle, health };
-    });
+    if (GROUP_TYPES[query.type]) { where.push('c.type = ?'); p.push(query.type); }
+    const now = kstNow();
+    const rows = await all(db, `SELECT c.id, c.title, c.type, c.stage, c.field_code, c.capacity, c.recruit_open, c.join_mode, c.start_date, c.end_date, c.updated_at, c.created_at, c.goal_metric, c.goal_target, c.goal_unit, c.policy, c.public_numbers, u.nickname AS leader, c.leader_id,
+        (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'active') AS members,
+        (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'applied') AS applicants,
+        (SELECT COUNT(*) FROM group_sessions s WHERE s.challenge_id = c.id AND s.status = 'closed') AS sessions_done,
+        (SELECT MAX(starts_at) FROM group_sessions s WHERE s.challenge_id = c.id AND s.status = 'closed') AS last_session,
+        (SELECT MIN(starts_at) FROM group_sessions s WHERE s.challenge_id = c.id AND s.status IN ('scheduled','open') AND s.starts_at >= ?) AS next_session,
+        (SELECT COUNT(*) FROM group_warnings w WHERE w.challenge_id = c.id AND w.cleared_at IS NULL) AS warnings,
+        (SELECT COUNT(*) FROM group_logs l WHERE l.challenge_id = c.id AND l.deleted_at IS NULL) AS logs,
+        (SELECT MAX(created_at) FROM group_logs l WHERE l.challenge_id = c.id AND l.deleted_at IS NULL) AS last_log,
+        (SELECT COALESCE(SUM(value),0) FROM group_results r WHERE r.challenge_id = c.id AND r.deleted_at IS NULL AND r.metric = 'revenue') AS revenue,
+        (SELECT COALESCE(SUM(value),0) FROM group_results r WHERE r.challenge_id = c.id AND r.deleted_at IS NULL AND r.metric = c.goal_metric) AS goal_value
+      FROM challenges c JOIN users u ON u.id = c.leader_id ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      ORDER BY CASE c.stage WHEN 'active' THEN 0 WHEN 'recruiting' THEN 1 ELSE 2 END, c.updated_at DESC LIMIT 300`, now, ...p);
+    const out = [];
+    for (const r of rows) {
+      const recent = await all(db, "SELECT id FROM group_sessions WHERE challenge_id = ? AND status = 'closed' ORDER BY starts_at DESC LIMIT 3", r.id);
+      let rate = null;
+      if (recent.length) {
+        const a = await one(db, `SELECT SUM(CASE WHEN status IN ('present','late') THEN 1 ELSE 0 END) AS ok, SUM(CASE WHEN status IN ('present','late','absent') THEN 1 ELSE 0 END) AS n FROM session_attendance WHERE session_id IN (${recent.map(() => '?').join(',')})`, ...recent.map(x => x.id));
+        rate = a?.n ? Math.round(a.ok / a.n * 100) : null;
+      }
+      const lastMs = r.last_session ? Date.parse(r.last_session + ':00+09:00') : null;
+      const idle = lastMs ? Math.floor((Date.now() - lastMs) / 86400e3) : null;
+      const age = Math.floor((Date.now() - Date.parse(r.created_at.replace(' ', 'T') + 'Z')) / 86400e3);
+      let health = 'na';
+      if (r.stage === 'active') {
+        if ((idle == null && age > 14 && !r.next_session) || (idle != null && idle > 21 && !r.next_session) || (rate != null && rate < 40)) health = 'bad';
+        else if ((idle != null && idle > 10 && !r.next_session) || (rate != null && rate < 60) || r.warnings > 0) health = 'warn';
+        else health = 'good';
+      }
+      const { policy, ...rest } = r;
+      out.push({ ...rest, type_name: GROUP_TYPES[r.type], stage_name: GROUP_STAGES[r.stage], field_name: FIELDS[r.field_code], goal_metric_name: GOAL_METRICS[r.goal_metric]?.[0] || null,
+        public_numbers: parseJ(r.public_numbers, null), recent_rate: rate, idle_days: idle, health });
+    }
+    return out;
   });
 
-  on('GET', '/admin/groups/:id', async ({ db, user, params }) => {
+  on('GET', '/admin/groups/:id', async ({ db, settings, user, params }) => {
     requireStaff(user);
-    const c = await one(db, 'SELECT c.*, u.nickname AS leader, r.name AS round_name, r.start_date AS round_start FROM challenges c JOIN users u ON u.id = c.leader_id LEFT JOIN rounds r ON r.id = c.round_id WHERE c.id = ?', params.id);
-    if (!c) throw notfound();
-    const checkins = await all(db, 'SELECT ci.id, ci.week_no, ci.created_at, ci.due_date, (SELECT COUNT(*) FROM checkin_entries e WHERE e.checkin_id = ci.id) AS subs, (SELECT COALESCE(SUM(hours),0) FROM checkin_entries e WHERE e.checkin_id = ci.id) AS hours FROM checkins ci WHERE ci.challenge_id = ? ORDER BY ci.week_no', c.id);
+    const c = await loadGroup(db, settings, params.id);
+    await autoCloseSessions(db, settings, c);
     const members = await all(db, `SELECT gm.*, u.nickname, u.level, u.email, u.last_seen_at,
-      (SELECT COUNT(*) FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id WHERE ci.challenge_id = gm.challenge_id AND e.user_id = gm.user_id) AS submitted,
-      (SELECT COUNT(*) FROM checkins ci WHERE ci.challenge_id = gm.challenge_id AND (gm.joined_at IS NULL OR ci.created_at >= gm.joined_at)) AS expected,
-      (SELECT MAX(e.submitted_at) FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id WHERE ci.challenge_id = gm.challenge_id AND e.user_id = gm.user_id) AS last_submitted,
-      (SELECT COALESCE(SUM(e.hours),0) FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id WHERE ci.challenge_id = gm.challenge_id AND e.user_id = gm.user_id) AS hours,
-      (SELECT COUNT(*) FROM done_logs d WHERE d.challenge_id = gm.challenge_id AND d.user_id = gm.user_id AND d.cancelled_at IS NULL) AS done_total,
-      (SELECT COUNT(*) FROM done_logs d WHERE d.challenge_id = gm.challenge_id AND d.user_id = gm.user_id AND d.confirmed_at IS NOT NULL AND d.cancelled_at IS NULL) AS done_confirmed
-      FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.challenge_id = ? ORDER BY CASE gm.role WHEN 'leader' THEN 0 ELSE 1 END, gm.status, gm.joined_at`, c.id);
-    const milestones = await all(db, 'SELECT * FROM milestones WHERE challenge_id = ? ORDER BY due_date, id', c.id);
-    const ledger = h.ledgerTotals(await all(db, 'SELECT * FROM ledger_entries WHERE challenge_id = ?', c.id));
-    const ledgerCount = (await one(db, 'SELECT COUNT(*) AS c FROM ledger_entries WHERE challenge_id = ?', c.id))?.c || 0;
-    const agreement = await one(db, 'SELECT id, version, status, approved_at, clauses FROM agreements WHERE challenge_id = ? ORDER BY version DESC LIMIT 1', c.id);
-    const settlements = await all(db, 'SELECT id, status, period_start, period_end, created_at, reviewed_at FROM settlements WHERE challenge_id = ? ORDER BY id DESC', c.id);
+      (SELECT COUNT(*) FROM group_logs l WHERE l.challenge_id = gm.challenge_id AND l.user_id = gm.user_id AND l.deleted_at IS NULL) AS logs,
+      (SELECT COUNT(*) FROM group_warnings w WHERE w.challenge_id = gm.challenge_id AND w.user_id = gm.user_id AND w.cleared_at IS NULL) AS warnings
+      FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.challenge_id = ? ORDER BY CASE gm.status WHEN 'active' THEN 0 WHEN 'applied' THEN 1 ELSE 2 END, CASE gm.role WHEN 'leader' THEN 0 WHEN 'sub' THEN 1 ELSE 2 END, gm.joined_at`, c.id);
+    const att = await groupAttendance(db, c);
+    const sessions = await all(db, `SELECT s.*, (SELECT COUNT(*) FROM session_attendance a WHERE a.session_id = s.id AND a.status IN ('present','late')) AS attended,
+      (SELECT COUNT(*) FROM session_attendance a WHERE a.session_id = s.id AND a.status = 'absent') AS absent, (SELECT COUNT(*) FROM session_attendance a WHERE a.session_id = s.id AND a.status = 'excused') AS excused
+      FROM group_sessions s WHERE s.challenge_id = ? ORDER BY s.starts_at DESC LIMIT 60`, c.id);
+    const warnings = await all(db, 'SELECT w.*, u.nickname, i.nickname AS issuer FROM group_warnings w JOIN users u ON u.id = w.user_id LEFT JOIN users i ON i.id = w.issued_by WHERE w.challenge_id = ? ORDER BY w.created_at DESC LIMIT 100', c.id);
+    const results = await all(db, 'SELECT r.*, u.nickname, v.nickname AS verifier FROM group_results r JOIN users u ON u.id = r.user_id LEFT JOIN users v ON v.id = r.verified_by WHERE r.challenge_id = ? AND r.deleted_at IS NULL ORDER BY r.happened_on DESC, r.id DESC', c.id);
+    const logs = await all(db, 'SELECT l.id, l.kind, l.body, l.link, l.post_id, l.created_at, u.nickname FROM group_logs l JOIN users u ON u.id = l.user_id WHERE l.challenge_id = ? AND l.deleted_at IS NULL ORDER BY l.created_at DESC LIMIT 30', c.id);
+    const milestones = await all(db, 'SELECT * FROM milestones WHERE challenge_id = ? ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date, id', c.id);
     const paper = await one(db, 'SELECT id, status, publish_scope, submitted_at, published_at FROM papers WHERE challenge_id = ?', c.id);
-    const history = await all(db, "SELECT a.action, a.detail, a.created_at, u.nickname FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_id WHERE a.target = ? OR a.target LIKE ? ORDER BY a.created_at DESC LIMIT 30", 'challenges:' + c.id, `challenges:${c.id}/%`);
-    return { challenge: { ...c, proposal: parseJ(c.proposal, {}), review: parseJ(c.review, null), public_numbers: parseJ(c.public_numbers, null), field_name: FIELDS[c.field_code] },
-      checkins, members, milestones, ledger: { ...ledger, entries: ledgerCount }, agreement: agreement ? { ...agreement, clauses: parseJ(agreement.clauses, {}) } : null, settlements, paper, history, notes: await notesOf(db, 'challenge', c.id) };
+    const history = await all(db, "SELECT a.action, a.detail, a.created_at, u.nickname FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_id WHERE a.target = ? OR a.target LIKE ? ORDER BY a.created_at DESC LIMIT 40", 'challenges:' + c.id, `challenges:${c.id}/%`);
+    return { group: c, members: members.map(m => ({ ...m, role_name: GROUP_ROLES[m.role] || m.role, attendance: att[m.user_id] || emptyStats() })), sessions, warnings, results: results.map(r => ({ ...r, metric_name: GOAL_METRICS[r.metric]?.[0] || r.metric, unit: GOAL_METRICS[r.metric]?.[1] || '' })),
+      logs, milestones, paper, history, notes: await notesOf(db, 'challenge', c.id) };
   });
 
-  // 운영본부의 단계 변경 (중단·종료·재개). 그룹장 중단과 달리 사유를 남긴다.
-  on('POST', '/admin/groups/:id/stage', async ({ db, request, user, params }) => {
+  // 운영진의 그룹 단계 변경 (중단·재개·종료). 그룹리더의 종료와 달리 사유를 남긴다.
+  on('POST', '/admin/groups/:id/stage', async ({ db, settings, request, user, params }) => {
     requireStaff(user); const b = await readJson(request);
-    const c = await one(db, 'SELECT * FROM challenges WHERE id = ?', params.id); if (!c) throw notfound();
+    const c = await loadGroup(db, settings, params.id);
     const to = b.stage; const reason = str(b.reason, 500);
-    const allowed = { stopped: ['recruiting', 'agreement', 'active', 'settling'], closed: ['active', 'settling', 'stopped'], active: ['stopped', 'settling'], recruiting: ['agreement'] };
+    const allowed = { stopped: ['recruiting', 'active'], closed: ['active', 'recruiting', 'stopped'], active: ['stopped', 'closed', 'recruiting'], recruiting: ['stopped', 'active'] };
     if (!allowed[to]) throw bad('바꿀 수 없는 단계입니다');
-    if (!allowed[to].includes(c.stage)) throw bad(`지금 단계(${c.stage})에서는 ${to}(으)로 바꿀 수 없습니다`);
+    if (!allowed[to].includes(c.stage)) throw bad(`지금 단계(${GROUP_STAGES[c.stage] || c.stage})에서는 ${GROUP_STAGES[to]}(으)로 바꿀 수 없습니다`);
     if (!reason) throw bad('사유를 적어 주세요. 그룹원에게도 전달됩니다');
-    await run(db, "UPDATE challenges SET stage = ?, updated_at = datetime('now') WHERE id = ?", to, c.id);
+    if (to === 'stopped' || to === 'closed') for (const s of await all(db, "SELECT * FROM group_sessions WHERE challenge_id = ? AND status = 'open'", c.id)) await closeSession(db, settings, c, s, user.id);
+    await run(db, "UPDATE challenges SET stage = ?, closed_at = CASE WHEN ? IN ('closed','stopped') THEN datetime('now') ELSE NULL END, updated_at = datetime('now') WHERE id = ?", to, to, c.id);
     const label = { stopped: '중단', closed: '종료', active: '재개', recruiting: '모집 재개' }[to];
     for (const m of await all(db, "SELECT user_id FROM group_members WHERE challenge_id = ? AND status = 'active'", c.id)) {
-      await notify(db, m.user_id, `운영본부가 챌린지를 ${label} 처리했습니다`, `${c.title} · ${reason}${to === 'stopped' ? ' · 중단해도 프로젝트 페이퍼는 제출합니다' : ''}`, to === 'stopped' ? `#/groups/${c.id}/paper` : `#/challenges/${c.id}`);
+      await notify(db, m.user_id, `운영진이 「${c.title}」 그룹을 ${label} 처리했습니다`, reason, `#/groups/${c.id}`);
     }
-    await audit(db, user.id, 'challenge.stage', 'challenges:' + c.id, { from: c.stage, to, reason, by: 'admin' });
+    await audit(db, user.id, 'group.stage', 'challenges:' + c.id, { from: c.stage, to, reason, by: 'admin' });
     return { ok: true };
   });
 
-  // 그룹장 교체 (MC-03 4.4: 운영본부 승인으로 진행)
-  on('POST', '/admin/groups/:id/leader', async ({ db, request, user, params }) => {
+  // 그룹리더 교체 (운영진만). 새 리더는 그룹리더 자격도 함께 받는다.
+  on('POST', '/admin/groups/:id/leader', async ({ db, settings, request, user, params }) => {
     requireStaff(user); const b = await readJson(request);
-    const c = await one(db, 'SELECT * FROM challenges WHERE id = ?', params.id); if (!c) throw notfound();
+    const c = await loadGroup(db, settings, params.id);
     const reason = str(b.reason, 500); if (!reason) throw bad('교체 사유를 적어 주세요');
     const next = await one(db, "SELECT * FROM group_members WHERE challenge_id = ? AND user_id = ? AND status = 'active'", c.id, Number(b.user_id));
-    if (!next) throw bad('활동 중인 그룹원 중에서 새 그룹장을 골라 주세요');
-    if (next.user_id === c.leader_id) throw bad('이미 그룹장입니다');
-    await run(db, "UPDATE group_members SET role = 'general', role_weight = ? WHERE challenge_id = ? AND user_id = ?", ROLE_WEIGHTS.general || 1, c.id, c.leader_id);
-    await run(db, "UPDATE group_members SET role = 'leader', role_weight = ? WHERE id = ?", ROLE_WEIGHTS.leader || 1, next.id);
+    if (!next) throw bad('활동 중인 그룹원 중에서 새 그룹리더를 골라 주세요');
+    if (next.user_id === c.leader_id) throw bad('이미 그룹리더입니다');
+    await run(db, "UPDATE group_members SET role = 'member' WHERE challenge_id = ? AND user_id = ?", c.id, c.leader_id);
+    await run(db, "UPDATE group_members SET role = 'leader' WHERE id = ?", next.id);
     await run(db, "UPDATE challenges SET leader_id = ?, updated_at = datetime('now') WHERE id = ?", next.user_id, c.id);
-    for (const m of await all(db, "SELECT user_id FROM group_members WHERE challenge_id = ? AND status = 'active'", c.id)) await notify(db, m.user_id, '그룹장이 바뀌었습니다', `${c.title} · ${reason}`, `#/challenges/${c.id}`);
-    await notify(db, c.leader_id, '그룹장 역할이 넘어갔습니다', `${c.title} · ${reason}`, `#/challenges/${c.id}`);
-    await audit(db, user.id, 'challenge.leader', 'challenges:' + c.id, { from: c.leader_id, to: next.user_id, reason });
+    await run(db, "UPDATE users SET can_lead = 1, leader_since = COALESCE(leader_since, datetime('now')) WHERE id = ?", next.user_id);
+    for (const m of await all(db, "SELECT user_id FROM group_members WHERE challenge_id = ? AND status = 'active'", c.id)) await notify(db, m.user_id, '그룹리더가 바뀌었습니다', `${c.title} · ${reason}`, `#/groups/${c.id}`);
+    await notify(db, c.leader_id, '그룹리더 역할이 넘어갔습니다', `${c.title} · ${reason}`, `#/groups/${c.id}`);
+    await audit(db, user.id, 'group.leader', 'challenges:' + c.id, { from: c.leader_id, to: next.user_id, reason });
     return { ok: true };
   });
 
-  // ─────────────────────────────── 지급 관리 ───────────────────────────────
-  on('GET', '/admin/payouts', async ({ db, user, query }) => {
+  // ─────────────────────────────── 그룹리더 승인 ───────────────────────────────
+  on('GET', '/admin/leaders', async ({ db, user, query }) => {
     requireStaff(user);
-    const status = ['pending', 'held', 'paid'].includes(query.status) ? query.status : 'pending';
-    const rows = await all(db, `SELECT p.*, s.challenge_id, s.reviewed_at, s.period_start, s.period_end, c.title, l.nickname AS leader, COALESCE(u.nickname, '운영본부') AS nickname, u.name
-      FROM settlement_payouts p JOIN settlements s ON s.id = p.settlement_id JOIN challenges c ON c.id = s.challenge_id JOIN users l ON l.id = c.leader_id LEFT JOIN users u ON u.id = p.user_id
-      WHERE p.status = ? ORDER BY ${status === 'paid' ? 'p.paid_at DESC' : 's.reviewed_at, p.id'} LIMIT 500`, status);
-    const totals = await all(db, 'SELECT status, COUNT(*) AS n, COALESCE(SUM(net),0) AS net, COALESCE(SUM(withholding),0) AS withholding FROM settlement_payouts GROUP BY status');
-    return { rows, totals };
+    const view = ['pending', 'decided'].includes(query.view) ? query.view : 'pending';
+    const apps = await all(db, `SELECT a.*, u.nickname, u.name, u.email, u.level, u.interests, u.bio, u.created_at AS joined_at, u.can_lead,
+        (SELECT COUNT(*) FROM badges b WHERE b.user_id = u.id AND b.code = 'completion' AND b.revoked_at IS NULL) AS completions,
+        (SELECT COUNT(*) FROM registrations r WHERE r.user_id = u.id AND r.status = 'attended') AS events_attended,
+        (SELECT COUNT(*) FROM session_attendance s WHERE s.user_id = u.id AND s.status IN ('present','late')) AS sessions_attended,
+        (SELECT COUNT(*) FROM group_logs l WHERE l.user_id = u.id AND l.deleted_at IS NULL) AS logs
+      FROM leader_applications a JOIN users u ON u.id = a.user_id WHERE ${view === 'pending' ? "a.status = 'pending'" : "a.status <> 'pending'"} ORDER BY a.created_at ${view === 'pending' ? 'ASC' : 'DESC'} LIMIT 200`);
+    const leaders = await all(db, `SELECT u.id, u.nickname, u.level, u.leader_since,
+        (SELECT COUNT(*) FROM challenges c WHERE c.leader_id = u.id AND c.stage IN ('recruiting','active')) AS running,
+        (SELECT COUNT(*) FROM challenges c WHERE c.leader_id = u.id AND c.stage = 'closed') AS closed,
+        (SELECT COUNT(*) FROM challenges c WHERE c.leader_id = u.id) AS total
+      FROM users u WHERE u.can_lead = 1 AND u.status = 'active' ORDER BY u.leader_since DESC`);
+    return { view, applications: apps.map(a => ({ ...a, form: parseJ(a.form, {}) })), leaders };
   });
-  on('POST', '/admin/payouts/bulk', async ({ db, request, user }) => {
+  on('POST', '/admin/leader-applications/:id', async ({ db, request, user, params }) => {
     requireStaff(user); const b = await readJson(request);
-    if (!['paid', 'held', 'pending'].includes(b.status)) throw bad('status는 paid / held / pending');
-    const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(Boolean).slice(0, 200);
-    if (!ids.length) throw bad('처리할 지급 건을 골라 주세요');
-    const touched = new Set();
-    for (const id of ids) {
-      const p = await one(db, 'SELECT * FROM settlement_payouts WHERE id = ?', id); if (!p) continue;
-      await run(db, "UPDATE settlement_payouts SET status = ?, paid_at = CASE WHEN ? = 'paid' THEN datetime('now') ELSE NULL END WHERE id = ?", b.status, b.status, id);
-      touched.add(p.settlement_id);
-      if (b.status === 'paid' && p.user_id) await notify(db, p.user_id, '정산금이 지급 처리됐습니다', `${Number(p.net).toLocaleString('ko-KR')}원`, `#/settlements/${p.settlement_id}`);
-    }
-    for (const sid of touched) {
-      const left = await one(db, "SELECT COUNT(*) AS c FROM settlement_payouts WHERE settlement_id = ? AND status <> 'paid'", sid);
-      if (!(left?.c)) await run(db, "UPDATE settlements SET status = 'paid' WHERE id = ?", sid);
-    }
-    await audit(db, user.id, 'payout.bulk.' + b.status, 'settlement_payouts', { ids });
-    return { ok: true, count: ids.length };
-  });
-
-  // ─────────────────────────────── 운영본부 재원 ───────────────────────────────
-  async function hqReport(db) {
-    const income = await all(db, `SELECT ${quarterSql('COALESCE(s.reviewed_at, s.created_at)')} AS q,
-      SUM(CASE WHEN p.kind = 'hq' THEN p.gross ELSE 0 END) AS hq_share, SUM(CASE WHEN p.kind = 'fee' THEN p.gross ELSE 0 END) AS fee, SUM(CASE WHEN p.kind = 'refund_hq' THEN p.gross ELSE 0 END) AS refund_hq
-      FROM settlement_payouts p JOIN settlements s ON s.id = p.settlement_id WHERE p.user_id IS NULL GROUP BY q`);
-    const spent = await all(db, `SELECT ${quarterSql('spent_on')} AS q, category, SUM(amount) AS amount FROM hq_expenses GROUP BY q, category`);
-    const qs = [...new Set([...income.map(r => r.q), ...spent.map(r => r.q)])].sort().reverse();
-    return qs.map(q => {
-      const i = income.find(r => r.q === q) || {}; const s = spent.filter(r => r.q === q);
-      const by = Object.fromEntries(Object.keys(HQ_CATEGORIES).map(k => [k, s.find(r => r.category === k)?.amount || 0]));
-      return { quarter: q, hq_share: i.hq_share || 0, fee: i.fee || 0, refund_hq: i.refund_hq || 0, income: (i.hq_share || 0) + (i.fee || 0), spent: s.reduce((t, r) => t + r.amount, 0), by_category: by };
-    });
-  }
-  on('GET', '/admin/hq', async ({ db, user }) => {
-    requireStaff(user);
-    const expenses = await all(db, 'SELECT e.*, u.nickname AS author FROM hq_expenses e LEFT JOIN users u ON u.id = e.created_by ORDER BY e.spent_on DESC, e.id DESC LIMIT 300');
-    return { categories: HQ_CATEGORIES, quarters: await hqReport(db), expenses };
-  });
-  on('POST', '/admin/hq/expenses', async ({ db, request, user }) => {
-    requireStaff(user); const b = await readJson(request);
-    must(b.spent_on, '사용일'); if (!HQ_CATEGORIES[b.category]) throw bad('항목을 골라 주세요');
-    const amount = intv(b.amount, '금액', { min: 1 });
-    const id = await insert(db, 'INSERT INTO hq_expenses (spent_on, category, amount, memo, evidence, created_by) VALUES (?,?,?,?,?,?)', String(b.spent_on).slice(0, 10), b.category, amount, str(b.memo, 500), str(b.evidence, 500), user.id);
-    await audit(db, user.id, 'hq.expense.add', 'hq_expenses:' + id, { amount, category: b.category });
-    return { ok: true, id };
-  });
-  on('DELETE', '/admin/hq/expenses/:id', async ({ db, user, params }) => {
-    requireStaff(user);
-    const e = await one(db, 'SELECT * FROM hq_expenses WHERE id = ?', params.id); if (!e) throw notfound();
-    await run(db, 'DELETE FROM hq_expenses WHERE id = ?', e.id);
-    await audit(db, user.id, 'hq.expense.delete', 'hq_expenses:' + e.id, e);
+    const a = await one(db, 'SELECT * FROM leader_applications WHERE id = ?', params.id); if (!a) throw notfound();
+    if (a.status !== 'pending') throw bad('이미 처리한 신청입니다');
+    if (!['approve', 'reject'].includes(b.decision)) throw bad('decision은 approve 또는 reject');
+    const note = str(b.note, 1000);
+    if (b.decision === 'reject' && !note) throw bad('반려 사유를 적어 주세요. 신청자에게 그대로 전달됩니다');
+    await run(db, "UPDATE leader_applications SET status = ?, note = ?, decided_by = ?, decided_at = datetime('now') WHERE id = ?", b.decision === 'approve' ? 'approved' : 'rejected', note, user.id, a.id);
+    if (b.decision === 'approve') {
+      await run(db, "UPDATE users SET can_lead = 1, leader_since = COALESCE(leader_since, datetime('now')) WHERE id = ?", a.user_id);
+      await notify(db, a.user_id, '그룹리더로 승인되었습니다', (note ? note + ' ' : '') + '이제 언제든 학습그룹이나 도전그룹을 만들 수 있습니다.', '#/groups/new');
+    } else await notify(db, a.user_id, '그룹리더 신청 결과', note, '#/me/leader');
+    await audit(db, user.id, 'leader.' + b.decision, 'leader_applications:' + a.id, { user_id: a.user_id, note });
     return { ok: true };
   });
-  // 공개용: 분기별 운영본부 몫과 쓰임 (수익 배분 규칙 페이지에 표시)
-  on('GET', '/public/hq-report', async ({ db }) => ({ categories: HQ_CATEGORIES, quarters: (await hqReport(db)).slice(0, 4).map(({ refund_hq, ...r }) => r) }));
+  on('POST', '/admin/users/:id/leader', async ({ db, request, user, params }) => {
+    requireStaff(user); const b = await readJson(request);
+    const t = await one(db, 'SELECT id, nickname, can_lead FROM users WHERE id = ?', params.id); if (!t) throw notfound();
+    const reason = str(b.reason, 500);
+    if (b.on) {
+      await run(db, "UPDATE users SET can_lead = 1, leader_since = COALESCE(leader_since, datetime('now')) WHERE id = ?", t.id);
+      await run(db, "UPDATE leader_applications SET status = 'approved', note = COALESCE(note, ?), decided_by = ?, decided_at = datetime('now') WHERE user_id = ? AND status = 'pending'", reason, user.id, t.id);
+      await notify(db, t.id, '그룹리더로 승인되었습니다', (reason ? reason + ' ' : '') + '이제 언제든 그룹을 만들 수 있습니다.', '#/groups/new');
+    } else {
+      if (!reason) throw bad('그룹리더 자격을 거두는 사유를 적어 주세요');
+      const running = await one(db, "SELECT title FROM challenges WHERE leader_id = ? AND stage IN ('recruiting','active') LIMIT 1", t.id);
+      if (running) throw bad(`이끄는 그룹(${running.title})이 진행 중입니다. 그룹리더를 먼저 바꾸거나 그룹을 종료해 주세요`);
+      await run(db, 'UPDATE users SET can_lead = 0 WHERE id = ?', t.id);
+      await notify(db, t.id, '그룹리더 자격이 해제되었습니다', reason, '#/me/leader');
+    }
+    await audit(db, user.id, b.on ? 'leader.grant' : 'leader.revoke', 'users:' + t.id, { reason });
+    return { ok: true };
+  });
+
+  // 매출 등 성과 기록 확인 대기 목록
+  on('GET', '/admin/results', async ({ db, user, query }) => {
+    requireStaff(user);
+    const pending = query.view !== 'all';
+    const rows = await all(db, `SELECT r.*, u.nickname, c.title AS group_title, c.type AS group_type FROM group_results r JOIN users u ON u.id = r.user_id JOIN challenges c ON c.id = r.challenge_id
+      WHERE r.deleted_at IS NULL ${pending ? "AND r.metric = 'revenue' AND r.verified_at IS NULL" : ''} ORDER BY r.created_at DESC LIMIT 200`);
+    return rows.map(r => ({ ...r, metric_name: GOAL_METRICS[r.metric]?.[0] || r.metric, unit: GOAL_METRICS[r.metric]?.[1] || '' }));
+  });
 
   // ─────────────────────────────── 단체 알림 ───────────────────────────────
-  const segOf = q => ({ type: q.type || q.segment || 'all', level: q.level, challenge_id: q.challenge_id, round_id: q.round_id });
+  const segOf = q => ({ type: q.type || q.segment || 'all', level: q.level, challenge_id: q.challenge_id });
   on('GET', '/admin/broadcast/preview', async ({ db, user, query }) => {
     requireStaff(user);
     return { count: (await segmentUsers(db, segOf(query))).length };
@@ -574,7 +621,8 @@ export function registerAdminRoutes(on, h) {
     requireStaff(user);
     const e = await one(db, 'SELECT * FROM events WHERE id = ?', params.id); if (!e) throw notfound();
     const regs = await all(db, 'SELECT r.*, u.nickname, u.level, u.email FROM registrations r JOIN users u ON u.id = r.user_id WHERE r.event_id = ? ORDER BY r.status, r.created_at', e.id);
-    return { event: e, registrations: regs };
+    const presentations = await all(db, 'SELECT p.*, u.nickname, c.title AS group_title FROM event_presentations p JOIN users u ON u.id = p.user_id LEFT JOIN challenges c ON c.id = p.challenge_id WHERE p.event_id = ? ORDER BY p.created_at', e.id);
+    return { event: { ...e, type_name: EVENT_TYPES[e.type] || e.type }, registrations: regs, presentations };
   });
   on('PUT', '/admin/events/:id', async ({ db, request, user, params }) => {
     requireStaff(user); const b = await readJson(request);
@@ -588,9 +636,15 @@ export function registerAdminRoutes(on, h) {
       description: b.description !== undefined ? str(b.description, 2000) : e.description,
       attendance_code: b.attendance_code ? String(b.attendance_code).trim().toUpperCase().slice(0, 20) : e.attendance_code,
       status: ['scheduled', 'cancelled'].includes(b.status) ? b.status : (e.status || 'scheduled'),
+      type: EVENT_TYPES[b.type] ? b.type : e.type,
+      mode: ['offline', 'online', 'hybrid'].includes(b.mode) ? b.mode : (e.mode || 'offline'),
+      online_url: b.online_url !== undefined ? str(b.online_url, 300) : e.online_url,
+      topics: b.topics !== undefined ? ((Array.isArray(b.topics) ? b.topics : String(b.topics || '').split(',')).map(t => String(t).trim()).filter(t => EVENT_TOPICS[t]).join(',') || null) : e.topics,
     };
+    if (v.online_url && !/^https?:\/\/\S+$/i.test(v.online_url)) throw bad('온라인 참여 링크는 http로 시작해야 합니다');
     if (v.starts_at.length === 16) v.starts_at += ':00';
-    await run(db, 'UPDATE events SET title = ?, starts_at = ?, location = ?, capacity = ?, min_level = ?, description = ?, attendance_code = ?, status = ? WHERE id = ?', v.title, v.starts_at, v.location, v.capacity, v.min_level, v.description, v.attendance_code, v.status, e.id);
+    await run(db, 'UPDATE events SET title = ?, starts_at = ?, location = ?, capacity = ?, min_level = ?, description = ?, attendance_code = ?, status = ?, type = ?, mode = ?, online_url = ?, topics = ? WHERE id = ?',
+      v.title, v.starts_at, v.location, v.capacity, v.min_level, v.description, v.attendance_code, v.status, v.type, v.mode, v.online_url, v.topics, e.id);
     const regs = await all(db, "SELECT user_id FROM registrations WHERE event_id = ? AND status <> 'cancelled'", e.id);
     if (v.status === 'cancelled' && (e.status || 'scheduled') !== 'cancelled') for (const r of regs) await notify(db, r.user_id, '신청한 일정이 취소됐습니다', `${v.title} · ${str(b.reason, 300) || '운영본부 사정'}`, '#/events');
     else if (b.notify_change && (v.starts_at !== e.starts_at || v.location !== e.location)) for (const r of regs) await notify(db, r.user_id, '신청한 일정이 바뀌었습니다', `${v.title} · ${v.starts_at.slice(0, 16)} · ${v.location || ''}`, '#/events');

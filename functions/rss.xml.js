@@ -13,7 +13,7 @@ export async function onRequestGet({ env }) {
       const { results } = await env.DB.prepare("SELECT p.id, p.form, p.published_at, c.title FROM papers p JOIN challenges c ON c.id = p.challenge_id WHERE p.status IN ('approved','published') AND p.publish_scope = 'public' ORDER BY p.published_at DESC LIMIT 30").all();
       for (const p of results) {
         let f = {}; try { f = JSON.parse(p.form || '{}'); } catch {}
-        items.push({ title: `프로젝트 페이퍼: ${f.name || p.title}`, link: `${base}/papers/${p.id}/`, description: f.pain || '마이챌린지 그룹 챌린지의 프로젝트 페이퍼입니다.', category: '프로젝트 페이퍼', date: String(p.published_at || '').replace(' ', 'T') + 'Z' });
+        items.push({ title: `프로젝트 페이퍼: ${f.name || p.title}`, link: `${base}/papers/${p.id}/`, description: f.pain || '마이챌린지 그룹의 프로젝트 페이퍼입니다.', category: '프로젝트 페이퍼', date: String(p.published_at || '').replace(' ', 'T') + 'Z' });
       }
     }
   } catch (e) { console.error(e); }
@@ -23,7 +23,7 @@ export async function onRequestGet({ env }) {
 <channel>
   <title>${x(SITE.fullName)} — 사이드프로젝트 가이드와 프로젝트 페이퍼</title>
   <link>${base}/</link>
-  <description>사이드프로젝트로 첫 매출을 만드는 12주 모임 마이챌린지의 가이드와 프로젝트 기록</description>
+  <description>함께 배우고 함께 도전하는 사이드프로젝트 커뮤니티 마이챌린지의 가이드와 프로젝트 기록</description>
   <language>ko</language>
   <atom:link href="${base}/rss.xml" rel="self" type="application/rss+xml"/>
   <lastBuildDate>${rfc822(items[0]?.date || Date.now())}</lastBuildDate>

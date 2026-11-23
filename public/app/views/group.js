@@ -1,375 +1,511 @@
-import { api, post, put, esc, nl2br, state, toast, go, reload, field, input, textarea, select, check, bindForms, bindActions, stat, num, pct, won, fmtDate, ago, LEVEL_NAMES, LEVELS, FIELDS, ROLES, lvChip, stageChip, typeChip, fieldChip, pageHead, empty, progressBar, tabs, modal, closeModal, STAGE } from '../core.js';
+// 그룹 — 학습그룹·도전그룹 목록, 만들기, 그룹 공간(홈·모임·출석·기록·목표·성과·그룹원·설정·페이퍼)
+import {
+  api, post, put, esc, nl2br, state, toast, go, reload, field, input, textarea, select, check, bindForms, bindActions, stat, num, won, fmtDate, fmtLocal, ago,
+  FIELDS, ROLES, TYPE, GOAL_METRICS, LOG_KINDS, ATTEND, attendChip, metricVal, lvChip, stageChip, typeChip, fieldChip, pageHead, empty, progressBar, tabs, modal, closeModal, getSettings,
+} from '../core.js';
 
-// ---------------- 챌린지 보드 ----------------
-export async function board({ me, query }) {
-  const qs = new URLSearchParams(Object.fromEntries(Object.entries(query).filter(([, v]) => v))).toString();
-  const list = await api('/challenges' + (qs ? '?' + qs : ''));
-  const rounds = await api('/rounds');
-  const canPropose = me.role === 'staff' || me.level >= 'L4';
-  const html = `<div class="wrap page">
-    ${pageHead('챌린지 보드', '모집 중인 그룹에 지원하거나, 진행 상황을 둘러보세요. 카드는 챌린저부터, 그룹 안의 기록은 어치버부터 볼 수 있습니다.', `${canPropose ? '<a class="btn primary" href="#/challenges/new">챌린지 제안</a>' : '<a class="btn primary" href="#/challenges/new">솔로 챌린지</a>'}`)}
-    <form class="filters" data-form="filter">
-      <select name="stage">${[['', '모든 단계'], ['recruiting', '모집 중'], ['active', '진행 중'], ['settling', '정산 중'], ['closed', '종료'], ['stopped', '중단']].map(([v, l]) => `<option value="${v}" ${query.stage === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <select name="field">${[['', '모든 분야'], ...Object.entries(FIELDS)].map(([v, l]) => `<option value="${v}" ${query.field === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <select name="type">${[['', '모든 유형'], ['group', '그룹'], ['solo', '솔로'], ['official', '오피셜']].map(([v, l]) => `<option value="${v}" ${query.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      ${rounds.length ? `<select name="round">${[['', '모든 라운드'], ...rounds.map(r => [r.id, r.name])].map(([v, l]) => `<option value="${v}" ${String(query.round || '') === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>` : ''}
-      <button class="btn sm" type="submit">적용</button>
-    </form>
-    ${list.length ? `<div class="grid grid-3">${list.map(challengeCard).join('')}</div>` : empty('조건에 맞는 챌린지가 없습니다', '필터를 바꾸거나, 리더 등급이라면 직접 제안해 보세요')}
-  </div>`;
-  return { html, mount(root) { bindForms(root, { filter(d) { const q = new URLSearchParams(Object.fromEntries(Object.entries(d).filter(([, v]) => v))).toString(); go('#/challenges' + (q ? '?' + q : '')); } }); } };
+const kstNow = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 16);
+const dday = s => { const d = Math.ceil((Date.parse(s.slice(0, 16) + ':00+09:00') - Date.now()) / 86400e3); return d <= 0 ? '오늘' : d === 1 ? '내일' : `${d}일 뒤`; };
+const modeLabel = m => (m === 'offline' ? '오프라인' : '온라인');
+const isUrl = s => /^https?:\/\//i.test(s || '');
+const rateText = st => (st && st.rate != null ? `${st.rate}%` : '-');
+
+// 출석 규칙을 사람이 읽는 문장으로
+export function policyLines(p) {
+  const out = [];
+  if (p.min_rate > 0) out.push(`출석률 ${p.min_rate}% 이상을 지켜 주세요. 모임이 ${p.rate_after}번 쌓인 뒤부터 확인합니다.`);
+  out.push(`시작 ${p.late_minutes}분이 지나면 지각입니다.${p.late_per_absence > 0 ? ` 지각 ${p.late_per_absence}번은 결석 1번으로 셉니다.` : ''}`);
+  const warn = [];
+  if (p.warn_absences > 0) warn.push(`연속 결석 ${p.warn_absences}번`);
+  if (p.warn_on_low_rate && p.min_rate > 0) warn.push('출석률이 기준 아래로 내려가면');
+  if (warn.length) out.push(`${warn.join(' 또는 ')} 경고를 받습니다.`);
+  if (p.kick_warnings > 0) out.push(`경고가 ${p.kick_warnings}번 쌓이면 ${p.auto_remove ? '그룹에서 자동으로 나가게 됩니다' : '그룹리더가 확인한 뒤 그룹에서 나가게 될 수 있습니다'}.`);
+  out.push(p.excuse ? `모임 전에 불참 사유를 남기면 공결로 인정합니다 (최대 ${p.excuse_limit}번).` : '공결은 따로 인정하지 않습니다.');
+  return out;
 }
 
-export function challengeCard(c) {
-  const pn = c.public_numbers || {};
-  return `<a class="card clickable ch-card" href="#/challenges/${c.id}">
-    <div class="ch-top">${typeChip(c.type)}${stageChip(c.stage)}${fieldChip(c.field_code)}${c.my_status === 'active' ? '<span class="chip blue">참여 중</span>' : c.my_status === 'applied' ? '<span class="chip amber">지원함</span>' : ''}</div>
+function goalBar(g) {
+  if (!g || !g.target) return g ? `<div class="small muted">${esc(g.metric_name)} 누적 <b>${metricVal(g.metric, g.value, g.unit)}</b></div>` : '';
+  return `<div class="goal-bar"><div class="row between small"><span>${esc(g.metric_name)} 목표 ${metricVal(g.metric, g.target, g.unit)}</span><b>${metricVal(g.metric, g.value, g.unit)} · ${Math.round((g.ratio || 0) * 100)}%</b></div>${progressBar(g.value, g.target)}</div>`;
+}
+
+// ---------------- 그룹 목록 ----------------
+export async function board({ me, query }) {
+  const qs = new URLSearchParams(Object.fromEntries(Object.entries(query).filter(([, v]) => v))).toString();
+  const list = await api('/groups' + (qs ? '?' + qs : ''));
+  const canLead = me.can_lead || me.role === 'staff';
+  const tab = query.mine ? 'mine' : (query.type || 'all');
+  const href = o => '#/groups?' + new URLSearchParams(Object.fromEntries(Object.entries({ ...o }).filter(([, v]) => v))).toString();
+  const html = `<div class="wrap page">
+    ${pageHead('그룹', '정기모임에서 나온 관심사로 그룹을 만들고, 그룹리더와 함께 목표에 도전합니다. 학습그룹은 함께 공부하고, 도전그룹은 프로젝트로 성과와 수익에 도전합니다.',
+      canLead ? '<a class="btn primary" href="#/groups/new">그룹 만들기</a>' : '<a class="btn" href="#/me/leader">그룹리더 신청</a>')}
+    <div class="grid grid-2 group-kinds">
+      <div class="card soft"><div class="row" style="gap:8px">${typeChip('study')}<b>학습그룹</b></div><p class="small muted" style="margin:6px 0 0">AI 활용, 마케팅, 세금처럼 한 분야를 정해 4~8주 동안 함께 공부하고 정리합니다.</p></div>
+      <div class="card soft"><div class="row" style="gap:8px">${typeChip('challenge')}<b>도전그룹</b></div><p class="small muted" style="margin:6px 0 0">하나의 프로젝트를 정해 목표 숫자(매출·고객·사용자)를 세우고, 기록하고, 발표합니다.</p></div>
+    </div>
+    <div class="toolbar" style="margin-top:14px">
+      <div class="pill-tabs">${[['all', '전체', {}], ['study', '학습그룹', { type: 'study' }], ['challenge', '도전그룹', { type: 'challenge' }], ['mine', '내 그룹', { mine: '1' }]].map(([k, l, o]) => `<a href="${href({ ...o, field: query.field, stage: query.stage })}" class="${tab === k ? 'active' : ''}">${l}</a>`).join('')}</div>
+      <form class="filters" data-form="filter" style="margin:0">
+        <select name="field">${[['', '모든 분야'], ...Object.entries(FIELDS)].map(([v, l]) => `<option value="${v}" ${query.field === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select name="stage">${[['', '모집·진행 중'], ['recruiting', '모집 중'], ['active', '진행 중'], ['closed', '종료'], ['all', '전체']].map(([v, l]) => `<option value="${v}" ${(query.stage || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <input type="search" name="q" value="${esc(query.q || '')}" placeholder="그룹 이름 검색" class="mini-input">
+        <button class="btn sm" type="submit">찾기</button>
+      </form>
+    </div>
+    ${list.length ? `<div class="grid grid-3" style="margin-top:12px">${list.map(groupCard).join('')}</div>` : empty('조건에 맞는 그룹이 없습니다', canLead ? '직접 그룹을 만들어 보세요' : '정기모임에서 함께할 사람을 찾아 보거나, 그룹리더를 신청해 직접 열어 보세요', canLead ? '<a class="btn primary" href="#/groups/new">그룹 만들기</a>' : '<a class="btn" href="#/me/leader">그룹리더 신청</a>')}
+  </div>`;
+  return { html, mount(root) { bindForms(root, { filter(d) { go(href({ type: query.type, mine: query.mine, field: d.field, stage: d.stage, q: d.q?.trim() })); } }); } };
+}
+
+export function groupCard(c) {
+  const full = c.member_count >= c.capacity;
+  const my = c.my_status === 'active' ? '<span class="chip blue">참여 중</span>' : c.my_status === 'applied' ? '<span class="chip amber">신청함</span>' : '';
+  const goal = c.goal_metric && c.goal_target ? `<div class="ch-goal">${progressBar(c.goal_value, c.goal_target)}<small>${esc(c.goal_metric_name)} ${metricVal(c.goal_metric, c.goal_value, c.goal_unit)} / ${metricVal(c.goal_metric, c.goal_target, c.goal_unit)}</small></div>` : (c.goal_text ? `<div class="ch-goal small muted">목표 · ${esc(c.goal_text)}</div>` : '');
+  return `<a class="card clickable ch-card" href="#/groups/${c.id}">
+    <div class="ch-top">${typeChip(c.type)}${stageChip(c.stage)}${fieldChip(c.field_code)}${my}</div>
     <h3>${esc(c.title)}</h3>
     <div class="ch-summary">${esc(c.summary || '')}</div>
-    <div class="ch-foot"><span>${esc(c.leader_nickname)} · ${c.member_count}명${c.round_name ? ' · ' + esc(c.round_name) : ''}</span><span>${pn.has_sales ? '매출 발생' : ''}</span></div>
+    ${goal}
+    <div class="ch-meta small muted">${c.schedule_text ? esc(c.schedule_text) + ' · ' : ''}${c.next_session_at ? `다음 모임 ${fmtLocal(c.next_session_at).slice(5)}` : `모임 ${num(c.sessions_done)}번 진행`}</div>
+    <div class="ch-foot"><span>리더 ${esc(c.leader_nickname)} · ${c.member_count}/${c.capacity}명</span><span>${c.stage === 'closed' ? '' : full ? '정원 마감' : !c.recruit_open ? '모집 쉼' : c.join_mode === 'open' ? '바로 참여' : '리더 승인'}</span></div>
   </a>`;
 }
 
-// ---------------- 제안서 ----------------
-const PROPOSAL_FIELDS = [
-  ['pain', '어떤 불편·문제를 해결하나요? *', '누가, 언제, 어떤 상황에서 겪는 문제인지 구체적으로. "요즘 뜨는 분야라서"는 문제가 아닙니다.'],
-  ['product', '무엇을 만들어 팔 건가요? *', '12주 안에 팔 수 있는 최소 형태. 예: 10페이지 PDF 가이드, 주말 2시간 클래스, 소규모 공동구매 1회'],
-  ['first_sale_plan', '첫 매출은 어떻게 낼 건가요? *', '첫 고객 후보 3명을 적을 수 있으면 좋습니다. 어디에 어떻게 알릴지.'],
-  ['roles_needed', '필요한 역할과 인원', '예: 제작 2명, 마케팅·판매 1명, 기록 1명. 그룹장 포함 4~8명'],
-  ['budget', '예산 계획', '1인 상한 10만 원, 그룹 상한 50만 원 안에서. 무엇에 얼마를 쓸지'],
-  ['assets', '이미 가진 자산', '계정, 재고, 장비, 고객 명단, 장소 등. 소유권 판단의 근거가 됩니다'],
-  ['conflict_check', '이해충돌·규정 확인', '본업과의 충돌, 겸업 제한, 타인의 저작권·상표 등 확인한 내용'],
-  ['after_round', '라운드 이후 계획', '계속 운영 / 그룹원에게 이관 / 정리 중 어느 쪽으로 생각하는지'],
-];
-const PRESET_LABEL = { basic: '기본형 (운영본부 10 · 그룹장 30 · 그룹원 풀 60)', leader_led: '리더주도형 (10 · 45 · 45)', equal: '균등형 (10 · 20 · 70, 그룹장도 풀에 포함)', official: '오피셜형 (55 · 15 · 30, 운영본부가 리더)' };
-
-export async function propose({ me }) {
-  const canGroup = me.role === 'staff' || me.level >= 'L4';
-  const rounds = (await api('/rounds')).filter(r => r.status !== 'closed');
-  const html = `<div class="wrap page" style="max-width:760px">
-    ${pageHead(canGroup ? '챌린지 제안' : '솔로 챌린지 시작', canGroup ? '그룹 챌린지는 운영본부 심사(6개 항목, 45점 만점 중 27점 이상)를 거쳐 모집이 열립니다. 솔로 챌린지는 바로 시작됩니다.' : '혼자 진행하는 챌린지입니다. 체크인과 완료 기록, 페이퍼까지 같은 흐름으로 갑니다. 리더(L4)가 되면 그룹 챌린지를 제안할 수 있습니다.')}
-    <form class="card form" data-form="prop">
-      ${canGroup ? field('유형', `<div class="radio-cards"><label class="radio-card"><input type="radio" name="type" value="group" checked><div><b>그룹 챌린지</b><small>그룹장 + 그룹원 3~7명, 심사 후 모집, 합의서 필요</small></div></label><label class="radio-card"><input type="radio" name="type" value="solo"><div><b>솔로 챌린지</b><small>혼자 진행, 심사 없이 바로 시작</small></div></label>${me.role === 'staff' ? `<label class="radio-card"><input type="radio" name="type" value="official"><div><b>오피셜 챌린지</b><small>운영본부가 리더, 바로 모집</small></div></label>` : ''}</div>`) : '<input type="hidden" name="type" value="solo">'}
-      <div class="form-cols">${field('제목 *', input('title', { required: true, placeholder: '예: 동네 자영업자 대상 인스타 운영 대행 3곳' }))}${field('분야 *', select('field_code', Object.entries(FIELDS)))}</div>
-      ${rounds.length ? field('라운드', select('round_id', [['', '라운드 미지정'], ...rounds.map(r => [r.id, `${r.name} (${fmtDate(r.start_date)}~${fmtDate(r.end_date)})`])])) : ''}
-      ${field('한 줄 요약 *', input('summary', { required: true, placeholder: '보드 카드에 보이는 문장. 80자 이내' }))}
-      ${PROPOSAL_FIELDS.map(([k, l, h]) => field(l, textarea(`proposal.${k}`, { rows: 3, required: l.endsWith('*') }), h)).join('')}
-      <div class="form-cols">${field('배분 프리셋 (그룹)', select('proposal.preset', Object.entries(PRESET_LABEL).filter(([k]) => me.role === 'staff' || k !== 'official')))}${field('소유권 유형 (그룹)', select('proposal.ownership', [['A', 'A형 · 그룹 공동 소유'], ['B', 'B형 · 그룹장 소유 + 마챌 사용권'], ...(me.role === 'staff' ? [['C', 'C형 · 마챌 소유 (오피셜)']] : [])]))}</div>
-      <div class="form-error error"></div>
-      <button class="btn primary lg block" type="submit">${canGroup ? '제출' : '시작하기'}</button>
-    </form></div>`;
-  return { html, mount(root) { bindForms(root, { async prop(d) {
-    const proposal = {}; for (const [k, v] of Object.entries(d)) if (k.startsWith('proposal.')) proposal[k.slice(9)] = v;
-    const r = await post('/challenges', { type: d.type, title: d.title, field_code: d.field_code, round_id: d.round_id || null, summary: d.summary, proposal });
-    toast(r.stage === 'review' ? '제출했습니다. 운영본부 심사 결과를 알림으로 보내 드립니다' : '챌린지가 만들어졌습니다');
-    go(r.stage === 'active' ? `#/groups/${r.id}` : `#/challenges/${r.id}`);
-  } }); } };
+// ---------------- 그룹 만들기 · 설정 폼 ----------------
+const TEMPLATES = {
+  study: { goal_text: '6주 동안 매주 하나씩 실습하고, 정리 노트 6편을 함께 공개한다', goal_metric: 'study', goal_target: 6, schedule_text: '매주 수요일 21시 온라인 60분',
+    milestones: ['1주차: 각자 배우고 싶은 것 정리', '3주차: 중간 실습 결과 공유', '6주차: 정리 노트 공개 · 정기모임 발표'] },
+  challenge: { goal_text: '8주 안에 첫 유료 고객 3명, 매출 30만 원', goal_metric: 'revenue', goal_target: 300000, schedule_text: '매주 화요일 21시 온라인 90분 · 월 1회 오프라인',
+    milestones: ['2주차: 고객 후보 10명 인터뷰', '4주차: 첫 판매 페이지 공개', '6주차: 첫 매출', '8주차: 성과발표회 발표'] },
+};
+function policyFields(p) {
+  const n = (name, v, min, max, unit) => `<div class="unit-input">${input(name, { type: 'number', value: v, min, max })}<span>${unit}</span></div>`;
+  return `<div class="form-cols">${field('최소 출석률', n('policy.min_rate', p.min_rate, 0, 100, '%'), '0이면 출석률 기준을 쓰지 않습니다')}${field('출석률 확인 시작', n('policy.rate_after', p.rate_after, 1, 20, '번째 모임부터'))}</div>
+    <div class="form-cols">${field('지각 기준', n('policy.late_minutes', p.late_minutes, 0, 120, '분 지나면'))}${field('지각 환산', n('policy.late_per_absence', p.late_per_absence, 0, 10, '번 = 결석 1번'), '0이면 환산하지 않습니다')}</div>
+    <div class="form-cols">${field('연속 결석 경고', n('policy.warn_absences', p.warn_absences, 0, 10, '번 연속이면 경고'), '0이면 쓰지 않습니다')}${field('퇴출 기준', n('policy.kick_warnings', p.kick_warnings, 0, 10, '번 경고면 퇴출 대상'), '0이면 퇴출 기준이 없습니다')}</div>
+    <div class="form-cols">${field('공결 인정 횟수', n('policy.excuse_limit', p.excuse_limit, 0, 20, '번까지'))}${field('출석 코드 입력', n('policy.checkin_before', p.checkin_before, 0, 180, '분 전부터'))}</div>
+    <div class="row" style="gap:14px;flex-wrap:wrap">${check('policy.warn_on_low_rate', '출석률이 기준 아래로 내려가면 경고', p.warn_on_low_rate)}${check('policy.excuse', '모임 전 불참 사유는 공결로 인정', p.excuse)}${check('policy.auto_remove', '퇴출 기준에 닿으면 자동으로 내보내기 (끄면 리더가 확인 후 결정)', p.auto_remove)}</div>`;
+}
+function collect(d) {
+  const out = { policy: {} };
+  for (const [k, v] of Object.entries(d)) { if (k.startsWith('policy.')) out.policy[k.slice(7)] = v; else out[k] = v; }
+  return out;
+}
+function groupForm(g, { create = false, settings }) {
+  const p = g.policy || settings.attendance_default;
+  return `
+    ${create ? field('그룹 종류', `<div class="radio-cards"><label class="radio-card"><input type="radio" name="type" value="study" ${g.type === 'study' ? 'checked' : ''}><div><b>학습그룹</b><small>한 분야를 정해 함께 공부하고 정리합니다. 예: AI 업무 자동화, 숏폼 기획, 부업 세금</small></div></label><label class="radio-card"><input type="radio" name="type" value="challenge" ${g.type !== 'study' ? 'checked' : ''}><div><b>도전그룹</b><small>하나의 프로젝트로 성과·수익 목표에 도전합니다. 예: 전자책 판매, 동네 가게 SNS 대행</small></div></label></div>`) : ''}
+    <div class="form-cols">${field('그룹 이름 *', input('title', { value: g.title || '', required: true, placeholder: '예: AI로 상세페이지 만들기 스터디' }))}${field('분야 *', `<select name="field_code">${Object.entries(FIELDS).map(([k, v]) => `<option value="${k}" ${g.field_code === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`)}</div>
+    ${field('한 줄 소개 *', input('summary', { value: g.summary || '', required: true, placeholder: '그룹 목록 카드에 보이는 문장입니다 (120자 이내)' }))}
+    ${field('자세한 소개', textarea('description', { value: g.description || '', rows: 5, placeholder: '무엇을 함께 하는지, 어떤 사람과 하고 싶은지, 모임은 어떻게 진행되는지 적어 주세요' }))}
+    <h3 class="form-section">목표</h3>
+    ${create ? `<p class="small muted" style="margin:-4px 0 8px">예시로 채우기: <button class="btn sm" type="button" data-act="tpl" data-k="study">학습그룹 예시</button> <button class="btn sm" type="button" data-act="tpl" data-k="challenge">도전그룹 예시</button></p>` : ''}
+    ${field('그룹 목표', input('goal_text', { value: g.goal_text || '', placeholder: '예: 8주 안에 첫 유료 고객 3명, 매출 30만 원' }), '도전그룹은 마지막에 닿고 싶은 성과·수익 숫자를, 학습그룹은 끝까지 해낼 학습 목표를 적어 주세요')}
+    <div class="form-cols">${field('목표로 세는 숫자', `<select name="goal_metric"><option value="">숫자 목표 없음</option>${Object.entries(GOAL_METRICS).map(([k, [n, u]]) => `<option value="${k}" ${g.goal_metric === k ? 'selected' : ''}>${n}${u ? ` (${u})` : ''}</option>`).join('')}</select>`)}${field('목표 수치', input('goal_target', { type: 'number', value: g.goal_target ?? '', min: 0, placeholder: '예: 300000' }), '성과 기록이 쌓이면 진행률이 올라갑니다')}</div>
+    <div class="form-cols">${field('시작일', input('start_date', { type: 'date', value: g.start_date || '' }))}${field('끝나는 날', input('end_date', { type: 'date', value: g.end_date || '' }))}</div>
+    ${create ? field('마일스톤', [0, 1, 2, 3].map(i => `<div class="form-cols" style="margin-bottom:6px"><input type="text" name="ms_title_${i}" placeholder="${i + 1}. 예: 4주차 첫 판매 페이지 공개"><input type="date" name="ms_date_${i}"></div>`).join(''), '나중에 목표·성과 탭에서 더하거나 고칠 수 있습니다') : ''}
+    <h3 class="form-section">모임 방식</h3>
+    <div class="form-cols">${field('모이는 주기', input('schedule_text', { value: g.schedule_text || '', placeholder: '예: 매주 화요일 21시 온라인' }))}${field('주로 모이는 곳', input('place', { value: g.place || '', placeholder: '예: 줌 / 성수동 공유 라운지' }))}</div>
+    <div class="form-cols">${field('정원 (그룹리더 포함)', input('capacity', { type: 'number', value: g.capacity || settings.groups.capacity_default, min: 2, max: settings.groups.capacity_max }))}${field('참여 방식', `<select name="join_mode"><option value="approval" ${g.join_mode !== 'open' ? 'selected' : ''}>리더가 신청을 보고 승인</option><option value="open" ${g.join_mode === 'open' ? 'selected' : ''}>누구나 바로 참여</option></select>`)}</div>
+    ${field('그룹 대화방 링크', input('chat_url', { value: g.chat_url || '', placeholder: 'https://open.kakao.com/…' }), '그룹원에게만 보입니다')}
+    ${!create ? check('recruit_open', '새 그룹원을 받습니다', !!g.recruit_open) : ''}
+    <h3 class="form-section">출석 규칙</h3>
+    <p class="small muted" style="margin:-4px 0 8px">그룹리더가 정합니다. 그룹원은 참여하기 전에 이 규칙을 확인하고, 모임마다 출석 코드로 출석합니다.</p>
+    ${policyFields(p)}`;
 }
 
-export async function editProposal({ params }) {
-  const c = await api('/challenges/' + params.id);
-  const p = c.proposal || {};
-  const html = `<div class="wrap page" style="max-width:760px">${pageHead('제안서 수정', c.review ? `심사 의견: ${esc(c.review.comment || '')}` : '', `<a class="btn" href="#/challenges/${c.id}">← 돌아가기</a>`)}
-    <form class="card form" data-form="edit">
-      ${field('제목', input('title', { value: c.title }))}${field('한 줄 요약', input('summary', { value: c.summary || '' }))}
-      ${PROPOSAL_FIELDS.map(([k, l, h]) => field(l.replace(' *', ''), textarea(`proposal.${k}`, { rows: 3, value: p[k] || '' }), h)).join('')}
-      <div class="form-cols">${field('배분 프리셋', select('proposal.preset', Object.entries(PRESET_LABEL), p.preset))}${field('소유권 유형', select('proposal.ownership', [['A', 'A형 · 그룹 공동 소유'], ['B', 'B형 · 그룹장 소유'], ['C', 'C형 · 마챌 소유']], p.ownership))}</div>
-      <div class="btn-row"><button class="btn primary" type="submit" name="mode" value="save">저장</button>${c.stage === 'proposed' ? '<button class="btn" type="submit" name="mode" value="resubmit">저장하고 재제출</button>' : ''}</div>
-    </form></div>`;
-  return { html, mount(root) { bindForms(root, { async edit(d, f, submitter) {
-    const proposal = {}; for (const [k, v] of Object.entries(d)) if (k.startsWith('proposal.')) proposal[k.slice(9)] = v;
-    await put(`/challenges/${c.id}/proposal`, { title: d.title, summary: d.summary, proposal });
-    if (submitter?.value === 'resubmit') { await post(`/challenges/${c.id}/resubmit`); toast('재제출했습니다'); } else toast('저장했습니다');
-    go(`#/challenges/${c.id}`);
-  } }); } };
-}
-
-// ---------------- 챌린지 상세 ----------------
-export async function detail({ params, me }) {
-  const c = await api('/challenges/' + params.id);
-  const mine = c.my_membership;
-  const isLeader = c.is_leader;
-  const canApply = c.stage === 'recruiting' && c.type !== 'solo' && !isLeader && (!mine || ['rejected', 'left'].includes(mine.status));
-  const pn = c.public_numbers || {};
-  const html = `<div class="wrap page">
-    <div class="row" style="margin-bottom:8px">${typeChip(c.type)}${stageChip(c.stage)}${fieldChip(c.field_code)}${c.round_name ? `<span class="chip">${esc(c.round_name)}</span>` : ''}</div>
-    ${pageHead(esc(c.title), esc(c.summary || ''), [
-      (mine && mine.status === 'active') || c.is_staff ? `<a class="btn primary" href="#/groups/${c.id}">그룹 공간</a>` : (c.can_see_logs ? `<a class="btn" href="#/groups/${c.id}">진행 기록 보기</a>` : ''),
-      canApply && me.level >= 'L2' ? '<button class="btn primary" data-act="apply">참여 지원</button>' : (canApply ? '<span class="chip amber">메이커(L2)부터 지원 가능</span>' : ''),
-      isLeader && ['proposed', 'review'].includes(c.stage) ? `<a class="btn" href="#/challenges/${c.id}/edit">제안서 수정</a>` : '',
-      isLeader && c.stage === 'recruiting' && c.type !== 'solo' ? '<button class="btn" data-act="to-agreement">모집 마감 → 합의서</button>' : '',
-      c.is_staff && c.type !== 'solo' && ['active', 'settling', 'closed'].includes(c.stage) ? '<button class="btn" data-act="complete">완주 처리</button>' : '',
-      isLeader && ['recruiting', 'agreement', 'active'].includes(c.stage) ? '<button class="btn danger" data-act="stop" data-confirm="챌린지를 중단합니다. 중단해도 페이퍼는 제출해야 합니다. 계속할까요?">중단</button>' : '',
-    ].filter(Boolean).join(''))}
-
-    ${c.stage === 'proposed' && isLeader ? `<div class="notice warn">운영본부가 보완을 요청했습니다. ${c.review?.comment ? `<br>의견: ${esc(c.review.comment)}` : ''} 제안서를 고친 뒤 재제출해 주세요.</div>` : ''}
-    ${c.stage === 'review' ? `<div class="notice">운영본부 심사 중입니다. 보통 3일 안에 결과가 나옵니다.</div>` : ''}
-    ${c.stage === 'rejected' ? `<div class="notice danger">반려된 제안입니다. ${esc(c.review?.comment || '')}</div>` : ''}
-    ${mine && mine.status === 'applied' ? `<div class="notice">지원서를 보냈습니다. 그룹장이 확인하면 알림을 드립니다.</div>` : ''}
-
-    <div class="grid grid-2" style="margin-top:14px">
-      <div class="stack">
-        <div class="card"><h3>공개 숫자</h3><div class="grid grid-3">${stat('외부 매출', pn.has_sales ? '있음' : '아직')}${stat('외부 고객 수', esc(pn.customers_band || '0'))}${stat('투입 시간', num(pn.hours || 0) + 'h')}</div><p class="small muted" style="margin:10px 0 0">정확한 금액은 그룹원과 어치버 이상만 봅니다. 모든 챌린지가 매출 유무·고객 수 구간·투입 시간은 공개합니다.</p></div>
-        ${c.milestones?.length ? `<div class="card"><h3>마일스톤</h3>${c.milestones.map(m => `<div class="milestone ${m.done_at ? 'done' : (m.due_date < new Date().toISOString().slice(0, 10) ? 'late' : '')}"><span class="dotm"></span><span class="grow">${esc(m.title)}</span><small class="muted">${m.done_at ? '완료 ' + fmtDate(m.done_at) : '~' + fmtDate(m.due_date)}</small></div>`).join('')}</div>` : ''}
-        ${c.paper ? `<div class="card"><div class="card-head"><h3>프로젝트 페이퍼</h3><span class="chip ${c.paper.status === 'approved' || c.paper.status === 'published' ? 'green' : 'amber'}">${{ draft: '작성 중', review: '검토 중', approved: '공개', published: '공개' }[c.paper.status]}</span></div>${['approved', 'published'].includes(c.paper.status) ? `<a class="btn sm" href="#/papers/${c.paper.id}">페이퍼 읽기</a>` : '<p class="small muted" style="margin:0">아직 공개되지 않았습니다.</p>'}</div>` : ''}
-      </div>
-      <div class="stack">
-        <div class="card"><div class="card-head"><h3>그룹</h3><span class="muted small">${c.members.length}명</span></div><div class="list">${c.members.map(m => `<div class="list-item"><div class="grow"><div class="title">${esc(m.nickname)} ${lvChip(m.level)}</div><div class="meta">${esc(m.role_name || m.role)}</div></div></div>`).join('')}</div></div>
-        ${c.applicants ? `<div class="card"><div class="card-head"><h3>지원자</h3><span class="muted small">${c.applicants.length}명</span></div>${c.applicants.length ? `<div class="list">${c.applicants.map(a => `<div class="list-item"><div class="grow"><div class="title">${esc(a.nickname)} ${lvChip(a.level)}</div><div class="meta">${esc((a.interests || '').split(',').filter(Boolean).map(k => FIELDS[k] || k).join(', '))}</div>${a.apply_note ? `<div class="small" style="margin-top:4px">${nl2br(a.apply_note)}</div>` : ''}</div><div class="btn-row" style="flex-direction:column"><button class="btn sm primary" data-act="accept" data-uid="${a.user_id}" data-name="${esc(a.nickname)}">수락</button><button class="btn sm" data-act="reject" data-uid="${a.user_id}">거절</button></div></div>`).join('')}</div>` : '<p class="small muted" style="margin:0">아직 지원자가 없습니다. 커뮤니티에 모집 글을 올려 보세요.</p>'}</div>` : ''}
-        ${c.proposal ? `<div class="card"><h3>제안서</h3><div class="small stack">${PROPOSAL_FIELDS.filter(([k]) => c.proposal[k]).map(([k, l]) => `<div><b>${esc(l.replace(' *', ''))}</b><div>${nl2br(c.proposal[k])}</div></div>`).join('')}<div><b>배분 프리셋</b> · ${esc(PRESET_LABEL[c.proposal.preset] || c.proposal.preset || '-')}</div><div><b>소유권</b> · ${esc(c.proposal.ownership || '-')}형</div></div>${c.review ? `<div class="divider"></div><div class="small"><b>심사 결과</b> · 합계 ${c.review.total}점 ${c.review.decision === 'approve' ? '(통과)' : ''}<br>${esc(c.review.comment || '')}</div>` : ''}</div>` : ''}
-      </div>
-    </div></div>`;
-  return { html, mount(root) { bindActions(root, {
-    apply() { modal(`<h3>참여 지원</h3><p class="small muted">그룹장이 읽습니다. 왜 이 챌린지에 맞는지, 무엇을 할 수 있는지, 주당 몇 시간을 낼 수 있는지 적어 주세요.</p><form class="form" data-form="ap">${field('지원 메모', textarea('note', { rows: 4, required: true }))}<div class="btn-row"><button class="btn primary" type="submit">지원</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`, { onMount(m) { bindForms(m, { async ap(d) { await post(`/challenges/${c.id}/apply`, d); closeModal(); toast('지원했습니다'); reload(); } }); } }); },
-    accept(el) { modal(`<h3>${esc(el.dataset.name)}님 수락</h3><form class="form" data-form="ac">${field('역할', select('role', Object.entries(ROLES).filter(([k]) => k !== 'leader')))}<p class="small muted">역할 가중치: 회계 1.2 · 제작/마케팅 1.15 · 기록 1.1 · 일반 1.0. 합의서에서 다시 조정할 수 있습니다.</p><div class="btn-row"><button class="btn primary" type="submit">수락</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`, { onMount(m) { bindForms(m, { async ac(d) { await post(`/challenges/${c.id}/members/${el.dataset.uid}`, { action: 'accept', role: d.role }); closeModal(); toast('수락했습니다'); reload(); } }); } }); },
-    async reject(el) { if (!confirm('이 지원자를 거절할까요?')) return; await post(`/challenges/${c.id}/members/${el.dataset.uid}`, { action: 'reject' }); toast('거절했습니다'); reload(); },
-    async 'to-agreement'() { await post(`/challenges/${c.id}/stage`, { stage: 'agreement' }); toast('합의 단계로 넘어갔습니다. 그룹 공간에서 합의서를 작성하세요'); go(`#/groups/${c.id}/agreement`); },
-    async stop() { await post(`/challenges/${c.id}/stage`, { stage: 'stopped' }); toast('중단 처리했습니다'); reload(); },
-    complete() { modal(`<h3>완주 처리</h3><p class="small">데모데이에서 발표한 그룹원에게 라운드 완주 배지와 발표 포인트를 줍니다. 그룹장에게는 그룹장 완주 배지도 붙습니다. 프로젝트 페이퍼가 제출돼 있어야 합니다.</p><form class="form" data-form="cp">${field('발표한 사람', `<div class="stack">${c.members.map(m => check('presenters[]', `${esc(m.nickname)} <small class="muted">${esc(m.role_name || '')}</small>`, true, m.user_id)).join('')}</div>`)}<div class="btn-row"><button class="btn primary" type="submit">완주 처리</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`, { onMount(m) { bindForms(m, { async cp(d) { await post(`/admin/challenges/${c.id}/complete`, { presenters: (d.presenters || []).map(Number) }); closeModal(); toast('완주 처리했습니다'); reload(); } }); } }); },
-  }); } };
-}
-
-// ---------------- 그룹 공간 ----------------
-const TABS = [['home', '홈'], ['checkin', '체크인'], ['logs', '완료 기록'], ['ledger', '장부'], ['agreement', '합의서'], ['settlement', '정산'], ['paper', '페이퍼'], ['members', '그룹원']];
-
-export async function space({ params, me }) {
-  const g = await api('/groups/' + params.id);
-  const tab = params.tab || 'home';
-  const c = g.challenge;
-  const visible = g.is_member ? TABS : TABS.filter(([k]) => ['home', 'checkin', 'logs', 'paper', 'members'].includes(k));
-  if (!visible.find(([k]) => k === tab)) { go(`#/groups/${c.id}`); return ''; }
-  const body = { home: tabHome, checkin: tabCheckin, logs: tabLogs, ledger: tabLedger, agreement: tabAgreement, settlement: tabSettlement, paper: tabPaper, members: tabMembers }[tab](g, me);
-  const html = `<div class="wrap page">
-    <div class="row" style="margin-bottom:6px"><a href="#/challenges/${c.id}" class="small">← 챌린지 카드</a></div>
-    <div class="page-head"><div><h1>${esc(c.title)}</h1><p>${typeChip(c.type)} ${stageChip(c.stage)} ${fieldChip(c.field_code)} · 그룹장 ${esc(c.leader_nickname)}${g.is_member ? '' : ' · <span class="chip purple">열람 모드</span>'}</p></div></div>
-    ${tabs(visible.map(([k, l]) => [k, l, `#/groups/${c.id}${k === 'home' ? '' : '/' + k}`]), tab)}
-    ${body.html}
-  </div>`;
-  return { html, mount(root) { if (body.mount) body.mount(root, g); } };
-}
-
-function tabHome(g) {
-  const c = g.challenge; const today = new Date().toISOString().slice(0, 10);
-  const latest = g.checkins[0];
-  const html = `<div class="grid grid-2">
-    <div class="stack">
-      ${g.is_member && ['active', 'settling'].includes(c.stage) ? `<form class="card form" data-form="quicklog" style="gap:8px"><h3>오늘 한 일 한 줄</h3><div class="row"><input type="text" name="text" placeholder="예: 랜딩페이지 문구 초안 완성" required style="flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px"><button class="btn primary" type="submit">기록</button></div><div class="row small"><input type="text" name="link" placeholder="링크 (선택)" style="flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px">${check('shared', '커뮤니티 피드에 공유', true)}</div></form>` : ''}
-      <div class="card"><div class="card-head"><h3>마일스톤</h3></div>${g.milestones.length ? g.milestones.map(m => `<div class="milestone ${m.done_at ? 'done' : (m.due_date < today ? 'late' : '')}"><span class="dotm"></span><span class="grow">${esc(m.title)}${m.evidence ? ` <a href="${esc(m.evidence)}" target="_blank" rel="noopener" class="small">증빙</a>` : ''}</span><small class="muted">${m.done_at ? '완료 ' + fmtDate(m.done_at) : '~' + fmtDate(m.due_date)}</small>${g.is_leader && ['active', 'settling'].includes(c.stage) ? `<button class="btn sm ${m.done_at ? 'ghost' : ''}" data-act="ms" data-id="${m.id}" data-done="${m.done_at ? 1 : 0}">${m.done_at ? '취소' : '완료'}</button>` : ''}</div>`).join('') : '<p class="small muted" style="margin:0">합의서가 승인되면 4·7·8·12주차 마일스톤이 자동으로 생깁니다.</p>'}</div>
-      ${latest ? `<div class="card"><div class="card-head"><h3>${latest.week_no}주차 체크인</h3><a class="small" href="#/groups/${c.id}/checkin">전체</a></div><p class="small muted" style="margin:0 0 8px">제출 ${latest.entries.length} / ${g.members.length}명</p>${latest.entries.slice(0, 4).map(e => `<div class="small" style="padding:6px 0;border-top:1px solid var(--line)"><b>${esc(e.nickname)}</b> · ${esc((e.goals || [])[0] || (e.done || [])[0] || '')}${e.blocker ? ` <span class="chip red">막힘</span>` : ''}</div>`).join('')}</div>` : ''}
-    </div>
-    <div class="stack">
-      ${c.stage === 'agreement' || (c.stage === 'recruiting' && g.is_leader) ? `<div class="notice warn">${g.agreement ? (g.agreement.status === 'locked' ? '합의서가 승인되었습니다.' : `합의서 서명 ${g.agreement.signatures.length} / ${g.members.length}명. <a href="#/groups/${c.id}/agreement">합의서로 →</a>`) : `아직 합의서가 없습니다. ${g.is_leader ? `<a href="#/groups/${c.id}/agreement">그룹장이 작성해 주세요 →</a>` : '그룹장이 작성하면 알림이 옵니다.'}`}</div>` : ''}
-      <div class="card"><div class="card-head"><h3>최근 완료 기록</h3><a class="small" href="#/groups/${c.id}/logs">전체</a></div>${g.done_logs.length ? `<div class="list">${g.done_logs.slice(0, 6).map(logRow).join('')}</div>` : '<p class="small muted" style="margin:0">아직 기록이 없습니다.</p>'}</div>
-      ${g.is_member ? `<div class="card"><div class="card-head"><h3>장부 요약</h3><a class="small" href="#/groups/${c.id}/ledger">장부</a></div><div class="grid grid-3">${stat('외부 매출', won(g.ledger_totals.revenue_external))}${stat('비용', won(g.ledger_totals.expenses))}${stat('순수익', won(g.ledger_totals.net), true)}</div></div>` : ''}
-      <div class="card"><h3>공개 숫자</h3>${g.is_leader ? `<form class="form" data-form="pubnum" style="gap:8px"><div class="form-cols">${field('외부 매출', select('has_sales', [['0', '아직 없음'], ['1', '있음']], c.public_numbers.has_sales ? '1' : '0'))}${field('고객 수 구간', select('customers_band', [['0', '0'], ['1~4', '1~4'], ['5~19', '5~19'], ['20~99', '20~99'], ['100+', '100+']], c.public_numbers.customers_band))}</div>${field('총 투입 시간', input('hours', { type: 'number', value: c.public_numbers.hours || 0, min: 0 }))}<button class="btn sm" type="submit">저장</button></form>` : `<p class="small" style="margin:0">매출 ${c.public_numbers.has_sales ? '있음' : '아직'} · 고객 ${esc(c.public_numbers.customers_band || '0')} · ${num(c.public_numbers.hours || 0)}시간</p>`}</div>
-    </div></div>`;
-  return { html, mount(root) { bindActions(root, { async ms(el) { if (el.dataset.done === '1') { await post(`/groups/${g.challenge.id}/milestones/${el.dataset.id}`, { done: false }); reload(); return; } modal(`<h3>마일스톤 완료</h3><form class="form" data-form="msd">${field('증빙 링크 (선택)', input('evidence', { placeholder: '계획서, 공개 페이지, 발표 자료 링크' }))}<div class="btn-row"><button class="btn primary" type="submit">완료로 표시</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`, { onMount(m) { bindForms(m, { async msd(d) { await post(`/groups/${g.challenge.id}/milestones/${el.dataset.id}`, { done: true, evidence: d.evidence }); closeModal(); reload(); } }); } }); } }); bindForms(root, {
-    async quicklog(d, f) { await post(`/groups/${g.challenge.id}/done-logs`, { text: d.text, link: d.link, shared: d.shared }); toast('기록했습니다. 그룹장이 확인하면 포인트가 적립됩니다'); reload(); },
-    async pubnum(d) { await put(`/challenges/${g.challenge.id}`, { public_numbers: { has_sales: d.has_sales === '1', customers_band: d.customers_band, hours: d.hours } }); toast('저장했습니다'); },
-  }); } };
-}
-
-function logRow(l) {
-  return `<div class="list-item"><div class="grow"><div class="title" style="font-weight:550">${esc(l.text)}${l.link ? ` <a href="${esc(l.link)}" target="_blank" rel="noopener" class="small">링크</a>` : ''}</div><div class="meta">${esc(l.nickname)} · ${ago(l.created_at)}${l.cancelled_at ? ' · <span class="chip red">취소됨</span>' : (l.confirmed_at ? ' · <span class="chip green">확인됨</span>' : ' · 미확인')}</div></div><div class="btn-row">${!l.confirmed_at && !l.cancelled_at ? `<button class="btn sm" data-act="confirm" data-id="${l.id}" data-leader-only>확인</button>` : ''}${!l.cancelled_at ? `<button class="btn sm ghost" data-act="cancel" data-id="${l.id}" data-owner="${l.user_id}">취소</button>` : ''}</div></div>`;
-}
-
-function tabLogs(g, me) {
-  const html = `<div class="card"><div class="card-head"><h3>완료 기록</h3><span class="small muted">그룹장이 확인한 기록만 기여도와 포인트에 반영됩니다</span></div>
-    ${g.is_member && ['active', 'settling'].includes(g.challenge.stage) ? `<form class="form" data-form="log" style="gap:8px;margin-bottom:14px"><div class="row"><input type="text" name="text" placeholder="완료한 일 (300자 이내)" required style="flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px"><button class="btn primary" type="submit">기록</button></div><div class="row small"><input type="text" name="link" placeholder="증빙 링크 (선택)" style="flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px">${check('shared', '피드 공유', true)}</div></form>` : ''}
-    ${g.done_logs.length ? `<div class="list">${g.done_logs.map(logRow).join('')}</div>` : empty('기록이 없습니다')}</div>`;
+export async function create({ me }) {
+  const settings = await getSettings();
+  if (!(me.can_lead || me.role === 'staff')) {
+    return `<div class="wrap page" style="max-width:720px">${pageHead('그룹 만들기')}<div class="card"><h3>그룹리더 승인이 필요합니다</h3><p>그룹은 운영진의 승인을 받은 그룹리더가 언제든 만들 수 있습니다. 어떤 그룹을 이끌고 싶은지 적어 신청해 주세요. 보통 5일 안에 결과를 알려 드립니다.</p><a class="btn primary" href="#/me/leader">그룹리더 신청하기</a></div></div>`;
+  }
+  const html = `<div class="wrap page" style="max-width:820px">
+    ${pageHead('그룹 만들기', '만들면 바로 그룹 목록에 올라가 모집이 시작됩니다. 운영진이 함께 지켜보고, 필요하면 연락드립니다.', '<a class="btn" href="#/groups">← 그룹 목록</a>')}
+    <form class="card form" data-form="g">${groupForm({ type: 'challenge' }, { create: true, settings })}<div class="form-error error"></div><button class="btn primary lg block" type="submit">그룹 만들기</button></form></div>`;
   return { html, mount(root) {
-    // 권한에 맞지 않는 버튼 숨김
-    root.querySelectorAll('[data-leader-only]').forEach(b => { if (!g.is_leader) b.remove(); });
-    root.querySelectorAll('[data-act=cancel]').forEach(b => { if (!g.is_leader && Number(b.dataset.owner) !== me.id) b.remove(); });
-    bindForms(root, { async log(d) { await post(`/groups/${g.challenge.id}/done-logs`, d); toast('기록했습니다'); reload(); } });
-    bindActions(root, { async confirm(el) { await post(`/groups/${g.challenge.id}/done-logs/${el.dataset.id}`, { action: 'confirm' }); toast('확인했습니다'); reload(); }, async cancel(el) { await post(`/groups/${g.challenge.id}/done-logs/${el.dataset.id}`, { action: 'cancel' }); reload(); } });
-  } };
-}
-
-function tabCheckin(g, me) {
-  const c = g.challenge;
-  const nextWeek = (g.checkins[0]?.week_no || 0) + 1;
-  const html = `<div class="stack">
-    ${g.is_leader && ['active', 'settling', 'agreement'].includes(c.stage) ? `<form class="card form" data-form="open" style="gap:8px"><div class="row between"><h3 style="margin:0">체크인 열기</h3><span class="small muted">매주 같은 요일에</span></div><div class="row"><div class="field" style="margin:0"><input type="number" name="week_no" value="${nextWeek}" min="1" max="52" style="width:90px"></div><span class="small">주차</span><div class="field" style="margin:0"><input type="date" name="due_date"></div><button class="btn primary sm" type="submit">열기</button></div></form>` : ''}
-    ${g.checkins.length ? g.checkins.map(ck => {
-      const mine = ck.entries.find(e => e.user_id === me.id);
-      return `<div class="card"><div class="card-head"><h3>${ck.week_no}주차</h3><span class="small muted">${ck.due_date ? '마감 ' + fmtDate(ck.due_date) + ' · ' : ''}제출 ${ck.entries.length}/${g.members.length}</span></div>
-        ${g.is_member && !mine ? `<form class="form" data-form="entry" data-ck="${ck.id}" style="gap:8px;background:var(--blue-tint);padding:12px;border-radius:10px"><b class="small">내 체크인 (3분)</b>${field('지난주 완료한 일 (최대 3개)', `<input type="text" name="done[]" placeholder="1." style="margin-bottom:6px"><input type="text" name="done[]" placeholder="2." style="margin-bottom:6px"><input type="text" name="done[]" placeholder="3.">`)}${field('이번 주 목표 (최대 3개)', `<input type="text" name="goals[]" placeholder="1." style="margin-bottom:6px"><input type="text" name="goals[]" placeholder="2.">`)}<div class="form-cols">${field('막힌 점 (있으면)', input('blocker', { placeholder: '도움이 필요한 것' }))}${field('이번 주 투입 시간', input('hours', { type: 'number', value: 0, min: 0, max: 168 }))}</div><button class="btn primary sm" type="submit">제출</button></form>` : ''}
-        ${ck.entries.length ? `<div class="list" style="margin-top:8px">${ck.entries.map(e => `<div class="list-item"><div class="grow"><div class="title">${esc(e.nickname)} <small class="muted">${num(e.hours)}h</small></div><div class="small">${e.done?.length ? `<div><b>완료</b> · ${e.done.map(esc).join(' / ')}</div>` : ''}${e.goals?.length ? `<div><b>목표</b> · ${e.goals.map(esc).join(' / ')}</div>` : ''}${e.blocker ? `<div style="color:var(--red)"><b>막힘</b> · ${esc(e.blocker)}</div>` : ''}</div></div></div>`).join('')}</div>` : '<p class="small muted" style="margin:8px 0 0">아직 제출한 사람이 없습니다.</p>'}
-      </div>`; }).join('') : empty('체크인이 아직 열리지 않았습니다', g.is_leader ? '위에서 1주차를 열어 보세요' : '그룹장이 열면 알림이 옵니다')}
-  </div>`;
-  return { html, mount(root) { bindForms(root, {
-    async open(d) { await post(`/groups/${c.id}/checkins`, d); toast('체크인을 열었습니다'); reload(); },
-    async entry(d, f) { await post(`/groups/${c.id}/checkins/${f.dataset.ck}/entries`, d); toast('제출했습니다 (+20점)'); reload(); },
-  }); } };
-}
-
-function tabLedger(g, me) {
-  const c = g.challenge; const t = g.ledger_totals;
-  const html = `<div class="stack">
-    <div class="grid grid-4">${stat('외부 매출', won(t.revenue_external), true)}${stat('내부 매출 (회원 간)', won(t.revenue_internal))}${stat('비용', won(t.expenses))}${stat('순수익 (외부 기준)', won(t.net))}</div>
-    <p class="small muted" style="margin:0">그룹원 분담금 ${won(t.member_contrib)} · 운영본부 선지원 ${won(t.hq_advance)} — 정산 때 순수익에서 먼저 돌려받습니다. 내부 매출(마챌 회원이 산 것)은 참고용이고 배분 대상이 아닙니다.</p>
-    ${['active', 'settling'].includes(c.stage) ? `<form class="card form" data-form="entry" style="gap:10px"><h3>장부 기록</h3><div class="form-cols">${field('구분', select('kind', [['revenue', '매출'], ['expense', '비용']]))}${field('날짜', input('entry_date', { type: 'date', value: new Date().toISOString().slice(0, 10), required: true }))}${field('금액 (원)', input('amount', { type: 'number', min: 1, required: true }))}${field('채널 / 항목', input('channel', { placeholder: '예: 스마트스토어, 현장 결제 / 재료비, 광고비' }))}</div><div class="form-cols">${field('매출일 때: 고객 구분', select('is_external', [['1', '외부 고객'], ['0', '마챌 회원 (내부)']]))}${field('비용일 때: 누가 냈나요?', select('payer_type', [['none', '그룹 공동 (매출에서 지출)'], ['member', '그룹원 개인 분담'], ...(g.is_staff ? [['hq', '운영본부 선지원']] : [])]))}</div>${field('증빙 링크 / 메모', input('evidence', { placeholder: '영수증 사진 링크, 입금 내역 등' }))}<button class="btn primary" type="submit">기록</button></form>` : ''}
-    <div class="card"><h3>기록</h3>${g.ledger.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>날짜</th><th>구분</th><th>항목</th><th class="num">금액</th><th>기록자</th><th>확인</th></tr></thead><tbody>${g.ledger.map(l => `<tr><td>${fmtDate(l.entry_date)}</td><td>${l.kind === 'revenue' ? (l.is_external ? '<span class="chip green">외부 매출</span>' : '<span class="chip">내부 매출</span>') : `<span class="chip amber">비용</span>${l.payer_type === 'member' ? `<br><small>${esc(l.payer_name || '')} 분담</small>` : l.payer_type === 'hq' ? '<br><small>운영본부 선지원</small>' : ''}`}</td><td>${esc(l.channel || l.category || '')}${l.evidence ? ` <a href="${esc(l.evidence)}" target="_blank" rel="noopener" class="small">증빙</a>` : ''}${l.note ? `<br><small class="muted">${esc(l.note)}</small>` : ''}</td><td class="num">${won(l.amount)}</td><td>${esc(l.entered_by_name)}</td><td>${l.confirmed_by ? '✓' : (g.is_leader ? `<button class="btn sm" data-act="confirm" data-id="${l.id}">확인</button>` : '-')}</td></tr>`).join('')}</tbody></table></div>` : empty('장부가 비어 있습니다', '첫 비용부터 적어 두면 정산이 편합니다')}</div>
-  </div>`;
-  return { html, mount(root) { bindForms(root, { async entry(d) { d.is_external = d.is_external === '1'; await post(`/groups/${c.id}/ledger`, d); toast('기록했습니다'); reload(); } }); bindActions(root, { async confirm(el) { await post(`/groups/${c.id}/ledger/${el.dataset.id}/confirm`); reload(); } }); } };
-}
-
-function tabAgreement(g, me) {
-  const c = g.challenge; const a = g.agreement; const presets = g.presets;
-  const canEdit = g.is_leader && (!a || ['draft', 'signing'].includes(a.status)) && ['recruiting', 'agreement'].includes(c.stage);
-  const signedByMe = a && a.signatures.some(s => s.user_id === me.id);
-  const view = a ? `<div class="card"><div class="card-head"><h3>합의서 v${a.version}</h3><span class="chip ${a.status === 'locked' ? 'green' : a.status === 'signed' ? 'blue' : 'amber'}">${{ draft: '서명 대기', signing: '서명 중', signed: '전원 서명 · 승인 대기', approved: '승인', locked: '승인 · 잠금' }[a.status]}</span></div>
-      <div class="paper-kv" style="margin-bottom:12px">${[['배분', `${Math.round(a.clauses.ratios.hq * 100)} / ${Math.round(a.clauses.ratios.leader * 100)} / ${Math.round(a.clauses.ratios.pool * 100)}`, '운영본부 / 그룹장 / 그룹원 풀'], ['프리셋', esc(presets[a.clauses.preset]?.label || a.clauses.preset), a.clauses.leader_in_pool ? '그룹장도 풀에 포함' : ''], ['소유권', a.clauses.ownership_type + '형', { A: '그룹 공동 소유', B: '그룹장 소유 + 마챌 사용권', C: '마챌 소유' }[a.clauses.ownership_type]], ['예산 상한', `${won(a.clauses.budget_cap_person)} / ${won(a.clauses.budget_cap_group)}`, '1인 / 그룹'], ['정산 방식', { leader: '그룹장 명의', joint: '공동사업자', agency: '마챌 대행 (3%)' }[a.clauses.settlement_mode], ''], ['최소 정산', won(a.clauses.min_settlement), '미만이면 이월'], ['체크인 요일', esc(a.clauses.checkin_day || '-'), ''], ['규정 기준', esc(a.clauses.rule_doc), '']].map(([k, v, s]) => `<div class="kv"><small>${k}</small><b>${v}</b>${s ? `<br><small>${s}</small>` : ''}</div>`).join('')}</div>
-      <h3 class="small" style="margin-top:14px">역할과 예정 기여율</h3><div class="table-wrap"><table class="tbl"><thead><tr><th>그룹원</th><th>역할</th><th class="num">예정 기여율</th><th>서명</th></tr></thead><tbody>${g.members.map(m => { const r = a.clauses.roles.find(x => x.user_id === m.user_id) || {}; const s = a.signatures.find(x => x.user_id === m.user_id); return `<tr><td>${esc(m.nickname)}</td><td>${ROLES[m.role === 'leader' ? 'leader' : r.role] || '-'}</td><td class="num">${m.role === 'leader' && !a.clauses.leader_in_pool ? '그룹장 몫' : (r.planned_share != null ? pct(r.planned_share) : '균등')}</td><td>${s ? `<span class="chip green">서명 ${fmtDate(s.signed_at)}</span>` : '<span class="chip">대기</span>'}</td></tr>`; }).join('')}</tbody></table></div>
-      ${a.clauses.special_terms ? `<div class="divider"></div><b class="small">특약</b><p class="small">${nl2br(a.clauses.special_terms)}</p>` : ''}${a.clauses.assets ? `<b class="small">투입 자산</b><p class="small">${nl2br(a.clauses.assets)}</p>` : ''}${a.clauses.after_round ? `<b class="small">라운드 이후</b><p class="small">${nl2br(a.clauses.after_round)}</p>` : ''}
-      <div class="notice small" style="margin-top:10px">정산 순서: 매출 − 비용 → 그룹원 분담금 회수 → 운영본부 선지원 회수 → ${a.clauses.settlement_mode === 'agency' ? '대행 수수료 3% → ' : ''}운영본부 ${Math.round(a.clauses.ratios.hq * 100)}% → 그룹장 ${Math.round(a.clauses.ratios.leader * 100)}% → 그룹원 풀 ${Math.round(a.clauses.ratios.pool * 100)}%(실제 기여율대로). 기여율은 역할 가중치 × 확인된 완료 기록 × 체크인 출석으로 자동 산정되며 그룹장이 ±${Math.round(g.settings.share_adjust_limit * 100)}%p 안에서 조정합니다. 지급액에는 3.3% 원천징수 참고액을 표시합니다. 이 합의서는 마챌 운영방침(MC-03)에 따른 그룹 내부 약속이며, 금전 분쟁은 1차 그룹 조정 → 2차 운영본부 조정으로 처리합니다.</div>
-      ${g.is_member && ['draft', 'signing'].includes(a.status) && !signedByMe ? `<form class="form" data-form="sign" style="margin-top:12px">${check('agree', '위 조항을 모두 읽었고 동의합니다. 서명은 마챌 안에서의 약속으로 기록됩니다.')}<button class="btn primary" type="submit">서명하기</button></form>` : ''}
-      ${signedByMe && a.status !== 'locked' ? '<p class="small muted" style="margin-top:10px">서명했습니다. 전원이 서명하면 운영본부가 검토합니다.</p>' : ''}
-    </div>` : '';
-  const editor = canEdit ? agreementEditor(g, a) : '';
-  const html = `<div class="stack">${!a && !canEdit ? empty('아직 합의서가 없습니다', '그룹장이 작성하면 서명 요청 알림이 옵니다') : ''}${view}${editor}</div>`;
-  return { html, mount(root) {
-    bindForms(root, {
-      async sign(d) { await post(`/groups/${c.id}/agreement/sign`, d); toast('서명했습니다'); reload(); },
-      async agree(d) {
-        const clauses = { preset: d.preset, ratios: { hq: Number(d.r_hq) / 100, leader: Number(d.r_leader) / 100, pool: Number(d.r_pool) / 100 }, leader_in_pool: !!d.leader_in_pool, ownership_type: d.ownership_type, budget_cap_person: d.budget_cap_person, budget_cap_group: d.budget_cap_group, hq_advance_allowed: !!d.hq_advance_allowed, settlement_mode: d.settlement_mode, checkin_day: d.checkin_day, special_terms: d.special_terms, after_round: d.after_round, assets: d.assets,
-          roles: g.members.map(m => ({ user_id: m.user_id, role: d[`role_${m.user_id}`] || (m.role === 'leader' ? 'leader' : 'general'), planned_share: d[`share_${m.user_id}`] === '' || d[`share_${m.user_id}`] == null ? null : Number(d[`share_${m.user_id}`]) / 100 })) };
-        await post(`/groups/${c.id}/agreement`, { clauses }); toast('합의서를 저장하고 서명 요청을 보냈습니다'); reload();
-      },
-    });
-    const f = root.querySelector('form[data-form=agree]'); if (!f) return;
-    const sync = () => { const p = presets[f.preset.value]; if (!p) return; f.r_hq.value = Math.round(p.hq * 100); f.r_leader.value = Math.round(p.leader * 100); f.r_pool.value = Math.round(p.pool * 100); f.leader_in_pool.checked = !!p.leader_in_pool; };
-    f.preset.addEventListener('change', sync);
-    ['r_hq', 'r_leader'].forEach(n => f[n].addEventListener('input', () => { f.r_pool.value = 100 - Number(f.r_hq.value) - Number(f.r_leader.value); }));
-  } };
-}
-
-function agreementEditor(g, a) {
-  const cl = a?.clauses || {}; const presets = g.presets; const s = g.settings;
-  const ratios = cl.ratios || presets.basic;
-  return `<form class="card form" data-form="agree"><h3>${a ? '합의서 수정 (서명이 초기화됩니다)' : '합의서 작성'}</h3>
-    ${field('배분 프리셋', select('preset', Object.entries(presets).filter(([k]) => g.is_staff || k !== 'official').map(([k, p]) => [k, `${p.label} — ${p.desc}`]), cl.preset || 'basic'))}
-    <div class="form-cols" style="grid-template-columns:1fr 1fr 1fr">${field('운영본부 %', input('r_hq', { type: 'number', value: Math.round(ratios.hq * 100), min: 0, max: 100 }))}${field('그룹장 %', input('r_leader', { type: 'number', value: Math.round(ratios.leader * 100), min: 0, max: 100 }))}${field('그룹원 풀 %', input('r_pool', { type: 'number', value: Math.round(ratios.pool * 100), min: 0, max: 100 }))}</div>
-    <p class="small muted" style="margin:-6px 0 0">프리셋에서 ±10%p 안에서 조정. 운영본부 몫은 ${s.hq_ratio_range[0] * 100}~${s.hq_ratio_range[1] * 100}% 범위.</p>
-    ${check('leader_in_pool', '그룹장도 그룹원 풀 배분에 포함 (균등형)', !!cl.leader_in_pool)}
-    ${field('소유권 유형', `<div class="radio-cards">${[['A', 'A형 · 그룹 공동 소유', '아이디어와 제작을 처음부터 함께 한 경우. 상표·계정·저작물은 공동 소유, 지분은 합의서 비율'], ['B', 'B형 · 그룹장 소유 + 마챌 사용권', '그룹장의 기존 채널·브랜드 위에 쌓는 경우. 라운드 후 그룹장이 운영하고 그룹원에게 12개월 후속 배분'], ...(g.is_staff || g.challenge.type === 'official' ? [['C', 'C형 · 마챌 소유', '오피셜 챌린지. 참여자는 배분과 포트폴리오 사용권']] : [])].map(([v, t, d]) => `<label class="radio-card"><input type="radio" name="ownership_type" value="${v}" ${(cl.ownership_type || 'B') === v ? 'checked' : ''}><div><b>${t}</b><small>${d}</small></div></label>`).join('')}</div>`)}
-    <div class="form-cols">${field('1인 예산 상한 (원)', input('budget_cap_person', { type: 'number', value: cl.budget_cap_person ?? s.budget_cap_person, min: 0 }))}${field('그룹 예산 상한 (원)', input('budget_cap_group', { type: 'number', value: cl.budget_cap_group ?? s.budget_cap_group, min: 0 }))}</div>
-    <div class="form-cols">${field('정산 방식', select('settlement_mode', [['leader', '그룹장이 수령 후 지급'], ['joint', '공동사업자 등록'], ['agency', `운영본부 대행 (수수료 ${s.agency_rate * 100}%)`]], cl.settlement_mode || 'leader'))}${field('체크인 요일', select('checkin_day', ['월', '화', '수', '목', '금', '토', '일'].map(d => [d, d + '요일']), cl.checkin_day || '수'))}</div>
-    ${check('hq_advance_allowed', '필요 시 운영본부 선지원(비용 대납)을 요청할 수 있음', !!cl.hq_advance_allowed)}
-    <h3 class="small">역할과 예정 기여율</h3>
-    <div class="table-wrap"><table class="tbl"><thead><tr><th>그룹원</th><th>역할</th><th class="num">예정 기여율 % (풀 내, 비워도 됨)</th></tr></thead><tbody>${g.members.map(m => { const r = (cl.roles || []).find(x => x.user_id === m.user_id) || {}; return `<tr><td>${esc(m.nickname)}</td><td>${m.role === 'leader' ? '그룹장' : select(`role_${m.user_id}`, Object.entries(ROLES).filter(([k]) => k !== 'leader'), r.role || m.role)}</td><td class="num">${m.role === 'leader' && !cl.leader_in_pool ? '-' : `<input type="number" name="share_${m.user_id}" value="${r.planned_share != null ? Math.round(r.planned_share * 100) : ''}" min="0" max="100" style="width:80px">`}</td></tr>`; }).join('')}</tbody></table></div>
-    <p class="small muted" style="margin:0">예정 기여율은 참고값입니다. 실제 배분은 자동 산정된 기여율(역할 가중치 × 확인된 완료 기록 × 출석)을 기준으로 하고, 예정치와 20%p 이상 차이 나면 운영본부가 확인합니다.</p>
-    ${field('투입 자산 (누가 무엇을 가져오나)', textarea('assets', { rows: 2, value: cl.assets || '' }))}
-    ${field('특약', textarea('special_terms', { rows: 3, value: cl.special_terms || '', placeholder: '예: 라운드 종료 후 인스타 계정은 그룹장이 유지하되 그룹원 포트폴리오 표기 허용' }))}
-    ${field('라운드 이후 계획', input('after_round', { value: cl.after_round || '' }))}
-    <button class="btn primary lg" type="submit">저장하고 서명 요청</button>
-  </form>`;
-}
-
-function tabSettlement(g, me) {
-  const c = g.challenge; const a = g.agreement;
-  const canSettle = g.is_leader && a && a.status === 'locked' && ['active', 'settling'].includes(c.stage);
-  const contrib = g.contribution || [];
-  const html = `<div class="stack">
-    ${canSettle ? `<div class="card"><h3>1. 실제 기여율 확정</h3><p class="small muted">자동 산정값 = 역할 가중치 × (1 + 확인된 완료 기록 수) × 체크인 출석률, 합계를 100%로 정규화. 그룹장은 ±${Math.round(g.settings.share_adjust_limit * 100)}%p 안에서만 조정할 수 있습니다.</p>
-      <form class="form" data-form="contrib"><div class="table-wrap"><table class="tbl"><thead><tr><th>그룹원</th><th>역할(가중치)</th><th class="num">확인 기록</th><th class="num">출석</th><th class="num">자동 산정</th><th class="num">확정 %</th></tr></thead><tbody>${contrib.map(r => `<tr><td>${esc(r.nickname)}</td><td>${ROLES[r.role]} (${r.weight})</td><td class="num">${r.done}</td><td class="num">${pct(r.attendance)}</td><td class="num">${pct(r.auto_share)}</td><td class="num"><input type="number" step="0.1" name="share_${r.user_id}" value="${r.actual_share != null ? Math.round(r.actual_share * 1000) / 10 : Math.round(r.auto_share * 1000) / 10}" style="width:84px"></td></tr>`).join('')}</tbody></table></div><button class="btn" type="submit">기여율 저장</button></form></div>
-      <div class="card"><h3>2. 정산표 만들기</h3><p class="small muted">장부의 기간 내 기록으로 정산표를 계산합니다. 만들어지면 그룹원 전원에게 확인 요청이 갑니다. 정산 가능 금액이 ${won(g.settings.min_settlement)} 미만이면 자동 이월됩니다.</p><form class="form" data-form="settle"><div class="form-cols">${field('기간 시작', input('period_start', { type: 'date', value: c.round_start || '' }))}${field('기간 끝', input('period_end', { type: 'date', value: new Date().toISOString().slice(0, 10) }))}</div><button class="btn primary" type="submit">정산표 생성</button></form></div>` : (g.is_leader ? `<div class="notice warn">정산은 승인(잠금)된 합의서가 있고 챌린지가 진행 중일 때 그룹장이 시작합니다.</div>` : '')}
-    <div class="card"><h3>정산 내역</h3>${g.settlements.length ? `<div class="list">${g.settlements.map(s => `<a class="list-item" href="#/settlements/${s.id}" style="color:inherit"><div class="grow"><div class="title">${fmtDate(s.period_start)} ~ ${fmtDate(s.period_end)}</div><div class="meta">${settleStatus(s.status)} · 정산 가능 ${won(s.result.D)} · 운영본부 ${won(s.result.A)} · 그룹장 ${won(s.result.L)} · 풀 ${won(s.result.P)}</div></div><span>→</span></a>`).join('')}</div>` : '<p class="small muted" style="margin:0">아직 정산이 없습니다.</p>'}</div>
-  </div>`;
-  return { html, mount(root) { bindForms(root, {
-    async contrib(d) { const shares = contrib.map(r => ({ user_id: r.user_id, share: Number(d[`share_${r.user_id}`]) / 100 })); const r = await post(`/groups/${c.id}/contribution`, { shares }); toast(r.alert ? '저장했습니다. 예정치와 차이가 커서 운영본부에 알림이 갔습니다' : '저장했습니다'); reload(); },
-    async settle(d) { const r = await post(`/groups/${c.id}/settlements`, d); toast(r.status === 'carried' ? '정산 가능 금액이 최소 기준 미만이라 다음으로 이월했습니다' : r.status === 'reviewed' ? '순수익이 없어 배분 없이 기록했습니다' : '정산표를 만들었습니다. 그룹원 확인을 기다립니다'); go(`#/settlements/${r.id}`); },
-  }); } };
-}
-export function settleStatus(s) { const m = { confirming: ['그룹원 확인 중', 'amber'], disputed: ['이의 조정 중', 'red'], reviewed: ['검수 완료 · 지급 대기', 'blue'], paid: ['지급 완료', 'green'], carried: ['이월', ''], carried_used: ['이월 반영됨', ''] }[s] || [s, '']; return `<span class="chip ${m[1]}">${m[0]}</span>`; }
-
-function tabPaper(g, me) {
-  const c = g.challenge; const p = g.paper; const f = p?.form || {};
-  const canEdit = g.is_leader && (!p || p.status === 'draft' || g.is_staff);
-  const stateLabel = { ongoing: '계속 운영', transferred: '그룹원에게 이관', stopped: '중단', closed: '정리' };
-  const view = p ? `<div class="card"><div class="card-head"><h3>프로젝트 페이퍼</h3><span class="chip ${['approved', 'published'].includes(p.status) ? 'green' : 'amber'}">${{ draft: '작성 중', review: '운영진 검토 중', approved: '승인 · 공개', published: '공개' }[p.status]}</span></div>${p.review_note ? `<div class="notice ${p.status === 'draft' ? 'warn' : ''}">운영진 의견: ${esc(p.review_note)}</div>` : ''}${['approved', 'published'].includes(p.status) ? `<a class="btn sm" href="#/papers/${p.id}">공개 페이지 보기</a>` : ''}</div>` : '';
-  const editor = canEdit ? `<form class="card form" data-form="paper" id="paperform"><h3>${p ? '페이퍼 수정' : '페이퍼 작성'}</h3><p class="small muted">A4 두 장이면 충분합니다. 장부·체크인 숫자를 <button class="btn sm" type="button" data-act="prefill">자동으로 채우기</button>. 매출이 없어도, 중단했어도 씁니다. 안 된 이유가 다음 사람에게 가장 비쌉니다.</p>
-    ${field('프로젝트 이름', input('form.name', { value: f.name || c.title }))}
-    ${field('해결하려던 문제 (1~2문장)', textarea('form.pain', { rows: 2, value: f.pain || '', required: true }))}
-    ${field('만든 것·판 것', textarea('form.product', { rows: 2, value: f.product || '' }))}
-    ${field('주요 마일스톤 (최대 5개)', [0, 1, 2, 3, 4].map(i => `<input type="text" name="form.milestones[]" value="${esc((f.milestones || [])[i] || '')}" placeholder="${i + 1}." style="margin-bottom:6px">`).join(''))}
-    <div class="form-cols"><div class="form-cols" style="grid-template-columns:1fr 1fr">${field('외부 매출 (원)', input('form.revenue_external', { type: 'number', value: f.revenue_external ?? '', min: 0 }))}${field('내부 매출 (원)', input('form.revenue_internal', { type: 'number', value: f.revenue_internal ?? '', min: 0 }))}</div><div class="form-cols" style="grid-template-columns:1fr 1fr">${field('총 비용 (원)', input('form.expenses', { type: 'number', value: f.expenses ?? '', min: 0 }))}${field('외부 고객 수', input('form.customers', { type: 'number', value: f.customers ?? '', min: 0 }))}</div></div>
-    <div class="form-cols">${field('총 투입 시간', input('form.hours', { type: 'number', value: f.hours ?? '', min: 0 }))}${field('현재 상태', select('form.state', Object.entries(stateLabel), f.state || 'ongoing'))}</div>
-    ${field('잘된 것 3가지', [0, 1, 2].map(i => `<input type="text" name="form.good[]" value="${esc((f.good || [])[i] || '')}" placeholder="${i + 1}." style="margin-bottom:6px">`).join(''))}
-    ${field('안 된 것 3가지', [0, 1, 2].map(i => `<input type="text" name="form.bad[]" value="${esc((f.bad || [])[i] || '')}" placeholder="${i + 1}." style="margin-bottom:6px">`).join(''))}
-    ${field('다음에 한다면', textarea('form.next', { rows: 2, value: f.next || '' }))}
-    ${field('다음 도전자에게 한마디', textarea('form.to_next', { rows: 2, value: f.to_next || '' }))}
-    ${field('비공개로 둘 항목 (매출 유무·고객 수 구간·투입 시간은 항상 공개)', `<div class="row">${[['revenue_external', '외부 매출액'], ['revenue_internal', '내부 매출액'], ['expenses', '비용'], ['customers', '정확한 고객 수'], ['product', '만든 것 상세'], ['bad', '안 된 것']].map(([k, l]) => check('private_fields[]', l, (p?.private_fields || []).includes(k), k)).join('')}</div>`)}
-    ${field('공개 범위', select('publish_scope', [['members', '마챌 회원 (요약은 챌린저, 전문은 어치버 이상)'], ['public', '외부 공개 (요약만, 홈페이지 노출)']], p?.publish_scope || 'members'))}
-    <div class="btn-row"><button class="btn" type="submit" name="mode" value="save">임시 저장</button><button class="btn primary" type="submit" name="mode" value="submit">제출 (운영진 검토 요청)</button></div></form>` : (!p ? empty('페이퍼가 아직 없습니다', '그룹장이 라운드 끝에 작성합니다') : '');
-  const html = `<div class="stack">${view}${editor}</div>`;
-  return { html, mount(root) {
-    bindActions(root, { async prefill() { const d = await api(`/groups/${c.id}/paper/prefill`); const fm = root.querySelector('#paperform'); fm['form.revenue_external'].value = d.revenue_external; fm['form.revenue_internal'].value = d.revenue_internal; fm['form.expenses'].value = d.expenses; fm['form.hours'].value = d.hours; fm['form.customers'].value = d.customers_count; const ms = fm.querySelectorAll('[name="form.milestones[]"]'); d.milestones_hint.forEach((t, i) => { if (ms[i] && !ms[i].value) ms[i].value = t; }); toast('장부·체크인 숫자를 채웠습니다. 확인 후 고쳐 주세요'); } });
-    bindForms(root, { async paper(d, fm, submitter) {
-      const form = {}; for (const [k, v] of Object.entries(d)) if (k.startsWith('form.')) form[k.slice(5)] = v;
-      const r = await post(`/groups/${c.id}/paper`, { form, private_fields: d.private_fields || [], publish_scope: d.publish_scope, submit: submitter?.value === 'submit' });
-      toast(r.status === 'review' ? '제출했습니다. 운영진이 검토합니다 (+100점)' : '임시 저장했습니다'); reload();
+    bindActions(root, { tpl(el) {
+      const t = TEMPLATES[el.dataset.k]; const f = root.querySelector('form');
+      f.querySelector(`input[name=type][value=${el.dataset.k}]`).checked = true;
+      f.goal_text.value = t.goal_text; f.goal_metric.value = t.goal_metric; f.goal_target.value = t.goal_target; f.schedule_text.value = t.schedule_text;
+      t.milestones.forEach((m, i) => { if (f[`ms_title_${i}`]) f[`ms_title_${i}`].value = m; });
+    } });
+    bindForms(root, { async g(d) {
+      const b = collect(d);
+      b.milestones = [0, 1, 2, 3].map(i => ({ title: d[`ms_title_${i}`], due_date: d[`ms_date_${i}`] })).filter(m => m.title);
+      const r = await post('/groups', b);
+      await state.refreshMe();
+      toast('그룹을 만들었습니다. 첫 모임 일정을 잡아 보세요');
+      go(`#/groups/${r.id}/sessions`);
     } });
   } };
 }
 
-function tabMembers(g, me) {
-  const c = g.challenge;
-  const html = `<div class="stack"><div class="card"><div class="card-head"><h3>그룹원</h3><span class="small muted">${g.members.length}명 · 정원 8명</span></div><div class="list">${g.members.map(m => `<div class="list-item"><div class="grow"><div class="title">${esc(m.nickname)} ${lvChip(m.level)}</div><div class="meta">${ROLES[m.role]} · 가중치 ${m.role_weight} · 합류 ${fmtDate(m.joined_at)}</div></div>${g.is_leader && m.role !== 'leader' && ['recruiting', 'agreement', 'active'].includes(c.stage) ? `<div class="btn-row"><button class="btn sm" data-act="role" data-uid="${m.user_id}" data-name="${esc(m.nickname)}" data-role="${m.role}">역할</button><button class="btn sm danger" data-act="remove" data-uid="${m.user_id}" data-confirm="${esc(m.nickname)}님을 그룹에서 이탈 처리할까요? 이탈 시점까지의 기여는 정산에 반영됩니다.">이탈</button></div>` : ''}</div>`).join('')}</div></div>
-    ${g.left?.length ? `<div class="card"><h3>이탈한 그룹원</h3><div class="list">${g.left.map(m => `<div class="list-item"><div class="grow"><div class="title">${esc(m.nickname)}</div><div class="meta">${fmtDate(m.left_at)} · ${m.leave_type === 'unannounced' ? '무단 이탈 (기여분 50% 반영)' : '사전 고지 이탈'}</div></div></div>`).join('')}</div></div>` : ''}
-    <div class="card soft small"><b>그룹 규칙 요약</b><ul style="margin:6px 0 0;padding-left:18px"><li>그룹원은 동시에 1개 그룹 챌린지에만 참여합니다.</li><li>체크인 2회 연속 미제출이면 그룹장이 연락하고, 3주 연속 불참·연락 두절이면 무단 이탈로 봅니다.</li><li>이탈은 2주 전 통지가 원칙이며, 무단 이탈 시 기여분의 50%만 반영됩니다.</li><li>그룹장 교체는 운영본부 승인 절차(MC-03 4.4)로 진행합니다.</li></ul></div></div>`;
-  return { html, mount(root) { bindActions(root, {
-    role(el) { modal(`<h3>${esc(el.dataset.name)}님 역할 변경</h3><form class="form" data-form="role">${field('역할', select('role', Object.entries(ROLES).filter(([k]) => k !== 'leader'), el.dataset.role))}<div class="btn-row"><button class="btn primary" type="submit">저장</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`, { onMount(m) { bindForms(m, { async role(d) { await post(`/challenges/${c.id}/members/${el.dataset.uid}`, { action: 'role', role: d.role }); closeModal(); reload(); } }); } }); },
-    async remove(el) { await post(`/challenges/${c.id}/members/${el.dataset.uid}`, { action: 'remove', leave_type: 'notice' }); toast('이탈 처리했습니다'); reload(); },
+// ---------------- 그룹 공간 ----------------
+const TABS = [['home', '홈'], ['sessions', '모임·출석'], ['records', '도전 기록'], ['goals', '목표·성과'], ['members', '그룹원'], ['paper', '페이퍼'], ['settings', '설정']];
+
+export async function space({ params, me, query }) {
+  const tab = TABS.some(([k]) => k === params.tab) ? params.tab : 'home';
+  const d = await api('/groups/' + params.id);
+  const settings = await getSettings();
+  const g = d.group, mine = d.me;
+  const visible = TABS.filter(([k]) => (k !== 'settings' || mine.is_leader) && (k !== 'paper' || mine.is_leader || d.paper || g.stage === 'closed'));
+  const views = { home: tabHome, sessions: tabSessions, records: tabRecords, goals: tabGoals, members: tabMembers, paper: tabPaper, settings: tabSettings };
+  const body = views[tab](d, me, settings);
+  const m = mine.membership;
+  const actions = [];
+  if (d.join.can) actions.push(`<button class="btn primary" data-act="join">${d.join.mode === 'open' ? '바로 참여하기' : '참여 신청'}</button>`);
+  if (mine.is_member && g.chat_url) actions.push(`<a class="btn" href="${esc(g.chat_url)}" target="_blank" rel="noopener">그룹 대화방</a>`);
+  if (mine.is_leader && g.stage === 'recruiting') actions.push('<button class="btn" data-act="stage" data-to="active">진행 시작</button>');
+  if (mine.is_leader && ['recruiting', 'active'].includes(g.stage)) actions.push('<button class="btn" data-act="close">그룹 종료</button>');
+  if (m && ['active', 'applied'].includes(m.status) && m.role !== 'leader') actions.push(`<button class="btn ghost" data-act="leave">${m.status === 'applied' ? '신청 취소' : '그룹 나가기'}</button>`);
+  const html = `<div class="wrap page">
+    <div class="row" style="margin-bottom:8px;gap:6px">${typeChip(g.type)}${stageChip(g.stage)}${fieldChip(g.field_code)}${m?.status === 'active' ? `<span class="chip blue">${ROLES[m.role] || m.role}</span>` : ''}</div>
+    ${pageHead(esc(g.title), esc(g.summary || ''), actions.join(''))}
+    ${noticeBar(d)}
+    ${tabs(visible.map(([k, l]) => [k, l, `#/groups/${g.id}${k === 'home' ? '' : '/' + k}`]), tab)}
+    ${typeof body === 'string' ? body : body.html}
+  </div>`;
+  return { html, async mount(root) {
+    bindActions(root, {
+      join() {
+        modal(`<h3>${d.join.mode === 'open' ? '그룹에 참여하기' : '참여 신청'}</h3>${d.join.rejoin ? '<p class="small notice warn">이전에 이 그룹에서 나간 기록이 있어 그룹리더의 승인을 거칩니다.</p>' : ''}
+          <div class="card soft small"><b>이 그룹의 출석 규칙</b><ul class="rule-list">${policyLines(g.policy).map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>
+          <form class="form" data-form="j" style="margin-top:12px">${field('그룹리더에게 한마디', textarea('note', { rows: 3, placeholder: '이 그룹에서 해 보고 싶은 것, 쓸 수 있는 시간을 짧게 적어 주세요' }))}${check('agree', '출석 규칙을 확인했습니다')}<div class="btn-row"><button class="btn primary" type="submit">${d.join.mode === 'open' ? '참여하기' : '신청 보내기'}</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`,
+        { onMount(mm) { bindForms(mm, { async j(f) { if (!f.agree) throw new Error('출석 규칙을 확인해 주세요'); const r = await post(`/groups/${g.id}/join`, { note: f.note }); closeModal(); await state.refreshMe(); toast(r.status === 'active' ? '그룹에 참여했습니다' : '신청을 보냈습니다. 그룹리더가 확인하면 알려 드립니다'); reload(); } }); } });
+      },
+      leave() {
+        modal(`<h3>${m.status === 'applied' ? '참여 신청 취소' : '그룹 나가기'}</h3><form class="form" data-form="l">${field('이유 (그룹리더에게 전달됩니다)', textarea('note', { rows: 2 }))}<div class="btn-row"><button class="btn danger" type="submit">${m.status === 'applied' ? '신청 취소' : '나가기'}</button><button class="btn" type="button" data-close-modal>닫기</button></div></form>`,
+          { onMount(mm) { bindForms(mm, { async l(f) { await post(`/groups/${g.id}/leave`, f); closeModal(); await state.refreshMe(); toast('처리했습니다'); reload(); } }); } });
+      },
+      async stage(el) { await post(`/groups/${g.id}/stage`, { stage: el.dataset.to }); toast('그룹을 시작했습니다'); reload(); },
+      close() {
+        modal(`<h3>그룹 종료</h3><p class="small">종료하면 열려 있는 출석은 마감되고, 앞으로 잡힌 모임은 취소됩니다. 출석 기준(${g.policy.min_rate ? `출석률 ${g.policy.min_rate}% 이상` : '마감한 모임 1번 이상'})을 채운 그룹원은 완주 배지를 받습니다. 끝난 그룹은 운영진만 다시 열 수 있습니다.</p><div class="btn-row"><button class="btn primary" data-act="doclose">종료하기</button><button class="btn" data-close-modal>취소</button></div>`,
+          { onMount(mm) { bindActions(mm, { async doclose() { const r = await post(`/groups/${g.id}/stage`, { stage: 'closed' }); closeModal(); const ok = r.completion.filter(x => x.completed).length; toast(`그룹을 마쳤습니다. 완주 ${ok}명`); go(`#/groups/${g.id}/paper`); } }); } });
+      },
+      appeal() {
+        modal(`<h3>이의 신청</h3><p class="small muted">운영진이 그룹리더와 함께 확인하고 결과를 알려 드립니다.</p><form class="form" data-form="ap">${field('어떤 사정이 있었나요?', textarea('note', { rows: 4, required: true }))}<div class="btn-row"><button class="btn primary" type="submit">보내기</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`,
+          { onMount(mm) { bindForms(mm, { async ap(f) { await post(`/groups/${g.id}/appeal`, f); closeModal(); toast('이의 신청을 보냈습니다'); } }); } });
+      },
+      ...(body.actions || {}),
+    });
+    if (body.mount) await body.mount(root);
+  } };
+}
+
+function noticeBar(d) {
+  const g = d.group, m = d.me.membership, me = d.me;
+  if (g.stage === 'stopped') return '<div class="notice danger">운영진이 이 그룹을 중단했습니다. 기록은 그대로 볼 수 있습니다.</div>';
+  if (g.stage === 'closed') return `<div class="notice">마무리된 그룹입니다${g.closed_at ? ` (${fmtDate(g.closed_at)})` : ''}. 기록과 성과는 그대로 남아 있습니다.</div>`;
+  if (m?.status === 'removed') return `<div class="notice danger">이 그룹에서 나가게 되었습니다${m.leave_note ? ` · ${esc(m.leave_note)}` : ''}. 사정이 있었다면 <button class="btn sm" data-act="appeal">이의 신청</button></div>`;
+  if (m?.status === 'applied') return '<div class="notice">참여 신청을 보냈습니다. 그룹리더가 확인하면 알림을 드립니다.</div>';
+  if (me.is_member && me.warnings.length) return `<div class="notice warn"><b>출석 경고 ${me.warnings.length}회</b>${g.policy.kick_warnings ? ` (퇴출 기준 ${g.policy.kick_warnings}회)` : ''} · ${esc(me.warnings[me.warnings.length - 1].reason)}. 사정이 있다면 그룹리더에게 먼저 이야기해 주세요.</div>`;
+  if (!me.is_member && !d.join.can && !me.is_staff) return `<div class="notice">${esc(d.join.reason)}</div>`;
+  return '';
+}
+
+function sessionRow(s, d) {
+  const g = d.group, mine = d.me;
+  const st = s.status === 'cancelled' ? '<span class="chip">취소</span>' : s.status === 'open' ? '<span class="chip green">출석 받는 중</span>' : s.status === 'closed' ? '<span class="chip">마감</span>' : `<span class="chip blue">${dday(s.starts_at)}</span>`;
+  const myLine = mine.is_member && s.status !== 'cancelled' ? (s.my_status ? attendChip(s.my_status) : s.my_rsvp === 'yes' ? '<span class="chip blue">참석 예정</span>' : s.my_rsvp === 'no' ? '<span class="chip amber">불참 알림</span>' : '') : '';
+  return `<a class="list-item session-row" href="#/groups/${g.id}/sessions/${s.id}" style="color:inherit"><div class="grow"><div class="title">${esc(s.title)} ${st} ${myLine}</div>
+    <div class="meta">${fmtLocal(s.starts_at)} · ${s.duration_min}분 · ${modeLabel(s.mode)}${s.place && !isUrl(s.place) ? ' · ' + esc(s.place) : ''}${s.status === 'closed' ? ` · 출석 ${s.attended}명` : s.rsvp_yes || s.rsvp_no ? ` · 참석 ${s.rsvp_yes} · 불참 ${s.rsvp_no}` : ''}</div>
+    ${s.agenda ? `<div class="small muted clamp1">${esc(s.agenda)}</div>` : ''}</div><span class="muted">→</span></a>`;
+}
+
+function myAttendanceCard(d) {
+  const me = d.me, g = d.group; const st = me.attendance;
+  if (!me.is_member || !st) return '';
+  const p = g.policy;
+  const bad = p.min_rate > 0 && st.counted >= p.rate_after && st.rate < p.min_rate;
+  return `<div class="card"><div class="card-head"><h3>내 출석</h3><a class="small" href="#/groups/${g.id}/sessions">모임 보기</a></div>
+    <div class="grid grid-4 mini-stats">${stat('출석률', rateText(st), !bad)}${stat('출석·지각', `${st.present}·${st.late}`)}${stat('결석', num(st.absent))}${stat('공결', num(st.excused))}</div>
+    <p class="small ${bad ? 'error' : 'muted'}" style="margin:10px 0 0">${st.counted ? `마감된 모임 ${st.counted + st.excused}번 기준${st.late_as_absence ? ` · 지각 ${st.late}번은 결석 ${st.late_as_absence}번으로 셉니다` : ''}${p.min_rate ? ` · 기준 ${p.min_rate}%` : ''}${me.warnings.length ? ` · 경고 ${me.warnings.length}회` : ''}` : '아직 마감된 모임이 없습니다.'}</p></div>`;
+}
+
+function nextSessionCard(d) {
+  const g = d.group; const now = kstNow();
+  const next = d.sessions.filter(s => ['scheduled', 'open'].includes(s.status) && (s.status === 'open' || s.starts_at >= now.slice(0, 10))).sort((a, b) => a.starts_at < b.starts_at ? -1 : 1)[0];
+  if (!next) return `<div class="card"><h3>다음 모임</h3><p class="muted small" style="margin:0">잡힌 모임이 없습니다.${d.me.is_manager ? ` <a href="#/groups/${g.id}/sessions">모임 일정 잡기</a>` : ''}</p></div>`;
+  const insider = d.me.is_member || d.me.is_staff;
+  return `<div class="card next-session ${next.status === 'open' ? 'is-open' : ''}"><div class="card-head"><h3>다음 모임 · ${dday(next.starts_at)}</h3>${next.status === 'open' ? '<span class="chip green">출석 받는 중</span>' : ''}</div>
+    <div class="title">${esc(next.title)}</div><div class="meta small muted">${fmtLocal(next.starts_at)} · ${next.duration_min}분 · ${modeLabel(next.mode)}</div>
+    ${insider && next.place ? `<div class="small" style="margin-top:6px">${isUrl(next.place) ? `<a href="${esc(next.place)}" target="_blank" rel="noopener">온라인 모임 열기</a>` : '장소 · ' + esc(next.place)}</div>` : ''}
+    ${next.agenda ? `<div class="small" style="margin-top:6px">${nl2br(next.agenda)}</div>` : ''}${next.prep ? `<div class="small muted" style="margin-top:6px">준비할 것 · ${esc(next.prep)}</div>` : ''}
+    ${d.me.is_member ? `<div class="btn-row" style="margin-top:10px">${next.status === 'open' && !['present', 'late'].includes(next.my_status) ? `<a class="btn primary" href="#/groups/${g.id}/sessions/${next.id}">출석 코드 입력</a>` : ''}
+      ${next.status === 'scheduled' ? `<button class="btn sm ${next.my_rsvp === 'yes' ? 'primary' : ''}" data-act="rsvp" data-sid="${next.id}" data-v="yes">참석</button><button class="btn sm ${next.my_rsvp === 'no' ? 'primary' : ''}" data-act="rsvp" data-sid="${next.id}" data-v="no">불참 알림</button>` : ''}
+      ${next.my_status ? attendChip(next.my_status) : ''}</div>` : ''}</div>`;
+}
+const rsvpAction = g => ({
+  async rsvp(el) {
+    if (el.dataset.v === 'yes') { await post(`/groups/${g.id}/sessions/${el.dataset.sid}/rsvp`, { rsvp: 'yes' }); toast('참석으로 표시했습니다'); reload(); return; }
+    modal(`<h3>불참 알림</h3><p class="small muted">${g.policy.excuse ? `모임 시작 전에 사유를 남기면 공결로 인정됩니다 (최대 ${g.policy.excuse_limit}번).` : '이 그룹은 공결을 따로 인정하지 않습니다.'}</p><form class="form" data-form="no">${field('사유', input('note', { required: true, placeholder: '예: 야근, 출장' }))}<div class="btn-row"><button class="btn primary" type="submit">알리기</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`,
+      { onMount(mm) { bindForms(mm, { async no(f) { await post(`/groups/${g.id}/sessions/${el.dataset.sid}/rsvp`, { rsvp: 'no', note: f.note }); closeModal(); toast('그룹리더에게 알렸습니다'); reload(); } }); } });
+  },
+});
+
+function logItem(l, d) {
+  const g = d.group, mine = d.me;
+  const own = state.me && l.user_id === state.me.id;
+  return `<div class="log-item ${l.pinned ? 'pinned' : ''}"><div class="row between"><div class="small"><span class="chip ${l.kind === 'notice' ? 'ink' : ''}">${esc(l.kind_name || LOG_KINDS[l.kind])}</span> <b>${esc(l.nickname)}</b> <span class="muted">${ago(l.created_at)}</span>${l.post_id ? ` · <a href="#/community/posts/${l.post_id}">커뮤니티에 공유됨</a>` : ''}</div>
+    <div class="row" style="gap:4px">${state.me ? `<button class="btn xs ${l.my_cheer ? 'primary' : ''}" data-act="cheer" data-id="${l.id}">응원 ${l.cheers || ''}</button>` : ''}
+    ${own && !l.post_id && l.kind !== 'notice' ? `<button class="btn xs" data-act="sharelog" data-id="${l.id}">공유</button>` : ''}
+    ${mine.is_manager ? `<button class="btn xs" data-act="pin" data-id="${l.id}" data-on="${l.pinned ? 0 : 1}">${l.pinned ? '고정 해제' : '고정'}</button>` : ''}
+    ${own || mine.is_manager ? `<button class="btn xs ghost" data-act="dellog" data-id="${l.id}" data-confirm="이 기록을 지울까요?">지우기</button>` : ''}</div></div>
+    <div class="log-body">${nl2br(l.body)}</div>${l.link ? `<a class="small" href="${esc(l.link)}" target="_blank" rel="noopener">${esc(l.link)}</a>` : ''}</div>`;
+}
+const logActions = g => ({
+  async cheer(el) { await post(`/groups/${g.id}/logs/${el.dataset.id}`, { action: 'cheer' }); reload(); },
+  async sharelog(el) { await post(`/groups/${g.id}/logs/${el.dataset.id}`, { action: 'share' }); toast('커뮤니티 그룹 소식에 공유했습니다'); reload(); },
+  async pin(el) { await post(`/groups/${g.id}/logs/${el.dataset.id}`, { action: el.dataset.on === '1' ? 'pin' : 'unpin' }); reload(); },
+  async dellog(el) { await post(`/groups/${g.id}/logs/${el.dataset.id}`, { action: 'delete' }); toast('지웠습니다'); reload(); },
+});
+
+// ── 홈
+function tabHome(d) {
+  const g = d.group;
+  const pinned = d.logs.filter(l => l.pinned).slice(0, 2);
+  const recent = d.logs.filter(l => !l.pinned).slice(0, 4);
+  const html = `<div class="grid grid-2">
+    <div class="stack">
+      ${d.me.is_member ? nextSessionCard(d) : ''}
+      ${pinned.map(l => `<div class="card notice-card">${logItem(l, d)}</div>`).join('')}
+      <div class="card"><h3>이 그룹은</h3>${g.description ? `<div class="small">${nl2br(g.description)}</div>` : '<p class="small muted">그룹리더가 아직 자세한 소개를 쓰지 않았습니다.</p>'}
+        <div class="kv-list small" style="margin-top:10px">${[['그룹리더', esc(g.leader_nickname)], ['모이는 주기', esc(g.schedule_text || '-')], ['주로 모이는 곳', esc(g.place || '-')], ['기간', g.start_date ? `${fmtDate(g.start_date)} ~ ${g.end_date ? fmtDate(g.end_date) : ''}` : '-'], ['인원', `${d.members.length}/${g.capacity}명 · ${g.join_mode === 'open' ? '바로 참여' : '리더 승인'}`]].map(([k, v]) => `<div><span class="muted">${k}</span><span>${v}</span></div>`).join('')}</div></div>
+      <div class="card"><div class="card-head"><h3>최근 도전 기록</h3><a class="small" href="#/groups/${g.id}/records">전체</a></div>${recent.length ? recent.map(l => logItem(l, d)).join('') : '<p class="small muted" style="margin:0">아직 기록이 없습니다.</p>'}</div>
+    </div>
+    <div class="stack">
+      <div class="card"><div class="card-head"><h3>목표</h3><a class="small" href="#/groups/${g.id}/goals">목표·성과</a></div>${g.goal_text ? `<p style="margin:0 0 10px"><b>${esc(g.goal_text)}</b></p>` : ''}${goalBar(d.goal) || (g.goal_text ? '' : '<p class="small muted" style="margin:0">목표가 아직 없습니다.</p>')}
+        ${d.milestones.length ? `<div style="margin-top:10px">${d.milestones.slice(0, 5).map(m => `<div class="milestone ${m.done_at ? 'done' : (m.due_date && m.due_date < kstNow().slice(0, 10) ? 'late' : '')}"><span class="dotm"></span><span class="grow small">${esc(m.title)}</span><small class="muted">${m.done_at ? '완료' : m.due_date ? fmtDate(m.due_date) : ''}</small></div>`).join('')}</div>` : ''}</div>
+      ${myAttendanceCard(d)}
+      <div class="card"><h3>출석 규칙</h3><ul class="rule-list small">${policyLines(g.policy).map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>
+      <div class="card"><div class="card-head"><h3>그룹원 ${d.members.length}명</h3><a class="small" href="#/groups/${g.id}/members">전체</a></div><div class="avatar-row">${d.members.map(x => `<span class="who"><span class="avatar">${esc(x.nickname.slice(0, 1))}</span>${esc(x.nickname)}${x.role !== 'member' ? ` <small class="muted">${esc(x.role_name)}</small>` : ''}</span>`).join('')}</div></div>
+    </div></div>`;
+  return { html, actions: { ...rsvpAction(g), ...logActions(g) } };
+}
+
+// ── 모임·출석
+function tabSessions(d) {
+  const g = d.group; const now = kstNow();
+  const live = ['recruiting', 'active'].includes(g.stage);
+  const upcoming = d.sessions.filter(s => ['scheduled', 'open'].includes(s.status) && (s.status === 'open' || s.starts_at >= now.slice(0, 10))).sort((a, b) => a.starts_at < b.starts_at ? -1 : 1);
+  const past = d.sessions.filter(s => !upcoming.includes(s));
+  const unchecked = d.me.is_manager ? past.filter(s => s.status === 'scheduled') : [];
+  const html = `<div class="grid grid-2">
+    <div class="stack">
+      ${d.me.is_manager && live ? `<details class="card" ${d.sessions.length ? '' : 'open'}><summary><b>모임 일정 잡기</b></summary>
+        <form class="form" data-form="sess" style="margin-top:12px">
+          <div class="form-cols">${field('모임 이름', input('title', { value: '주간 모임', required: true }))}${field('시작 (한국 시간)', input('starts_at', { type: 'datetime-local', required: true }))}</div>
+          <div class="form-cols">${field('방식', select('mode', [['online', '온라인'], ['offline', '오프라인']]))}${field('진행 시간', `<div class="unit-input">${input('duration_min', { type: 'number', value: 90, min: 15, max: 600 })}<span>분</span></div>`)}</div>
+          ${field('장소 또는 온라인 링크', input('place', { value: g.place || '', placeholder: '예: https://zoom.us/… 또는 성수동 ○○ 라운지' }), '그룹원에게만 보입니다')}
+          ${field('다룰 것', textarea('agenda', { rows: 2, placeholder: '예: 지난주 진행 공유 → 막힌 것 → 이번 주 할 일' }))}
+          ${field('미리 준비할 것', input('prep', { placeholder: '예: 고객 인터뷰 메모 1개' }))}
+          ${field('매주 반복', `<div class="unit-input">${input('repeat_weeks', { type: 'number', value: 0, min: 0, max: 12 })}<span>주 더</span></div>`, '0이면 한 번만 만듭니다. 4를 넣으면 같은 요일·시간으로 5번 만듭니다')}
+          <button class="btn primary" type="submit">일정 만들기</button></form></details>` : ''}
+      ${unchecked.length ? `<div class="notice warn">출석을 받지 않은 지난 모임이 ${unchecked.length}개 있습니다. 모임을 열어 출석을 표시하고 마감해 주세요. 마감하지 않은 모임은 출석률에 들어가지 않습니다.</div>` : ''}
+      <div class="card"><h3>다가오는 모임</h3>${upcoming.length ? `<div class="list">${upcoming.map(s => sessionRow(s, d)).join('')}</div>` : '<p class="small muted" style="margin:0">잡힌 모임이 없습니다.</p>'}</div>
+      <div class="card"><h3>지난 모임</h3>${past.length ? `<div class="list">${past.map(s => sessionRow(s, d)).join('')}</div>` : '<p class="small muted" style="margin:0">아직 없습니다.</p>'}</div>
+    </div>
+    <div class="stack">${myAttendanceCard(d)}<div class="card"><h3>출석은 이렇게 합니다</h3><ol class="small steps-list"><li>그룹리더나 부리더가 모임을 열고 <b>출석 받기</b>를 누르면 숫자 4자리 코드가 나옵니다.</li><li>오프라인은 화면을 보여 주고, 온라인은 대화창에 코드나 출석 링크를 올립니다.</li><li>그룹원은 모임 화면에서 코드를 입력합니다. 시작 ${g.policy.late_minutes}분이 지나 입력하면 지각입니다.</li><li>모임이 끝나면 <b>출석 마감</b>을 누릅니다. 표시하지 않은 사람은 결석, 미리 사유를 남긴 사람은 공결이 됩니다.</li></ol></div>
+      <div class="card"><h3>출석 규칙</h3><ul class="rule-list small">${policyLines(g.policy).map(l => `<li>${esc(l)}</li>`).join('')}</ul></div></div>
+  </div>`;
+  return { html, actions: rsvpAction(g), mount(root) { bindForms(root, { async sess(f) {
+    const r = await post(`/groups/${g.id}/sessions`, { ...f, starts_at: f.starts_at?.slice(0, 16) });
+    toast(r.ids.length > 1 ? `모임 ${r.ids.length}개를 만들었습니다` : '모임을 만들었습니다'); reload();
+  } }); } };
+}
+
+// ── 모임 하나 (출석 코드 입력 · 출석 관리 · 모임 기록)
+export async function session({ params, query, me }) {
+  const d = await api('/groups/' + params.id);
+  const g = d.group; const s = d.sessions.find(x => String(x.id) === String(params.sid));
+  if (!s) return `<div class="wrap page">${empty('모임을 찾을 수 없습니다', '', `<a class="btn" href="#/groups/${params.id}/sessions">모임 목록</a>`)}</div>`;
+  const mine = d.me; const mgr = mine.is_manager;
+  const live = mgr ? await sessionMarks(g.id, s.id) : {};
+  const link = `${location.origin}/app/#/groups/${g.id}/sessions/${s.id}?code=${s.code || ''}`;
+  const canCheck = mine.is_member && s.status === 'open' && !['present', 'late'].includes(s.my_status);
+  const html = `<div class="wrap page" style="max-width:900px">
+    <div class="adm-crumbs small"><a href="#/groups/${g.id}">${esc(g.title)}</a> <span class="sep">›</span> <a href="#/groups/${g.id}/sessions">모임·출석</a></div>
+    ${pageHead(esc(s.title), `${fmtLocal(s.starts_at)} · ${s.duration_min}분 · ${modeLabel(s.mode)}`, [
+      mgr && ['scheduled', 'open'].includes(s.status) ? `<button class="btn ${s.status === 'open' ? '' : 'primary'}" data-act="open">${s.status === 'open' ? '출석 코드 다시 보기' : '출석 받기'}</button>` : '',
+      mgr && ['scheduled', 'open'].includes(s.status) && s.starts_at <= kstNow() ? '<button class="btn primary" data-act="closes">출석 마감</button>' : '',
+      mgr && ['scheduled', 'open'].includes(s.status) ? '<button class="btn" data-act="edit">수정</button><button class="btn ghost" data-act="cancel">취소</button>' : '',
+    ].join(''))}
+    ${s.status === 'cancelled' ? '<div class="notice">취소된 모임입니다.</div>' : ''}
+    <div class="grid grid-2">
+      <div class="stack">
+        ${canCheck ? `<form class="card attend-card" data-form="ci"><h3>출석 코드 입력</h3><p class="small muted">그룹리더가 알려 준 숫자 4자리를 입력해 주세요.</p><input class="attend-input" name="code" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" value="${esc(query.code || '')}" placeholder="0000" required autocomplete="off"><button class="btn primary lg block" type="submit">출석하기</button></form>` : ''}
+        ${mine.is_member && s.my_status ? `<div class="card"><h3>내 출석</h3>${attendChip(s.my_status)}</div>` : ''}
+        ${mine.is_member && s.status === 'scheduled' ? `<div class="card"><h3>참석 여부</h3><div class="btn-row"><button class="btn ${s.my_rsvp === 'yes' ? 'primary' : ''}" data-act="rsvp" data-sid="${s.id}" data-v="yes">참석</button><button class="btn ${s.my_rsvp === 'no' ? 'primary' : ''}" data-act="rsvp" data-sid="${s.id}" data-v="no">불참 알림</button></div>${s.my_rsvp_note ? `<p class="small muted" style="margin:8px 0 0">남긴 사유 · ${esc(s.my_rsvp_note)}</p>` : ''}</div>` : ''}
+        ${mgr && s.status === 'open' && s.code ? `<div class="card attend-code"><div class="muted small">출석 코드</div><div class="code">${esc(s.code)}</div><div class="small muted">시작 ${g.policy.checkin_before}분 전부터 입력할 수 있고, 시작 ${g.policy.late_minutes}분이 지나면 지각입니다.</div><div class="btn-row" style="justify-content:center;margin-top:10px"><button class="btn sm" data-act="copy" data-text="${esc(link)}">출석 링크 복사</button></div></div>` : ''}
+        <div class="card"><h3>모임 안내</h3><div class="kv-list small">${[['장소', s.place ? (isUrl(s.place) ? `<a href="${esc(s.place)}" target="_blank" rel="noopener">온라인 모임 열기</a>` : esc(s.place)) : '-'], ['다룰 것', s.agenda ? nl2br(s.agenda) : '-'], ['준비할 것', esc(s.prep || '-')]].map(([k, v]) => `<div><span class="muted">${k}</span><span>${v}</span></div>`).join('')}</div></div>
+        <div class="card"><div class="card-head"><h3>모임 기록</h3>${mgr ? '<button class="btn sm" data-act="notes">쓰기</button>' : ''}</div>${s.notes ? `<div class="small">${nl2br(s.notes)}</div>` : '<p class="small muted" style="margin:0">회의록이나 나눈 이야기를 남겨 두면 빠진 사람도 따라올 수 있습니다.</p>'}</div>
+      </div>
+      <div class="stack">
+        ${mgr ? `<div class="card"><div class="card-head"><h3>출석 체크</h3><span class="small muted">${s.status === 'closed' ? '마감됨 · 고칠 수 있습니다' : '코드로 들어온 사람은 자동 표시'}</span></div>
+          <div class="small" style="margin:-4px 0 6px">${Object.entries(ATTEND).map(([k, [l]]) => `${l} <b>${Object.values(live).filter(x => x.status === k).length}</b>`).join(' · ')} · 표시 전 <b>${d.members.filter(x => !live[x.user_id]?.status).length}</b></div>
+          <div class="list">${d.members.map(x => { const cur = live[x.user_id] || {}; return `<div class="list-item"><div class="grow"><div class="title">${esc(x.nickname)} <small class="muted">${esc(x.role_name)}</small></div>${cur.rsvp_note ? `<div class="meta">불참 사유 · ${esc(cur.rsvp_note)}</div>` : ''}</div>
+            <div class="seg">${Object.entries(ATTEND).map(([k, [l]]) => `<button class="${cur.status === k ? 'on ' + ATTEND[k][1] : ''}" data-act="mark" data-uid="${x.user_id}" data-st="${k}">${l}</button>`).join('')}</div></div>`; }).join('')}</div></div>` : ''}
+        ${!mgr && s.status === 'closed' ? `<div class="card"><h3>이 모임</h3><p class="small" style="margin:0">출석 ${s.attended}명</p></div>` : ''}
+      </div>
+    </div></div>`;
+  return { html, mount(root) {
+    bindForms(root, { async ci(f) { const r = await post(`/groups/${g.id}/sessions/${s.id}/checkin`, { code: f.code }); toast(r.status === 'late' ? '출석했습니다 (지각)' : '출석했습니다'); if (query.code) go(`#/groups/${g.id}/sessions/${s.id}`); else reload(); } });
+    bindActions(root, {
+      ...rsvpAction(g),
+      async open() { const r = await post(`/groups/${g.id}/sessions/${s.id}/open`); toast(`출석 코드 ${r.code}`); reload(); },
+      async mark(el) { await post(`/groups/${g.id}/sessions/${s.id}/mark`, { user_id: Number(el.dataset.uid), status: el.dataset.st }); reload(); },
+      async copy(el) { try { await navigator.clipboard.writeText(el.dataset.text); toast('출석 링크를 복사했습니다'); } catch { prompt('출석 링크', el.dataset.text); } },
+      closes() {
+        modal(`<h3>출석 마감</h3><p class="small">표시하지 않은 그룹원은 결석이 됩니다. 모임 전에 불참 사유를 남긴 그룹원은 ${g.policy.excuse ? `공결(최대 ${g.policy.excuse_limit}번)` : '결석'}으로 처리됩니다. 마감하면 출석 규칙에 따라 경고가 나갈 수 있습니다.</p><div class="btn-row"><button class="btn primary" data-act="doit">마감하기</button><button class="btn" data-close-modal>취소</button></div>`,
+          { onMount(mm) { bindActions(mm, { async doit() { const r = await post(`/groups/${g.id}/sessions/${s.id}/close`); closeModal();
+            const msg = [r.warned.length ? `경고 ${r.warned.map(w => w.nickname).join(', ')}` : '', r.kick.length ? `퇴출 기준 ${r.kick.map(k => k.nickname + (k.removed ? '(자동 퇴출)' : '')).join(', ')}` : ''].filter(Boolean).join(' · ');
+            toast('출석을 마감했습니다' + (msg ? ' · ' + msg : '')); reload(); } }); } });
+      },
+      edit() {
+        modal(`<h3>모임 수정</h3><form class="form" data-form="e">${field('모임 이름', input('title', { value: s.title }))}${field('시작 (한국 시간)', input('starts_at', { type: 'datetime-local', value: s.starts_at }))}<div class="form-cols">${field('방식', select('mode', [['online', '온라인'], ['offline', '오프라인']], s.mode))}${field('진행 시간(분)', input('duration_min', { type: 'number', value: s.duration_min, min: 15 }))}</div>${field('장소 또는 링크', input('place', { value: s.place || '' }))}${field('다룰 것', textarea('agenda', { value: s.agenda || '', rows: 3 }))}${field('준비할 것', input('prep', { value: s.prep || '' }))}<div class="btn-row"><button class="btn primary" type="submit">저장</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`,
+          { onMount(mm) { bindForms(mm, { async e(f) { await put(`/groups/${g.id}/sessions/${s.id}`, { ...f, starts_at: f.starts_at?.slice(0, 16) }); closeModal(); toast('저장했습니다'); reload(); } }); } });
+      },
+      notes() {
+        modal(`<h3>모임 기록</h3><form class="form" data-form="n">${textarea('notes', { value: s.notes || '', rows: 10, placeholder: '나눈 이야기, 정한 것, 다음 할 일' })}<div class="btn-row"><button class="btn primary" type="submit">저장</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`,
+          { onMount(mm) { bindForms(mm, { async n(f) { await put(`/groups/${g.id}/sessions/${s.id}`, { notes: f.notes }); closeModal(); toast('저장했습니다'); reload(); } }); } });
+      },
+      cancel() {
+        modal(`<h3>모임 취소</h3><form class="form" data-form="c">${field('사유 (그룹원에게 알림으로 갑니다)', input('reason'))}<div class="btn-row"><button class="btn danger" type="submit">취소하기</button><button class="btn" type="button" data-close-modal>닫기</button></div></form>`,
+          { onMount(mm) { bindForms(mm, { async c(f) { await put(`/groups/${g.id}/sessions/${s.id}`, { status: 'cancelled', reason: f.reason }); closeModal(); toast('취소했습니다'); go(`#/groups/${g.id}/sessions`); } }); } });
+      },
+    });
+    const ci = root.querySelector('.attend-input'); if (ci && !ci.value) ci.focus();
+  } };
+}
+// 모임 하나의 출석 표시를 따로 읽는다 (그룹 상세에는 최근 마감된 모임만 실려 온다)
+async function sessionMarks(gid, sid) {
+  try { const r = await api(`/groups/${gid}/sessions/${sid}/marks`); return Object.fromEntries(r.map(x => [x.user_id, x])); } catch { return {}; }
+}
+
+// ── 도전 기록
+function tabRecords(d) {
+  const g = d.group; const mine = d.me;
+  const live = ['recruiting', 'active'].includes(g.stage);
+  const kinds = Object.entries(LOG_KINDS).filter(([k]) => k !== 'notice' || mine.is_manager);
+  const past = d.sessions.filter(s => s.status !== 'cancelled' && s.starts_at <= kstNow()).slice(0, 10);
+  const html = `<div class="grid grid-2">
+    <div class="stack">
+      ${mine.is_member && live ? `<form class="card form" data-form="log"><h3>기록 남기기</h3>
+        <div class="form-cols">${field('종류', select('kind', kinds))}${past.length ? field('관련 모임 (선택)', select('session_id', [['', '없음'], ...past.map(s => [s.id, `${fmtLocal(s.starts_at).slice(5, 10)} ${s.title}`])])) : ''}</div>
+        ${field('내용', textarea('body', { rows: 4, required: true, placeholder: '이번 주에 한 것, 배운 것, 막힌 것. 숫자가 있으면 숫자로.' }))}
+        ${field('링크 (선택)', input('link', { placeholder: 'https://' }))}
+        ${check('share', '커뮤니티 그룹 소식에도 공유 (다른 그룹이 보고 응원·조언할 수 있습니다)')}
+        <button class="btn primary" type="submit">기록하기</button></form>` : ''}
+      <div class="card"><h3>기록 ${d.logs.length}개</h3>${d.logs.length ? d.logs.map(l => logItem(l, d)).join('') : '<p class="small muted" style="margin:0">아직 기록이 없습니다.</p>'}</div>
+    </div>
+    <div class="stack"><div class="card soft small"><b>무엇을 기록하나요?</b><ul class="rule-list"><li><b>진행 기록</b> · 이번 주에 한 일과 결과, 다음에 할 일</li><li><b>학습 노트</b> · 공부한 내용을 다른 사람이 읽을 수 있게 정리</li><li><b>자료 공유</b> · 도움이 된 글, 도구, 템플릿</li><li><b>회고</b> · 잘된 것, 안 된 것, 바꿀 것</li></ul><p class="muted" style="margin:6px 0 0">공유한 기록은 커뮤니티 '그룹 소식'에 올라가 다른 그룹과 정보를 나누는 데 쓰입니다. 정기모임과 성과발표회에서도 이 기록을 바탕으로 이야기합니다.</p></div></div>
+  </div>`;
+  return { html, actions: logActions(g), mount(root) { bindForms(root, { async log(f) { const r = await post(`/groups/${g.id}/logs`, { ...f, share: !!f.share }); toast(r.post_id ? '기록하고 커뮤니티에 공유했습니다' : '기록했습니다'); reload(); } }); } };
+}
+
+// ── 목표·성과
+function tabGoals(d) {
+  const g = d.group; const mine = d.me;
+  const live = ['recruiting', 'active'].includes(g.stage);
+  const html = `<div class="grid grid-2">
+    <div class="stack">
+      <div class="card"><h3>그룹 목표</h3>${g.goal_text ? `<p style="margin:0 0 10px"><b>${esc(g.goal_text)}</b></p>` : '<p class="small muted">목표가 없습니다. 그룹리더가 설정에서 정할 수 있습니다.</p>'}${goalBar(d.goal)}
+        ${d.result_totals.length ? `<div class="grid grid-3 mini-stats" style="margin-top:12px">${d.result_totals.map(t => stat(t.name, metricVal(t.metric, t.value, t.unit))).join('')}</div>` : ''}</div>
+      <div class="card"><div class="card-head"><h3>마일스톤</h3></div>
+        ${d.milestones.length ? d.milestones.map(m => `<div class="milestone ${m.done_at ? 'done' : (m.due_date && m.due_date < kstNow().slice(0, 10) ? 'late' : '')}"><span class="dotm"></span><span class="grow">${esc(m.title)}${m.evidence ? ` <small class="muted">· ${esc(m.evidence)}</small>` : ''}</span><small class="muted">${m.done_at ? '완료 ' + fmtDate(m.done_at) : m.due_date ? fmtDate(m.due_date) : ''}</small>
+          ${mine.is_manager ? `<button class="btn xs" data-act="ms" data-id="${m.id}" data-a="${m.done_at ? 'undo' : 'done'}">${m.done_at ? '되돌리기' : '완료'}</button><button class="btn xs ghost" data-act="ms" data-id="${m.id}" data-a="delete" data-confirm="마일스톤을 지울까요?">지우기</button>` : ''}</div>`).join('') : '<p class="small muted" style="margin:0">아직 없습니다.</p>'}
+        ${mine.is_manager && live ? `<form class="form row" data-form="ms" style="margin-top:10px;gap:6px;align-items:flex-end"><div class="grow">${input('title', { required: true, placeholder: '예: 6주차 첫 매출' })}</div>${input('due_date', { type: 'date' })}<button class="btn sm" type="submit">더하기</button></form>` : ''}</div>
+    </div>
+    <div class="stack">
+      ${mine.is_member ? `<form class="card form" data-form="res"><h3>성과 기록</h3><p class="small muted" style="margin-top:-6px">매출, 고객, 판매, 사용자, 발행한 콘텐츠처럼 셀 수 있는 결과를 남깁니다. 매출은 운영진이 확인하면 첫 매출 배지가 나갑니다.</p>
+        <div class="form-cols">${field('무엇을', select('metric', Object.entries(GOAL_METRICS).map(([k, [n, u]]) => [k, n + (u ? ` (${u})` : '')]), g.goal_metric || 'revenue'))}${field('얼마나', input('value', { type: 'number', required: true, min: 0, step: 'any' }))}</div>
+        <div class="form-cols">${field('어떤 결과인지', input('label', { placeholder: '예: 꽃집 한 달 운영 대행' }))}${field('날짜', input('happened_on', { type: 'date', value: kstNow().slice(0, 10) }))}</div>
+        ${field('증빙 (링크나 설명)', input('evidence', { placeholder: '예: 입금 화면 캡처 링크, 판매 페이지' }), '운영진만 봅니다. 매출 확인에 씁니다')}
+        ${check('share', '커뮤니티 그룹 소식에도 공유')}<button class="btn primary" type="submit">기록하기</button></form>` : ''}
+      <div class="card"><h3>성과 기록 ${d.results.length}개</h3>${d.results.length ? `<div class="list">${d.results.map(r => `<div class="list-item"><div class="grow"><div class="title">${esc(GOAL_METRICS[r.metric]?.[0] || r.metric)} <b>${metricVal(r.metric, r.value)}</b> ${r.verified_at ? '<span class="chip green">운영진 확인</span>' : r.metric === 'revenue' ? '<span class="chip amber">확인 대기</span>' : ''}</div><div class="meta">${esc(r.label || '')} · ${fmtDate(r.happened_on)} · ${esc(r.nickname)}${r.post_id ? ` · <a href="#/community/posts/${r.post_id}">공유됨</a>` : ''}</div></div>${(state.me && r.user_id === state.me.id) || mine.is_manager ? (r.verified_at ? '' : `<button class="btn xs ghost" data-act="delres" data-id="${r.id}" data-confirm="이 성과 기록을 지울까요?">지우기</button>`) : ''}</div>`).join('')}</div>` : '<p class="small muted" style="margin:0">아직 없습니다. 첫 결과는 작아도 좋습니다.</p>'}</div>
+    </div></div>`;
+  return { html, actions: {
+    async ms(el) { await post(`/groups/${g.id}/milestones/${el.dataset.id}`, { action: el.dataset.a }); reload(); },
+    async delres(el) { await post(`/groups/${g.id}/results/${el.dataset.id}`, { action: 'delete' }); toast('지웠습니다'); reload(); },
+  }, mount(root) { bindForms(root, {
+    async ms(f) { await post(`/groups/${g.id}/milestones`, f); toast('더했습니다'); reload(); },
+    async res(f) { const r = await post(`/groups/${g.id}/results`, { ...f, share: !!f.share }); toast(f.metric === 'revenue' ? '기록했습니다. 운영진이 확인하면 알려 드립니다' : '기록했습니다'); reload(); },
   }); } };
 }
 
-// ---------------- 정산 상세 ----------------
-export async function settlement({ params, me }) {
-  const s = await api('/settlements/' + params.id);
-  const r = s.result; const i = s.inputs;
-  const nameOf = uid => uid == null ? '운영본부' : (s.members.find(m => m.user_id === uid)?.nickname || `#${uid}`);
-  const wf = [
-    ['외부 매출 (R)', r.R], ['− 비용 (E)', -r.E], ['= 순수익 (N)', r.N, 'big'],
-    ...(r.Mr ? [['− 그룹원 분담금 회수', -r.Mr], ...(r.member_refunds || []).map(x => [`　↳ ${nameOf(x.user_id)} (분담 ${won(x.contributed)})`, x.refund, 'sub'])] : []),
-    ...(r.Hr ? [['− 운영본부 선지원 회수', -r.Hr]] : []),
-    ...(r.F ? [['− 정산 대행 수수료', -r.F]] : []),
-    ...(r.carry_in ? [['+ 이월분', r.carry_in]] : []),
-    ['= 정산 가능 금액 (D)', r.D, 'big'],
-  ];
-  const html = `<div class="wrap page" style="max-width:860px">
-    <div class="row" style="margin-bottom:6px"><a href="#/groups/${s.challenge_id}/settlement" class="small">← 그룹 정산 탭</a></div>
-    ${pageHead(`정산표 · ${esc(s.title)}`, `${fmtDate(s.period_start)} ~ ${fmtDate(s.period_end)} · ${settleStatus(s.status)} · 규칙 v${esc(s.rule_version)}`, '<button class="btn" onclick="window.print()">인쇄 / PDF</button>')}
-    ${r.status === 'no_distribution' ? '<div class="notice">순수익이 0 이하여서 이번 기간에는 배분이 없습니다. 비용은 합의서의 분담 원칙에 따릅니다.</div>' : ''}
-    ${r.status === 'carried' ? `<div class="notice">정산 가능 금액 ${won(r.D)}이 최소 정산 기준 ${won(i.min_settlement)} 미만이라 다음 정산으로 이월됩니다.</div>` : ''}
-    ${s.status === 'disputed' ? `<div class="notice danger">이의가 접수되어 조정 중입니다. 1차: 그룹 내 조정(7일) → 2차: 운영본부 조정. 조정 중인 금액은 보류되고 나머지는 지급될 수 있습니다.</div>` : ''}
-    <div class="grid grid-2">
-      <div class="card"><h3>계산 과정</h3><div class="waterfall">${wf.map(([l, v, cls]) => `<div class="wf-row ${cls || ''}"><span>${l}</span><span class="amt">${won(v)}</span></div>`).join('')}</div>
-        ${r.status === 'distributed' ? `<div class="divider"></div><div class="waterfall"><div class="wf-row"><span>운영본부 ${pct(r.ratios.hq)} (A)</span><span class="amt">${won(r.A)}</span></div><div class="wf-row"><span>그룹장 ${pct(r.ratios.leader)} (L)</span><span class="amt">${won(r.L)}</span></div><div class="wf-row"><span>그룹원 풀 ${pct(r.ratios.pool)} (P)</span><span class="amt">${won(r.P)}</span></div></div>` : ''}
-        <p class="small muted" style="margin:10px 0 0">소수점은 버림, 차액은 기여율이 가장 높은 그룹원에게 더합니다${r.adjustment ? ` (이번 조정액 ${won(r.adjustment)})` : ''}. 총 투입 ${num(r.total_hours)}시간${r.hourly_net != null ? ` · 시간당 순수익 약 ${won(r.hourly_net)}` : ''}.</p></div>
-      <div class="card"><h3>지급표</h3>${r.status === 'distributed' ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>받는 사람</th><th class="num">기여율</th><th class="num">지급액</th><th class="num">원천징수 참고 (${pct(r.withholding_rate)})</th><th class="num">실수령 참고</th></tr></thead><tbody>
-        <tr><td>운영본부</td><td class="num">-</td><td class="num">${won(r.A)}</td><td class="num">-</td><td class="num">${won(r.A)}</td></tr>
-        <tr><td>${esc(nameOf(s.leader_id))} <small class="muted">그룹장</small></td><td class="num">-</td><td class="num">${won(r.L)}</td><td class="num">${won(r.leader_withholding)}</td><td class="num">${won(r.leader_net)}</td></tr>
-        ${r.members.map(m => `<tr><td>${esc(nameOf(m.user_id))}</td><td class="num">${pct(m.share)}</td><td class="num">${won(m.gross)}</td><td class="num">${won(m.withholding)}</td><td class="num">${won(m.net)}</td></tr>`).join('')}
-        ${(r.member_refunds || []).map(x => `<tr><td>${esc(nameOf(x.user_id))} <small class="muted">분담금 환급</small></td><td class="num">-</td><td class="num">${won(x.refund)}</td><td class="num">-</td><td class="num">${won(x.refund)}</td></tr>`).join('')}
-        ${r.Hr ? `<tr><td>운영본부 <small class="muted">선지원 회수</small></td><td class="num">-</td><td class="num">${won(r.Hr)}</td><td class="num">-</td><td class="num">${won(r.Hr)}</td></tr>` : ''}
-        </tbody></table></div><p class="small muted" style="margin:8px 0 0">원천징수 참고액은 사업소득 3.3% 기준의 안내용 숫자입니다. 실제 세무 처리는 지급 주체와 수령인이 각자 확인합니다.</p>` : '<p class="small muted">배분 대상 금액이 없습니다.</p>'}
-        ${s.payouts.length ? `<div class="divider"></div><h3 class="small">지급 처리</h3><div class="list">${s.payouts.map(p => `<div class="list-item"><div class="grow"><div class="title" style="font-weight:600">${esc(p.nickname || '운영본부')} <small class="muted">${{ refund_member: '분담금 환급', refund_hq: '선지원 회수', fee: '대행 수수료', hq: '운영본부 몫', leader: '그룹장 몫', member: '그룹원 몫' }[p.kind]}</small></div><div class="meta">${won(p.gross)}${p.withholding ? ` (실수령 참고 ${won(p.net)})` : ''}</div></div>${p.status === 'paid' ? `<span class="chip green">지급 ${fmtDate(p.paid_at)}</span>` : p.status === 'held' ? '<span class="chip red">보류</span>' : '<span class="chip amber">대기</span>'}${s.is_leader && p.status !== 'paid' ? `<button class="btn sm" data-act="paid" data-id="${p.id}">지급 완료</button>` : ''}${s.is_staff && p.status === 'pending' ? `<button class="btn sm ghost" data-act="hold" data-id="${p.id}">보류</button>` : ''}</div>`).join('')}</div>` : ''}
-      </div>
-    </div>
-    <div class="grid grid-2" style="margin-top:14px">
-      <div class="card"><h3>그룹원 확인</h3><div class="list">${s.members.filter(m => m.status === 'active').map(m => { const cf = s.confirmations.find(x => x.user_id === m.user_id); return `<div class="list-item"><div class="grow"><div class="title" style="font-weight:600">${esc(m.nickname)}</div>${cf && !cf.confirmed ? `<div class="meta" style="color:var(--red)">이의: ${esc(cf.dispute_note)}</div>` : ''}</div>${cf ? (cf.confirmed ? '<span class="chip green">확인</span>' : '<span class="chip red">이의</span>') : '<span class="chip">대기</span>'}</div>`; }).join('')}</div>
-        ${['confirming', 'disputed'].includes(s.status) && s.members.some(m => m.user_id === me.id && m.status === 'active') && !s.my_confirmation?.confirmed ? `<div class="divider"></div><form class="form" data-form="confirm"><p class="small">정산표를 확인했나요? 숫자가 맞으면 확인을, 다르면 이의 사유를 적어 주세요 (7일 안에).</p>${field('이의 사유 (이의 제기 시)', textarea('dispute_note', { rows: 2 }))}<div class="btn-row"><button class="btn primary" type="submit" name="mode" value="ok">확인합니다</button><button class="btn danger" type="submit" name="mode" value="dispute">이의 제기</button></div></form>` : ''}</div>
-      ${s.is_staff ? `<div class="card"><h3>운영본부 검수</h3><p class="small muted">지급 조건: 전원 확인 + 페이퍼 승인. 페이퍼 상태: <b>${s.paper ? { draft: '작성 중', review: '검토 중', approved: '승인', published: '승인' }[s.paper.status] : '미제출'}</b></p>${['confirming', 'disputed'].includes(s.status) ? `<form class="form" data-form="review">${field('검수 메모', textarea('note', { rows: 2 }))}${check('force', '미확인·이의 그룹원이 있어도 승인하고 해당 지급은 보류 처리')}<div class="btn-row"><button class="btn primary" type="submit" name="mode" value="approve">검수 승인 → 지급표 확정</button><button class="btn" type="submit" name="mode" value="return">보완 요청</button></div></form>` : '<p class="small muted" style="margin:0">검수 단계가 아닙니다.</p>'}</div>` : ''}
-    </div>
-    <details class="card" style="margin-top:14px"><summary class="small" style="cursor:pointer">계산 입력값 (감사용)</summary><pre class="json">${esc(JSON.stringify(i, null, 2))}</pre></details>
+// ── 그룹원
+function tabMembers(d) {
+  const g = d.group; const mine = d.me; const mgr = mine.is_manager;
+  const p = g.policy;
+  const rows = d.members.map(x => {
+    const st = x.attendance; const kick = p.kick_warnings > 0 && x.warnings >= p.kick_warnings && x.role !== 'leader';
+    return `<div class="list-item ${kick ? 'risk-row' : ''}"><span class="avatar">${esc(x.nickname.slice(0, 1))}</span><div class="grow"><div class="title">${esc(x.nickname)} ${lvChip(x.level)} <small class="muted">${esc(x.role_name)}</small>${kick ? ' <span class="chip red">퇴출 기준</span>' : ''}</div>
+      ${st ? `<div class="meta">출석률 <b>${rateText(st)}</b> · 출석 ${st.present} · 지각 ${st.late} · 결석 ${st.absent} · 공결 ${st.excused}${st.streak ? ` · 연속 결석 ${st.streak}` : ''}${x.warnings ? ` · <span class="error">경고 ${x.warnings}</span>` : ''}</div>` : `<div class="meta">${fmtDate(x.joined_at)} 참여</div>`}</div>
+      ${mgr && x.role !== 'leader' ? `<div class="btn-row">${mine.is_leader ? `<button class="btn xs" data-act="role" data-uid="${x.user_id}" data-role="${x.role === 'sub' ? 'member' : 'sub'}">${x.role === 'sub' ? '부리더 해제' : '부리더로'}</button>` : ''}<button class="btn xs" data-act="warn" data-uid="${x.user_id}" data-name="${esc(x.nickname)}">경고</button>${mine.is_leader ? `<button class="btn xs danger" data-act="remove" data-uid="${x.user_id}" data-name="${esc(x.nickname)}">내보내기</button>` : ''}</div>` : ''}</div>`;
+  }).join('');
+  const matrix = mgr && d.matrix?.sessions.length ? `<div class="card"><h3>출석표 <small class="muted">최근 마감된 모임 ${d.matrix.sessions.length}번</small></h3><div class="table-wrap"><table class="tbl compact att-matrix"><thead><tr><th>그룹원</th>${d.matrix.sessions.map(s => `<th title="${esc(s.title)}">${fmtLocal(s.starts_at).slice(5, 10)}</th>`).join('')}<th class="num">출석률</th></tr></thead><tbody>
+    ${d.members.map(x => `<tr><td>${esc(x.nickname)}</td>${d.matrix.sessions.map(s => { const c = d.matrix.cells.find(c => c.session_id === s.id && c.user_id === x.user_id); return `<td class="att att-${c?.status || 'none'}">${c?.status ? ATTEND[c.status][0] : '·'}</td>`; }).join('')}<td class="num">${rateText(x.attendance)}</td></tr>`).join('')}</tbody></table></div></div>` : '';
+  const html = `<div class="stack">
+    ${mgr && d.applicants?.length ? `<div class="card"><h3>참여 신청 ${d.applicants.length}건</h3><div class="list">${d.applicants.map(a => `<div class="list-item"><div class="grow"><div class="title">${esc(a.nickname)} ${lvChip(a.level)}${a.removed_before ? ' <span class="chip amber">이전 출석 퇴출 기록</span>' : ''}</div><div class="meta">${esc(a.apply_note || '')} · ${ago(a.created_at)}</div>${a.bio ? `<div class="small muted clamp1">${esc(a.bio)}</div>` : ''}</div><div class="btn-row"><button class="btn sm primary" data-act="approve" data-uid="${a.user_id}">승인</button><button class="btn sm" data-act="reject" data-uid="${a.user_id}">거절</button></div></div>`).join('')}</div></div>` : ''}
+    ${mgr && d.kick_candidates?.length ? `<div class="notice warn">퇴출 기준(경고 ${p.kick_warnings}회)에 닿은 그룹원: ${d.kick_candidates.map(k => esc(k.nickname)).join(', ')}. 사정을 먼저 들어 보고, 경고를 취소하거나 내보내기를 결정해 주세요.</div>` : ''}
+    <div class="card"><h3>그룹원 ${d.members.length}/${g.capacity}명</h3><div class="list">${rows}</div></div>
+    ${matrix}
+    ${mgr && d.warnings?.length ? `<div class="card"><h3>경고 기록</h3><div class="list">${d.warnings.map(w => `<div class="list-item"><div class="grow"><div class="title">${esc(w.nickname)} · ${esc(w.reason)} ${w.cleared_at ? '<span class="chip">취소됨</span>' : ''}</div><div class="meta">${w.issued_by ? '그룹리더 경고' : '출석 규칙 자동 경고'} · ${ago(w.created_at)}</div></div>${!w.cleared_at ? `<button class="btn xs" data-act="clearw" data-uid="${w.user_id}" data-wid="${w.id}">경고 취소</button>` : ''}</div>`).join('')}</div></div>` : ''}
+    ${mgr && d.left?.length ? `<div class="card"><h3>나간 그룹원</h3><div class="list">${d.left.map(x => `<div class="list-item"><div class="grow"><div class="title">${esc(x.nickname)} <span class="chip">${{ self: '스스로 나감', attendance: '출석 기준 퇴출', leader: '리더가 내보냄', staff: '운영진 조치' }[x.leave_type] || '나감'}</span></div><div class="meta">${fmtDate(x.left_at)}${x.leave_note ? ' · ' + esc(x.leave_note) : ''}</div></div>${mine.is_leader ? `<button class="btn xs" data-act="restore" data-uid="${x.user_id}" data-confirm="다시 그룹원으로 받을까요? 이전 경고는 모두 취소됩니다.">다시 받기</button>` : ''}</div>`).join('')}</div></div>` : ''}
   </div>`;
-  return { html, mount(root) {
-    bindForms(root, {
-      async confirm(d, f, sub) { const ok = sub?.value === 'ok'; await post(`/settlements/${s.id}/confirm`, { confirmed: ok, dispute_note: d.dispute_note }); toast(ok ? '확인했습니다' : '이의를 접수했습니다'); reload(); },
-      async review(d, f, sub) { await post(`/settlements/${s.id}/review`, { approve: sub?.value === 'approve', note: d.note, force: !!d.force }); toast(sub?.value === 'approve' ? '검수를 승인했습니다' : '보완을 요청했습니다'); reload(); },
-    });
-    bindActions(root, { async paid(el) { await post(`/settlements/${s.id}/payouts/${el.dataset.id}`, { status: 'paid' }); reload(); }, async hold(el) { await post(`/settlements/${s.id}/payouts/${el.dataset.id}`, { status: 'held' }); reload(); } });
+  const act = (uid, body) => post(`/groups/${g.id}/members/${uid}`, body);
+  return { html, actions: {
+    async approve(el) { await act(el.dataset.uid, { action: 'approve' }); toast('승인했습니다'); reload(); },
+    async reject(el) { await act(el.dataset.uid, { action: 'reject' }); toast('거절했습니다'); reload(); },
+    async role(el) { await act(el.dataset.uid, { action: 'role', role: el.dataset.role }); toast('바꿨습니다'); reload(); },
+    async clearw(el) { await act(el.dataset.uid, { action: 'clear_warning', warning_id: Number(el.dataset.wid) }); toast('경고를 취소했습니다'); reload(); },
+    async restore(el) { await act(el.dataset.uid, { action: 'restore' }); toast('다시 받았습니다'); reload(); },
+    warn(el) { modal(`<h3>${esc(el.dataset.name)}님에게 경고</h3><form class="form" data-form="w">${field('사유 (본인에게 그대로 전달됩니다)', textarea('reason', { rows: 3, required: true }))}<div class="btn-row"><button class="btn primary" type="submit">경고 주기</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`,
+      { onMount(mm) { bindForms(mm, { async w(f) { await act(el.dataset.uid, { action: 'warn', reason: f.reason }); closeModal(); toast('경고를 보냈습니다'); reload(); } }); } }); },
+    remove(el) { modal(`<h3>${esc(el.dataset.name)}님 내보내기</h3><p class="small muted">본인에게 사유와 함께 알림이 가고, 운영진에게 이의 신청을 할 수 있습니다.</p><form class="form" data-form="r">${field('사유', textarea('reason', { rows: 3, required: true }))}<div class="btn-row"><button class="btn danger" type="submit">내보내기</button><button class="btn" type="button" data-close-modal>취소</button></div></form>`,
+      { onMount(mm) { bindForms(mm, { async r(f) { await act(el.dataset.uid, { action: 'remove', reason: f.reason }); closeModal(); toast('내보냈습니다'); reload(); } }); } }); },
   } };
 }
+
+// ── 설정 (그룹리더)
+function tabSettings(d, me, settings) {
+  const g = d.group;
+  const html = `<form class="card form" data-form="set" style="max-width:820px">${groupForm(g, { settings })}<div class="form-error error"></div><button class="btn primary" type="submit">저장</button></form>`;
+  return { html, mount(root) { bindForms(root, { async set(f) { const b = collect(f); b.recruit_open = !!f.recruit_open; await put(`/groups/${g.id}`, b); toast('저장했습니다'); reload(); } }); } };
+}
+
+// ── 프로젝트 페이퍼 (그룹을 마치며 정리)
+function tabPaper(d) {
+  const g = d.group; const p = d.paper; const mine = d.me;
+  const canEdit = mine.is_leader && (!p || p.status === 'draft' || mine.is_staff);
+  const stateLabel = { ongoing: '계속 운영', transferred: '다른 사람이 이어 감', stopped: '중단', closed: '정리' };
+  const view = p ? `<div class="card"><div class="card-head"><h3>프로젝트 페이퍼</h3><span class="chip ${['approved', 'published'].includes(p.status) ? 'green' : 'amber'}">${{ draft: '작성 중', review: '운영진 검토 중', approved: '승인 · 공개', published: '공개' }[p.status]}</span></div>${p.review_note ? `<div class="notice ${p.status === 'draft' ? 'warn' : ''}">운영진 의견: ${esc(p.review_note)}</div>` : ''}${['approved', 'published'].includes(p.status) ? `<a class="btn sm" href="#/papers/${p.id}">페이퍼 보기</a>` : ''}</div>` : '';
+  if (!canEdit) return view || `<div class="card"><p class="muted" style="margin:0">그룹을 마치면 그룹리더가 프로젝트 페이퍼로 과정과 결과를 정리합니다.</p></div>`;
+  const html = `${view}<form class="card form" data-form="paper" id="paperform"><h3>${p ? '페이퍼 고치기' : '프로젝트 페이퍼 쓰기'}</h3><p class="small muted">A4 두 장이면 충분합니다. 성과 기록과 출석에서 숫자를 <button class="btn sm" type="button" data-act="prefill">불러오기</button>. 매출이 없어도, 중간에 멈췄어도 씁니다. 안 된 이유가 다음 사람에게 가장 쓸모 있습니다.</p>
+    ${field('프로젝트 이름', input('form.name', { value: g.title }))}
+    ${field('해결하려던 문제 또는 배우려던 것 (1~2문장)', textarea('form.pain', { rows: 2, required: true }))}
+    ${field('만든 것 · 해 본 것', textarea('form.product', { rows: 2 }))}
+    ${field('주요 마일스톤 (최대 5개)', [0, 1, 2, 3, 4].map(i => `<input type="text" name="form.milestones[]" placeholder="${i + 1}." style="margin-bottom:6px">`).join(''))}
+    <div class="form-cols"><div class="form-cols" style="grid-template-columns:1fr 1fr">${field('매출 (원)', input('form.revenue_external', { type: 'number', min: 0 }))}${field('지인·내부 매출 (원)', input('form.revenue_internal', { type: 'number', min: 0 }))}</div><div class="form-cols" style="grid-template-columns:1fr 1fr">${field('쓴 비용 (원)', input('form.expenses', { type: 'number', min: 0 }))}${field('고객 수', input('form.customers', { type: 'number', min: 0 }))}</div></div>
+    <div class="form-cols">${field('함께 쓴 시간 (대략)', input('form.hours', { type: 'number', min: 0 }), '모임 시간 × 인원을 불러오기로 채울 수 있습니다')}${field('지금 상태', select('form.state', Object.entries(stateLabel), 'ongoing'))}</div>
+    ${field('잘된 것 (최대 3개)', [0, 1, 2].map(i => `<input type="text" name="form.good[]" style="margin-bottom:6px">`).join(''))}
+    ${field('안 된 것 (최대 3개)', [0, 1, 2].map(i => `<input type="text" name="form.bad[]" style="margin-bottom:6px">`).join(''))}
+    ${field('다음 계획', textarea('form.next', { rows: 2 }))}
+    ${field('다음에 비슷한 그룹을 할 사람에게', textarea('form.to_next', { rows: 2 }))}
+    ${field('공개 범위', select('publish_scope', [['members', '회원에게만'], ['public', '홈페이지에 요약 공개']], p?.publish_scope || 'members'), '매출이 있었는지, 고객 수 구간, 들인 시간은 항상 공개됩니다. 나머지 숫자는 아래에서 가릴 수 있습니다')}
+    <div class="row" style="gap:12px">${[['revenue_external', '매출액'], ['revenue_internal', '내부 매출'], ['expenses', '비용'], ['customers', '정확한 고객 수']].map(([k, l]) => check('private_fields[]', `${l} 가리기`, false, k)).join('')}</div>
+    <div class="btn-row"><button class="btn" type="submit" name="mode" value="save">임시 저장</button><button class="btn primary" type="submit" name="mode" value="submit">운영진에게 제출</button></div></form>`;
+  return { html, actions: { async prefill() {
+    const x = await api(`/groups/${g.id}/paper/prefill`); const fm = document.getElementById('paperform');
+    fm['form.revenue_external'].value = x.revenue_external; fm['form.customers'].value = x.customers_count; fm['form.hours'].value = x.hours;
+    const ms = fm.querySelectorAll('input[name="form.milestones[]"]'); x.milestones.forEach((t, i) => { if (ms[i]) ms[i].value = t; });
+    toast(`불러왔습니다 · 마감한 모임 ${x.sessions}번${x.avg_rate != null ? ` · 평균 출석률 ${x.avg_rate}%` : ''}`);
+  } }, mount(root) { bindForms(root, { async paper(f, fm, submitter) {
+    const form = {}; for (const [k, v] of Object.entries(f)) if (k.startsWith('form.')) form[k.slice(5)] = v;
+    const r = await post(`/groups/${g.id}/paper`, { form, private_fields: f.private_fields || [], publish_scope: f.publish_scope, submit: submitter?.value === 'submit' });
+    toast(r.status === 'review' ? '제출했습니다. 운영진이 5일 안에 확인합니다' : '저장했습니다'); reload();
+  } }); } };
+}
+
+// 예전 주소 → 그룹
+export function legacy({ params }) { go(params.id ? `#/groups/${params.id}` : '#/groups'); return ''; }

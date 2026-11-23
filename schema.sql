@@ -1,4 +1,4 @@
--- 마이챌린지(마챌) D1 스키마 v1.3
+-- 마이챌린지(마챌) D1 스키마 v2.0 (커뮤니티 운영 모델: 정기모임 · 학습/도전그룹 · 출석 · 기록 · 성과)
 -- Cloudflare D1 콘솔 또는 `wrangler d1 execute machal-db --remote --file=schema.sql` 로 실행
 
 CREATE TABLE IF NOT EXISTS users (
@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
   bio TEXT,
   onboarded INTEGER NOT NULL DEFAULT 0,
   asset_diag TEXT,                           -- JSON, 자기 자산 진단
+  can_lead INTEGER NOT NULL DEFAULT 0,       -- 운영진이 승인한 그룹리더 (v2.0)
+  leader_since TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_seen_at TEXT
 );
@@ -97,17 +99,32 @@ CREATE TABLE IF NOT EXISTS rounds (
 );
 
 CREATE TABLE IF NOT EXISTS challenges (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,      -- 그룹 (표 이름은 예전 그대로 둔다)
   title TEXT NOT NULL,
-  type TEXT NOT NULL DEFAULT 'group',        -- solo | group | official
+  type TEXT NOT NULL DEFAULT 'challenge',    -- study(학습그룹) | challenge(도전그룹)
   field_code TEXT NOT NULL,                  -- S-01~S-06
-  stage TEXT NOT NULL DEFAULT 'proposed',    -- proposed | review | recruiting | agreement | active | settling | closed | rejected | stopped
-  round_id INTEGER,
+  stage TEXT NOT NULL DEFAULT 'recruiting',  -- recruiting | active | closed | stopped
+  round_id INTEGER,                          -- 모집 시즌 (선택)
   leader_id INTEGER NOT NULL,
-  summary TEXT,
-  proposal TEXT,                             -- JSON 제안서
-  review TEXT,                               -- JSON 심사 결과
+  summary TEXT,                              -- 한 줄 소개
+  description TEXT,                          -- 자세한 소개: 무엇을, 어떻게, 누구와
+  goal_text TEXT,                            -- 그룹 목표 문장
+  goal_metric TEXT,                          -- revenue | customers | sales | users | content | study | custom
+  goal_unit TEXT,
+  goal_target REAL,
+  start_date TEXT,
+  end_date TEXT,
+  schedule_text TEXT,                        -- 예: 매주 화요일 21시 온라인
+  capacity INTEGER NOT NULL DEFAULT 8,       -- 정원(그룹리더 포함)
+  join_mode TEXT NOT NULL DEFAULT 'approval',-- open(바로 참여) | approval(리더 승인)
+  recruit_open INTEGER NOT NULL DEFAULT 1,   -- 새 그룹원을 받는 중인지
+  policy TEXT,                               -- JSON 출석 규칙
+  place TEXT,                                -- 주로 모이는 곳
+  chat_url TEXT,                             -- 그룹 대화방 (그룹원에게만 보임)
+  proposal TEXT,                             -- (예전 제안서, 쓰지 않음)
+  review TEXT,                               -- (예전 심사 결과, 쓰지 않음)
   public_numbers TEXT,                       -- JSON {has_sales, customers_band, hours}
+  closed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -116,145 +133,39 @@ CREATE TABLE IF NOT EXISTS group_members (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   challenge_id INTEGER NOT NULL,
   user_id INTEGER NOT NULL,
-  role TEXT NOT NULL DEFAULT 'general',      -- leader | accounting | record | maker | marketing | general
-  role_weight REAL NOT NULL DEFAULT 1.0,
-  planned_share REAL,                        -- 0~1
-  actual_share REAL,                         -- 0~1
+  role TEXT NOT NULL DEFAULT 'member',       -- leader | sub | member
   status TEXT NOT NULL DEFAULT 'applied',    -- applied | active | left | removed | rejected
   apply_note TEXT,
   joined_at TEXT,
   left_at TEXT,
-  leave_type TEXT,                           -- notice | unannounced
+  leave_type TEXT,                           -- self | attendance | leader | staff
+  leave_note TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(challenge_id, user_id)
 );
 
-CREATE TABLE IF NOT EXISTS agreements (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  challenge_id INTEGER NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1,
-  clauses TEXT NOT NULL,                     -- JSON
-  status TEXT NOT NULL DEFAULT 'draft',      -- draft | signing | signed | approved | locked
-  created_by INTEGER NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  approved_by INTEGER,
-  approved_at TEXT
-);
 
-CREATE TABLE IF NOT EXISTS signatures (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  agreement_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  signed_at TEXT NOT NULL DEFAULT (datetime('now')),
-  ip TEXT,
-  UNIQUE(agreement_id, user_id)
-);
 
-CREATE TABLE IF NOT EXISTS checkins (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  challenge_id INTEGER NOT NULL,
-  week_no INTEGER NOT NULL,
-  opened_by INTEGER NOT NULL,
-  due_date TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(challenge_id, week_no)
-);
 
-CREATE TABLE IF NOT EXISTS checkin_entries (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  checkin_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  done TEXT,                                 -- JSON array
-  goals TEXT,                                -- JSON array
-  blocker TEXT,
-  hours REAL NOT NULL DEFAULT 0,
-  submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(checkin_id, user_id)
-);
 
-CREATE TABLE IF NOT EXISTS done_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  challenge_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  text TEXT NOT NULL,
-  link TEXT,
-  shared INTEGER NOT NULL DEFAULT 0,
-  confirmed_by INTEGER,
-  confirmed_at TEXT,
-  cancelled_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 
 CREATE TABLE IF NOT EXISTS milestones (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   challenge_id INTEGER NOT NULL,
-  code TEXT NOT NULL,                        -- declare | first_public | cross_feedback | demo_day | custom
+  code TEXT NOT NULL DEFAULT 'custom',
   title TEXT NOT NULL,
   due_date TEXT,
   done_at TEXT,
   evidence TEXT
 );
 
-CREATE TABLE IF NOT EXISTS ledger_entries (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  challenge_id INTEGER NOT NULL,
-  kind TEXT NOT NULL,                        -- revenue | expense
-  entry_date TEXT NOT NULL,
-  amount INTEGER NOT NULL,                   -- 원 단위 정수, 부가세 제외
-  is_external INTEGER NOT NULL DEFAULT 1,    -- 매출: 외부 고객 여부
-  channel TEXT,
-  category TEXT,
-  payer_type TEXT NOT NULL DEFAULT 'none',   -- 비용: member | hq | none
-  payer_id INTEGER,
-  evidence TEXT,
-  note TEXT,
-  entered_by INTEGER NOT NULL,
-  confirmed_by INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 
-CREATE TABLE IF NOT EXISTS settlements (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  challenge_id INTEGER NOT NULL,
-  period_start TEXT NOT NULL,
-  period_end TEXT NOT NULL,
-  inputs TEXT NOT NULL,                      -- JSON
-  result TEXT NOT NULL,                      -- JSON (모든 중간값)
-  rule_version TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'confirming', -- confirming | disputed | reviewed | paid | carried
-  created_by INTEGER NOT NULL,
-  reviewed_by INTEGER,
-  review_note TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  reviewed_at TEXT
-);
 
-CREATE TABLE IF NOT EXISTS settlement_confirmations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  settlement_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  confirmed INTEGER NOT NULL,                -- 1 확인 / 0 이의
-  dispute_note TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(settlement_id, user_id)
-);
 
-CREATE TABLE IF NOT EXISTS settlement_payouts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  settlement_id INTEGER NOT NULL,
-  user_id INTEGER,                           -- NULL = 운영본부
-  kind TEXT NOT NULL,                        -- refund_member | refund_hq | fee | hq | leader | member
-  gross INTEGER NOT NULL,
-  withholding_rate REAL NOT NULL DEFAULT 0,
-  withholding INTEGER NOT NULL DEFAULT 0,
-  net INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',    -- pending | paid | held
-  paid_at TEXT
-);
 
 CREATE TABLE IF NOT EXISTS disputes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ref_type TEXT NOT NULL,                    -- settlement | report | other
+  ref_type TEXT NOT NULL,                    -- report(게시물 신고) | removal(그룹 퇴출 이의) | other
   ref_id INTEGER,
   filed_by INTEGER NOT NULL,
   stage INTEGER NOT NULL DEFAULT 1,
@@ -283,7 +194,7 @@ CREATE TABLE IF NOT EXISTS papers (
 CREATE TABLE IF NOT EXISTS posts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   author_id INTEGER NOT NULL,
-  board TEXT NOT NULL DEFAULT 'share',       -- question | share | review | notice | swap
+  board TEXT NOT NULL DEFAULT 'share',       -- notice | share | idea | trend | question | group | review
   title TEXT NOT NULL,
   body TEXT NOT NULL,
   challenge_id INTEGER,
@@ -311,7 +222,7 @@ CREATE TABLE IF NOT EXISTS helpful (
 
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  type TEXT NOT NULL,                        -- machal_day | demo_day | seminar | study | office_hour | workshop
+  type TEXT NOT NULL,                        -- regular(정기모임) | showcase(성과발표회) | seminar | workshop | office_hour | networking
   title TEXT NOT NULL,
   starts_at TEXT NOT NULL,
   location TEXT,
@@ -320,6 +231,9 @@ CREATE TABLE IF NOT EXISTS events (
   description TEXT,
   attendance_code TEXT,
   status TEXT NOT NULL DEFAULT 'scheduled',  -- scheduled | cancelled (v1.2)
+  mode TEXT NOT NULL DEFAULT 'offline',      -- offline | online | hybrid (v2.0)
+  online_url TEXT,                           -- 온라인 참여 링크 (신청자에게만 보임)
+  topics TEXT,                               -- 쉼표 구분 idea, market, trend, ai, sideproject, group
   created_by INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -423,7 +337,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_notes_ref ON admin_notes(ref_type, ref_id);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   author_id INTEGER NOT NULL,
-  segment TEXT NOT NULL,                     -- JSON {type, level, challenge_id, round_id}
+  segment TEXT NOT NULL,                     -- JSON {type, level, challenge_id}
   title TEXT NOT NULL,
   body TEXT,
   link TEXT,
@@ -432,17 +346,6 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- 운영본부 재원 지출 기록 (운영본부 몫의 쓰임을 분기마다 공개)
-CREATE TABLE IF NOT EXISTS hq_expenses (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  spent_on TEXT NOT NULL,
-  category TEXT NOT NULL,                    -- casebook | mentors | website | advance | other
-  amount INTEGER NOT NULL,
-  memo TEXT,
-  evidence TEXT,
-  created_by INTEGER NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 
 -- ───────── v1.3 이용 통계 (KPI) ─────────
 -- 공개 사이트·회원 공간의 페이지 보기, 클릭, 머문 시간. IP와 브라우저 정보 원문은 저장하지 않는다. 13개월이 지나면 지운다.
@@ -474,3 +377,120 @@ CREATE INDEX IF NOT EXISTS idx_ae_day ON analytics_events(day, kind);
 CREATE INDEX IF NOT EXISTS idx_ae_path ON analytics_events(path, kind, day);
 CREATE INDEX IF NOT EXISTS idx_ae_sid ON analytics_events(sid);
 CREATE INDEX IF NOT EXISTS idx_ae_user ON analytics_events(user_id, day);
+
+-- ───────── v2.0 커뮤니티 운영 모델 ─────────
+-- 그룹리더 신청. 운영진이 승인하면 users.can_lead = 1 이 되고, 그 뒤로는 언제든 그룹을 만들 수 있다.
+CREATE TABLE IF NOT EXISTS leader_applications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  form TEXT NOT NULL,                        -- JSON {kind, topic, plan, experience, time}
+  status TEXT NOT NULL DEFAULT 'pending',    -- pending | approved | rejected
+  note TEXT,
+  decided_by INTEGER,
+  decided_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 그룹 모임 일정 (온라인·오프라인). 모임마다 출석을 받는다.
+CREATE TABLE IF NOT EXISTS group_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  challenge_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  starts_at TEXT NOT NULL,                   -- 한국 시각 YYYY-MM-DDTHH:MM
+  duration_min INTEGER NOT NULL DEFAULT 90,
+  mode TEXT NOT NULL DEFAULT 'online',       -- online | offline
+  place TEXT,                                -- 장소 또는 온라인 링크
+  agenda TEXT,                               -- 다룰 것
+  prep TEXT,                                 -- 미리 준비할 것
+  status TEXT NOT NULL DEFAULT 'scheduled',  -- scheduled | open(출석 받는 중) | closed(출석 마감) | cancelled
+  code TEXT,                                 -- 출석 코드 (숫자 4자리)
+  opened_at TEXT,
+  closed_at TEXT,
+  notes TEXT,                                -- 모임 기록(회의록)
+  created_by INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_gs_group ON group_sessions(challenge_id, starts_at);
+
+-- 모임별 참석 예정과 출석 결과
+CREATE TABLE IF NOT EXISTS session_attendance (
+  session_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  rsvp TEXT,                                 -- yes | no
+  rsvp_note TEXT,                            -- 불참 사유
+  rsvp_at TEXT,
+  status TEXT,                               -- present | late | absent | excused (비어 있으면 아직)
+  method TEXT,                               -- code | leader | auto
+  checked_at TEXT,
+  marked_by INTEGER,
+  PRIMARY KEY(session_id, user_id)
+);
+
+-- 출석 경고 (자동 또는 그룹리더가 준 경고). cleared_at이 있으면 취소된 경고
+CREATE TABLE IF NOT EXISTS group_warnings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  challenge_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'attendance',   -- attendance | manual
+  reason TEXT NOT NULL,
+  session_id INTEGER,
+  issued_by INTEGER,                         -- 비어 있으면 출석 규칙에 따른 자동 경고
+  cleared_at TEXT,
+  cleared_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_gw_member ON group_warnings(challenge_id, user_id);
+
+-- 도전 기록 (진행 기록·학습 노트·자료·회고·공지). 커뮤니티에 공유하면 post_id가 생긴다
+CREATE TABLE IF NOT EXISTS group_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  challenge_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'progress',     -- progress | study | resource | retro | notice
+  body TEXT NOT NULL,
+  link TEXT,
+  session_id INTEGER,
+  post_id INTEGER,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_gl_group ON group_logs(challenge_id, created_at);
+
+CREATE TABLE IF NOT EXISTS log_cheers (
+  log_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY(log_id, user_id)
+);
+
+-- 성과 기록 (매출·고객·판매·사용자·콘텐츠 등). 운영진이 확인하면 verified_at이 생긴다
+CREATE TABLE IF NOT EXISTS group_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  challenge_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  metric TEXT NOT NULL,
+  value REAL NOT NULL,
+  label TEXT,
+  happened_on TEXT NOT NULL,
+  evidence TEXT,
+  post_id INTEGER,
+  verified_by INTEGER,
+  verified_at TEXT,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_gr_group ON group_results(challenge_id, happened_on);
+
+-- 정기모임 발제와 성과발표회 발표 신청
+CREATE TABLE IF NOT EXISTS event_presentations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  challenge_id INTEGER,                      -- 그룹 발표면 그룹
+  title TEXT NOT NULL,
+  summary TEXT,
+  link TEXT,
+  status TEXT NOT NULL DEFAULT 'applied',    -- applied | confirmed | presented | declined
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

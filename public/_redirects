@@ -1,0 +1,5 @@
+# 예전 주소 → 새 주소 (v2.0에서 수익 배분 페이지를 수익목표로 바꿨습니다)
+/rules /goals/ 301
+/rules/ /goals/ 301
+/guide/profit-sharing /goals/ 301
+/guide/profit-sharing/ /goals/ 301

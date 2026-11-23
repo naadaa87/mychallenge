@@ -1,5 +1,5 @@
 // 마이챌린지(마챌) API — Cloudflare Pages Functions + D1
-// 모든 경로는 /api/* 로 들어온다. 규칙은 MC-02~MC-05 문서를 따른다.
+// 모든 경로는 /api/* 로 들어온다. v2.0: 정기모임 · 학습/도전그룹 · 출석 · 기록 · 성과 중심 커뮤니티 운영.
 
 import {
   HttpError, bad, unauth, forbid, notfound, json, readJson, parseJ, J, nowIso, today,
@@ -10,8 +10,8 @@ import {
 } from '../_lib/util.js';
 import { POLICY_VERSION } from '../_site/config.js';
 import { SCHEMA_STATEMENTS, SCHEMA_TABLES } from '../_lib/schema.generated.js';
-import { LEVELS, LEVEL_NAMES, FIELDS, ROLES, ROLE_WEIGHTS, BADGE_NAMES, levelIndex, quarterOf } from '../_lib/rules.js';
-import { computeSettlement, buildPayouts, RULE_VERSION } from '../_lib/settlement.js';
+import { LEVELS, LEVEL_NAMES, FIELDS, BADGE_NAMES, BOARDS, EVENT_TYPES, EVENT_TOPICS, GROUP_TYPES, GOAL_METRICS, LEGACY_POINT_LABELS, levelIndex, quarterOf, normalizePolicy } from '../_lib/rules.js';
+import { registerGroupRoutes, myGroupsSummary, loadGroup, membership, activeMembers, isActive, isManagerOf, isLeaderOf, groupAttendance, emptyStats, band, kstNow } from '../_lib/group-routes.js';
 import { registerAdminRoutes, runMigrations, isOwner, requireOwner } from '../_lib/admin-routes.js';
 import { registerKpiRoutes } from '../_lib/kpi-routes.js';
 
@@ -67,25 +67,7 @@ export async function onRequest(context) {
   }
 }
 
-// ---------- 공통 로더 ----------
-async function loadChallenge(db, id) {
-  const c = await one(db, 'SELECT c.*, u.nickname AS leader_nickname, r.name AS round_name, r.start_date AS round_start, r.end_date AS round_end FROM challenges c JOIN users u ON u.id = c.leader_id LEFT JOIN rounds r ON r.id = c.round_id WHERE c.id = ?', id);
-  if (!c) throw notfound('챌린지를 찾을 수 없습니다');
-  c.proposal = parseJ(c.proposal, {}); c.review = parseJ(c.review, null); c.public_numbers = parseJ(c.public_numbers, {});
-  return c;
-}
-async function membership(db, cid, uid) { if (!uid) return null; return one(db, 'SELECT * FROM group_members WHERE challenge_id = ? AND user_id = ?', cid, uid); }
-async function activeMembers(db, cid) {
-  return all(db, "SELECT gm.*, u.nickname, u.level FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.challenge_id = ? AND gm.status = 'active' ORDER BY CASE gm.role WHEN 'leader' THEN 0 ELSE 1 END, gm.joined_at", cid);
-}
-async function latestAgreement(db, cid) {
-  const a = await one(db, 'SELECT * FROM agreements WHERE challenge_id = ? ORDER BY version DESC LIMIT 1', cid);
-  if (a) { a.clauses = parseJ(a.clauses, {}); a.signatures = await all(db, 'SELECT s.user_id, s.signed_at, u.nickname FROM signatures s JOIN users u ON u.id = s.user_id WHERE s.agreement_id = ?', a.id); }
-  return a;
-}
-function canWriteGroup(user, m) { return isStaff(user) || (m && m.status === 'active'); }
-function isLeaderOf(user, c, m) { return isStaff(user) || c.leader_id === user.id || (m && m.role === 'leader' && m.status === 'active'); }
-function canSeeLogs(user, m, settings) { return isStaff(user) || (m && m.status === 'active') || lvlAtLeast(user, settings.visibility.group_logs); }
+// ---------- 공통 ----------
 const levelName = l => LEVEL_NAMES[l] || l;
 
 // =====================================================================
@@ -98,7 +80,11 @@ on('GET', '/public/status', async ({ db }) => {
 
 on('GET', '/public/stats', async ({ db }) => {
   const members = await one(db, "SELECT COUNT(*) AS c FROM users WHERE status = 'active' AND level <> 'L0'");
-  const active = await one(db, "SELECT COUNT(*) AS c FROM challenges WHERE stage IN ('active','settling')");
+  const active = await one(db, "SELECT COUNT(*) AS c FROM challenges WHERE stage IN ('recruiting','active')");
+  const groups = await all(db, "SELECT type, COUNT(*) AS c FROM challenges WHERE stage IN ('recruiting','active') GROUP BY type");
+  const recruiting = await all(db, `SELECT c.id, c.title, c.type, c.summary, c.schedule_text, c.capacity, (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'active') AS members
+    FROM challenges c WHERE c.stage IN ('recruiting','active') AND c.recruit_open = 1 ORDER BY c.updated_at DESC LIMIT 6`);
+  const sessions = await one(db, "SELECT COUNT(*) AS c FROM group_sessions WHERE status = 'closed'");
   const dist = await all(db, "SELECT stage, public_numbers FROM challenges WHERE stage IN ('closed','stopped')");
   let with_sales = 0, without_sales = 0, stopped = 0;
   for (const d of dist) { if (d.stage === 'stopped') stopped++; else if (parseJ(d.public_numbers, {})?.has_sales) with_sales++; else without_sales++; }
@@ -106,10 +92,12 @@ on('GET', '/public/stats', async ({ db }) => {
   const first_sales = await one(db, "SELECT COUNT(DISTINCT user_id) AS c FROM badges WHERE code = 'first_sale' AND revoked_at IS NULL");
   // 모집 중인 라운드 (홈·지원 페이지 안내 띠에 쓴다)
   const round = await one(db, "SELECT name, start_date, end_date, recruit_until FROM rounds WHERE status = 'open' AND COALESCE(recruit_until, start_date) >= date('now','+9 hours') ORDER BY start_date LIMIT 1");
-  return { members: members?.c || 0, active_challenges: active?.c || 0, closed: { with_sales, without_sales, stopped }, papers: papers?.c || 0, first_sales: first_sales?.c || 0, round: round || null };
+  return { members: members?.c || 0, active_challenges: active?.c || 0, groups: { study: groups.find(g => g.type === 'study')?.c || 0, challenge: groups.find(g => g.type === 'challenge')?.c || 0 },
+    recruiting: recruiting.map(r => ({ ...r, type_name: GROUP_TYPES[r.type] || r.type })), sessions_held: sessions?.c || 0,
+    closed: { with_sales, without_sales, stopped }, papers: papers?.c || 0, first_sales: first_sales?.c || 0, round: round || null };
 });
 
-on('GET', '/public/levels', async ({ settings }) => ({ levels: LEVELS.map(l => ({ code: l, name: LEVEL_NAMES[l] })), rules: settings.levels, visibility: settings.visibility, points: settings.points }));
+on('GET', '/public/levels', async ({ settings }) => ({ levels: LEVELS.map(l => ({ code: l, name: LEVEL_NAMES[l] })), rules: settings.levels, visibility: settings.visibility, points: settings.points, groups: settings.groups, attendance_default: normalizePolicy(settings.attendance_default) }));
 
 on('GET', '/public/papers', async ({ db }) => {
   const rows = await all(db, "SELECT p.id, p.form, p.private_fields, p.published_at, c.title, c.field_code FROM papers p JOIN challenges c ON c.id = p.challenge_id WHERE p.status IN ('approved','published') AND p.publish_scope = 'public' ORDER BY p.published_at DESC LIMIT 50");
@@ -118,7 +106,8 @@ on('GET', '/public/papers', async ({ db }) => {
 
 // 일정 시각은 운영진이 입력한 한국 시각(KST) 그대로 저장한다. 비교도 KST 기준으로.
 const KST_NOW = "datetime('now','+9 hours')";
-on('GET', '/public/events', async ({ db }) => all(db, `SELECT id, type, title, starts_at, location, min_level FROM events WHERE starts_at >= ${KST_NOW} AND status <> 'cancelled' ORDER BY starts_at LIMIT 10`));
+on('GET', '/public/events', async ({ db }) => (await all(db, `SELECT id, type, title, starts_at, location, mode, topics, min_level FROM events WHERE starts_at >= ${KST_NOW} AND status <> 'cancelled' ORDER BY starts_at LIMIT 10`))
+  .map(e => ({ ...e, type_name: EVENT_TYPES[e.type] || e.type, topic_names: String(e.topics || '').split(',').filter(Boolean).map(t => EVENT_TOPICS[t] || t) })));
 
 const clientIp = request => request.headers.get('cf-connecting-ip') || null;
 async function recordConsents(db, request, subjectType, subjectId, kinds) {
@@ -134,7 +123,7 @@ on('POST', '/apply', async ({ db, request }) => {
   const dup = await one(db, "SELECT id FROM applications WHERE email = ? AND status = 'pending'", b.email.toLowerCase());
   if (dup) throw bad('이미 접수된 신청이 있습니다. 운영본부의 연락을 기다려 주세요');
   const form = {};
-  for (const k of ['job', 'years', 'hours_weekday', 'hours_weekend', 'experience', 'interests', 'why_group', 'share_opinion', 'side_job_check', 'consent_public', 'can_attend', 'give', 'referrer', 'question']) form[k] = str(b[k], 1000);
+  for (const k of ['job', 'years', 'hours_weekday', 'hours_weekend', 'experience', 'interests', 'why_group', 'want_group', 'project_idea', 'side_job_check', 'consent_public', 'can_attend', 'give', 'referrer', 'question']) form[k] = str(b[k], 1000);
   const id = await insert(db, 'INSERT INTO applications (name, email, phone, form) VALUES (?,?,?,?)', str(b.name, 50), b.email.toLowerCase(), str(b.phone, 30), J(form));
   await recordConsents(db, request, 'application', id, ['privacy', 'public_results']);
   await notifyStaff(db, '새 가입 신청', `${b.name}님이 지원했습니다.`, '#/admin/applications');
@@ -213,24 +202,21 @@ on('POST', '/auth/logout', async ({ db, request }) => {
   return jsonWithCookies({ ok: true }, [clearCookie(), markCookie(false)]);
 });
 
-// 회원 탈퇴: 개인정보는 지우고, 다른 사람과 함께 만든 기록(합의서·장부·정산)은 이름 없이 남긴다
+// 회원 탈퇴: 개인정보는 지우고, 그룹에 함께 남긴 기록(출석·도전 기록·성과)은 이름 없이 남긴다
 on('POST', '/me/withdraw', async ({ db, request, user }) => {
   requireUser(user);
   const b = await readJson(request);
   const row = await one(db, 'SELECT password_hash, email FROM users WHERE id = ?', user.id);
   if (!(await verifyPassword(String(b.password || ''), row.password_hash))) throw bad('비밀번호가 맞지 않습니다');
-  const busy = await one(db, "SELECT c.title FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = ? AND gm.status IN ('active','applied') AND c.stage IN ('recruiting','agreement','active','settling') LIMIT 1", user.id);
-  if (busy) throw bad(`참여 중인 챌린지(${busy.title})가 있어 지금은 탈퇴할 수 없습니다. 그룹장 또는 운영본부와 먼저 정리해 주세요`);
-  const leading = await one(db, "SELECT title FROM challenges WHERE leader_id = ? AND stage IN ('proposed','review','recruiting','agreement','active','settling') LIMIT 1", user.id);
-  if (leading) throw bad(`그룹장으로 이끄는 챌린지(${leading.title})가 끝나지 않았습니다. 종료 또는 중단 처리 뒤에 탈퇴할 수 있습니다`);
-  const unpaid = await one(db, "SELECT COUNT(*) AS c FROM settlement_payouts WHERE user_id = ? AND status IN ('pending','held')", user.id);
-  if ((unpaid?.c || 0) > 0) throw bad('아직 지급이 끝나지 않은 정산이 있습니다. 지급을 받은 뒤 탈퇴해 주세요');
+  const leading = await one(db, "SELECT title FROM challenges WHERE leader_id = ? AND stage IN ('recruiting','active') LIMIT 1", user.id);
+  if (leading) throw bad(`그룹리더로 이끄는 그룹(${leading.title})이 진행 중입니다. 그룹을 종료하거나 운영진에게 리더 변경을 요청한 뒤 탈퇴할 수 있습니다`);
   if (user.role === 'staff') {
     const staff = await one(db, "SELECT COUNT(*) AS c FROM users WHERE role = 'staff' AND status = 'active'");
     if ((staff?.c || 0) <= 1) throw bad('마지막 운영진 계정은 탈퇴할 수 없습니다. 다른 운영진을 먼저 지정해 주세요');
   }
+  await run(db, "UPDATE group_members SET status = 'left', left_at = datetime('now'), leave_type = 'self', leave_note = '회원 탈퇴' WHERE user_id = ? AND status IN ('active','applied')", user.id);
   const ghostEmail = `withdrawn-${user.id}-${randomToken(4)}@deleted.invalid`;
-  await run(db, "UPDATE users SET email = ?, name = '탈퇴회원', nickname = ?, phone = NULL, bio = NULL, asset_diag = NULL, interests = NULL, password_hash = ?, status = 'removed', role = 'member' WHERE id = ?", ghostEmail, '탈퇴회원' + user.id, await hashPassword(randomToken(16)), user.id);
+  await run(db, "UPDATE users SET email = ?, name = '탈퇴회원', nickname = ?, phone = NULL, bio = NULL, asset_diag = NULL, interests = NULL, password_hash = ?, status = 'removed', role = 'member', can_lead = 0 WHERE id = ?", ghostEmail, '탈퇴회원' + user.id, await hashPassword(randomToken(16)), user.id);
   const apps = await all(db, 'SELECT id FROM applications WHERE email = ?', row.email);
   await run(db, "UPDATE applications SET name = '탈퇴회원', email = ?, phone = NULL, form = '{}' WHERE email = ?", ghostEmail, row.email);
   await run(db, "UPDATE consents SET ip = NULL WHERE subject_type = 'user' AND subject_id = ?", user.id);
@@ -238,6 +224,7 @@ on('POST', '/me/withdraw', async ({ db, request, user }) => {
   await run(db, 'DELETE FROM sessions WHERE user_id = ?', user.id);
   await run(db, 'DELETE FROM notifications WHERE user_id = ?', user.id);
   await run(db, 'UPDATE analytics_events SET user_id = NULL WHERE user_id = ?', user.id);
+  await run(db, "UPDATE leader_applications SET form = '{}' WHERE user_id = ?", user.id);
   await audit(db, user.id, 'user.withdraw', 'users:' + user.id);
   return jsonWithCookies({ ok: true }, [clearCookie(), markCookie(false)]);
 });
@@ -246,9 +233,10 @@ async function meSummary(db, settings, u) {
   const pts = await pointsOf(db, u.id);
   const badges = await all(db, 'SELECT id, code, created_at, evidence FROM badges WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at', u.id);
   const unread = await one(db, 'SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read_at IS NULL', u.id);
-  const groups = await all(db, "SELECT c.id, c.title, c.stage, c.type, c.field_code, gm.role, gm.status AS member_status FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = ? AND gm.status IN ('active','applied') ORDER BY c.updated_at DESC", u.id);
+  const groups = (await all(db, "SELECT c.id, c.title, c.stage, c.type, c.field_code, gm.role, gm.status AS member_status FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = ? AND gm.status IN ('active','applied') AND c.stage IN ('recruiting','active') ORDER BY c.updated_at DESC", u.id))
+    .map(g => ({ ...g, type_name: GROUP_TYPES[g.type] || g.type }));
   const progress = await levelProgress(db, settings, u, pts, badges);
-  return { ...u, asset_diag: parseJ(u.asset_diag, null), level_name: levelName(u.level), points: pts, badges: badges.map(b => ({ ...b, name: BADGE_NAMES[b.code] || b.code })), unread: unread?.c || 0, groups, progress, is_owner: u.role === 'staff' ? await isOwner(db, u) : false };
+  return { ...u, can_lead: !!u.can_lead || u.role === 'staff', asset_diag: parseJ(u.asset_diag, null), level_name: levelName(u.level), points: pts, badges: badges.map(b => ({ ...b, name: BADGE_NAMES[b.code] || b.code })), unread: unread?.c || 0, groups, progress, is_owner: u.role === 'staff' ? await isOwner(db, u) : false };
 }
 
 async function levelProgress(db, settings, u, pts, badges) {
@@ -263,20 +251,20 @@ async function levelProgress(db, settings, u, pts, badges) {
     const r = settings.levels.L2;
     items.push({ label: `활동 포인트 ${r.points}점`, done: pts.total >= r.points, cur: pts.total, goal: r.points });
     if (r.require_asset_diag) items.push({ label: '자기 자산 진단 제출', done: !!u.asset_diag, cur: u.asset_diag ? 1 : 0, goal: 1 });
-    items.push({ label: `마챌데이·세미나 ${r.require_event}회 참석`, done: (ev?.c || 0) >= r.require_event, cur: ev?.c || 0, goal: r.require_event });
+    items.push({ label: `정기모임·세미나 ${r.require_event}회 참석`, done: (ev?.c || 0) >= r.require_event, cur: ev?.c || 0, goal: r.require_event });
     items.push({ label: `가입 후 ${r.min_days}일 경과`, done: (days?.d || 0) >= r.min_days, cur: Math.floor(days?.d || 0), goal: r.min_days });
   }
   if (next === 'L3') {
-    items.push({ label: '라운드 1회 완주 (데모데이 발표 + 페이퍼)', done: count('completion') >= 1, cur: count('completion'), goal: 1, or: true });
-    items.push({ label: '또는 첫 외부 매출 인증', done: count('first_sale') >= 1, cur: count('first_sale'), goal: 1, or: true });
+    items.push({ label: '그룹 1회 완주 (그룹 출석 기준 충족)', done: count('completion') >= 1, cur: count('completion'), goal: 1, or: true });
+    items.push({ label: '또는 그룹의 첫 매출 확인', done: count('first_sale') >= 1, cur: count('first_sale'), goal: 1, or: true });
   }
   if (next === 'L4') {
-    items.push({ label: '라운드 2회 완주', done: count('completion') >= 2, cur: count('completion'), goal: 2 });
-    items.push({ label: '리더 교육 이수 + 운영본부 면담 (심사에서 확인)', done: false, cur: 0, goal: 1, manual: true });
+    items.push({ label: '그룹 2회 완주', done: count('completion') >= 2, cur: count('completion'), goal: 2 });
+    items.push({ label: '그룹리더 워크숍 이수 + 운영진 면담 (심사에서 확인)', done: false, cur: 0, goal: 1, manual: true });
   }
   if (next === 'L5') {
-    items.push({ label: '그룹장으로 성공 챌린지 2건', done: count('leader_completion') >= 2, cur: count('leader_completion'), goal: 2, or: true });
-    items.push({ label: '또는 3개월 연속 외부 매출 인증', done: count('repeat_sale') >= 1, cur: count('repeat_sale'), goal: 1, or: true });
+    items.push({ label: '그룹리더로 그룹 2회 완주', done: count('leader_completion') >= 2, cur: count('leader_completion'), goal: 2, or: true });
+    items.push({ label: '또는 3개월 연속 매출 확인', done: count('repeat_sale') >= 1, cur: count('repeat_sale'), goal: 1, or: true });
   }
   const orItems = items.filter(i => i.or), andItems = items.filter(i => !i.or && !i.manual);
   const eligible = andItems.every(i => i.done) && (orItems.length === 0 || orItems.some(i => i.done));
@@ -335,7 +323,7 @@ on('POST', '/me/asset-diag', async ({ db, settings, request, user }) => {
 on('GET', '/me/points', async ({ db, settings, user }) => {
   requireUser(user);
   const rows = await all(db, 'SELECT action, points, ref_type, ref_id, created_at FROM points_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 100', user.id);
-  return { totals: await pointsOf(db, user.id), rows: rows.map(r => ({ ...r, label: settings.points[r.action]?.label || r.action })) };
+  return { totals: await pointsOf(db, user.id), rows: rows.map(r => ({ ...r, label: settings.points[r.action]?.label || LEGACY_POINT_LABELS[r.action] || r.action })) };
 });
 
 on('GET', '/me/notifications', async ({ db, user }) => { requireUser(user); return all(db, 'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50', user.id); });
@@ -366,19 +354,26 @@ on('POST', '/me/promotion', async ({ db, settings, request, user }) => {
 on('GET', '/dashboard', async ({ db, settings, user }) => {
   requireUser(user);
   const me = await meSummary(db, settings, user);
+  const groups = await myGroupsSummary(db, settings, user);
   const tasks = [];
-  for (const g of me.groups.filter(g => g.member_status === 'active')) {
-    const a = await latestAgreement(db, g.id);
-    if (a && ['draft', 'signing'].includes(a.status) && !a.signatures.some(s => s.user_id === user.id)) tasks.push({ type: 'sign', text: `${g.title} 합의서에 서명해 주세요`, link: `#/groups/${g.id}/agreement` });
-    const ck = await one(db, 'SELECT ci.id, ci.week_no FROM checkins ci WHERE ci.challenge_id = ? AND NOT EXISTS (SELECT 1 FROM checkin_entries e WHERE e.checkin_id = ci.id AND e.user_id = ?) ORDER BY ci.week_no DESC LIMIT 1', g.id, user.id);
-    if (ck) tasks.push({ type: 'checkin', text: `${g.title} ${ck.week_no}주차 체크인을 제출해 주세요`, link: `#/groups/${g.id}/checkin` });
-    const st = await one(db, "SELECT s.id FROM settlements s WHERE s.challenge_id = ? AND s.status IN ('confirming','disputed') AND NOT EXISTS (SELECT 1 FROM settlement_confirmations sc WHERE sc.settlement_id = s.id AND sc.user_id = ?) LIMIT 1", g.id, user.id);
-    if (st) tasks.push({ type: 'settlement', text: `${g.title} 정산표를 확인해 주세요`, link: `#/settlements/${st.id}` });
+  const now = kstNow();
+  for (const g of groups) {
+    if (g.member_status === 'applied') { tasks.push({ type: 'applied', text: `「${g.title}」 참여 신청 결과를 기다리는 중입니다`, link: `#/groups/${g.id}` }); continue; }
+    const s = g.next_session;
+    if (s && s.status === 'open' && !['present', 'late'].includes(s.my_status)) tasks.push({ type: 'checkin', text: `「${g.title}」 출석을 받고 있습니다. 출석 코드를 입력해 주세요`, link: `#/groups/${g.id}/sessions` });
+    else if (s && s.status === 'scheduled' && !s.my_rsvp && s.starts_at.slice(0, 10) <= new Date(Date.now() + 9 * 3600e3 + 3 * 86400e3).toISOString().slice(0, 10)) tasks.push({ type: 'rsvp', text: `「${g.title}」 ${s.starts_at.slice(5, 16).replace('T', ' ')} 모임에 참석하시나요?`, link: `#/groups/${g.id}/sessions` });
+    if (g.warnings) tasks.push({ type: 'warning', text: `「${g.title}」 출석 경고 ${g.warnings}회${g.policy?.kick_warnings ? ` (기준 ${g.policy.kick_warnings}회)` : ''}`, link: `#/groups/${g.id}` });
+    if (g.applicants) tasks.push({ type: 'leader', text: `「${g.title}」 참여 신청 ${g.applicants}건을 확인해 주세요`, link: `#/groups/${g.id}/members` });
+    if (g.open_sessions) tasks.push({ type: 'leader', text: `「${g.title}」 출석을 열어 둔 모임이 있습니다. 모임이 끝나면 마감해 주세요`, link: `#/groups/${g.id}/sessions` });
+    if (g.unchecked) tasks.push({ type: 'leader', text: `「${g.title}」 출석을 받지 않은 지난 모임이 ${g.unchecked}개 있습니다`, link: `#/groups/${g.id}/sessions` });
   }
-  const events = await all(db, `SELECT id, type, title, starts_at, location FROM events WHERE starts_at >= datetime('now','+6 hours') ORDER BY starts_at LIMIT 5`);
+  const pres = await all(db, `SELECT p.title, p.status, e.title AS event_title, e.starts_at FROM event_presentations p JOIN events e ON e.id = p.event_id WHERE p.user_id = ? AND p.status IN ('applied','confirmed') AND e.starts_at >= ?`, user.id, now);
+  for (const p of pres) tasks.push({ type: 'present', text: `${p.event_title} 발표 ${p.status === 'confirmed' ? '확정' : '신청 접수'} · ${p.title}`, link: '#/events' });
+  const events = (await all(db, `SELECT id, type, title, starts_at, location, mode FROM events WHERE starts_at >= ${KST_NOW} AND status <> 'cancelled' ORDER BY starts_at LIMIT 5`)).map(e => ({ ...e, type_name: EVENT_TYPES[e.type] || e.type }));
   const notis = await all(db, 'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 5', user.id);
   const feed = await feedItems(db, 8);
-  return { me, tasks, events, notifications: notis, feed };
+  const leader = me.can_lead ? null : await one(db, "SELECT status, created_at FROM leader_applications WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", user.id);
+  return { me, groups, tasks, events, notifications: notis, feed, leader_application: leader };
 });
 
 // =====================================================================
@@ -387,7 +382,7 @@ on('GET', '/dashboard', async ({ db, settings, user }) => {
 on('GET', '/rounds', async ({ db }) => all(db, 'SELECT * FROM rounds ORDER BY start_date DESC'));
 on('POST', '/admin/rounds', async ({ db, request, user }) => {
   requireStaff(user); const b = await readJson(request);
-  must(b.name, '라운드 이름'); must(b.start_date, '시작일'); must(b.end_date, '종료일');
+  must(b.name, '시즌 이름'); must(b.start_date, '시작일'); must(b.end_date, '종료일');
   if (b.end_date < b.start_date) throw bad('종료일이 시작일보다 빠릅니다');
   const status = ['planning', 'open', 'active', 'closed'].includes(b.status) ? b.status : 'planning';
   const id = await insert(db, 'INSERT INTO rounds (name, start_date, end_date, status, recruit_until) VALUES (?,?,?,?,?)', str(b.name, 50), b.start_date, b.end_date, status, b.recruit_until || null);
@@ -396,624 +391,47 @@ on('POST', '/admin/rounds', async ({ db, request, user }) => {
 });
 on('PUT', '/admin/rounds/:id', async ({ db, request, user, params }) => {
   requireStaff(user); const b = await readJson(request);
-  if (b.status && !['planning', 'open', 'active', 'closed'].includes(b.status)) throw bad('라운드 상태는 planning, open, active, closed 중 하나');
+  if (b.status && !['planning', 'open', 'active', 'closed'].includes(b.status)) throw bad('시즌 상태는 planning, open, active, closed 중 하나');
   await run(db, 'UPDATE rounds SET name = COALESCE(?, name), start_date = COALESCE(?, start_date), end_date = COALESCE(?, end_date), status = COALESCE(?, status), recruit_until = CASE WHEN ? THEN ? ELSE recruit_until END WHERE id = ?', str(b.name, 50), b.start_date || null, b.end_date || null, b.status || null, b.recruit_until !== undefined ? 1 : 0, b.recruit_until || null, params.id);
   await audit(db, user.id, 'round.update', 'rounds:' + params.id, b);
   return { ok: true };
 });
 
-// =====================================================================
-// 챌린지 보드
-// =====================================================================
-on('GET', '/challenges', async ({ db, settings, user, query }) => {
-  requireLevel(user, settings.visibility.card, '챌린저부터 챌린지 보드를 볼 수 있습니다');
-  const where = []; const p = [];
-  if (query.stage) { where.push('c.stage = ?'); p.push(query.stage); }
-  if (query.field) { where.push('c.field_code = ?'); p.push(query.field); }
-  if (query.round) { where.push('c.round_id = ?'); p.push(query.round); }
-  if (query.type) { where.push('c.type = ?'); p.push(query.type); }
-  if (!isStaff(user)) { where.push("c.stage NOT IN ('proposed','review','rejected')"); }
-  const rows = await all(db, `SELECT c.id, c.title, c.type, c.field_code, c.stage, c.round_id, c.leader_id, c.summary, c.public_numbers, c.updated_at, u.nickname AS leader_nickname, r.name AS round_name,
-      (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'active') AS member_count,
-      (SELECT status FROM group_members gm WHERE gm.challenge_id = c.id AND gm.user_id = ?) AS my_status
-    FROM challenges c JOIN users u ON u.id = c.leader_id LEFT JOIN rounds r ON r.id = c.round_id ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY c.updated_at DESC LIMIT 200`, user.id, ...p);
-  return rows.map(r => ({ ...r, public_numbers: parseJ(r.public_numbers, {}), field_name: FIELDS[r.field_code] || r.field_code }));
-});
-
-on('POST', '/challenges', async ({ db, settings, request, user }) => {
-  requireUser(user);
-  const b = await readJson(request);
-  const type = ['solo', 'group', 'official'].includes(b.type) ? b.type : 'group';
-  must(b.title, '제목'); if (!FIELDS[b.field_code]) throw bad('분야 코드를 선택해 주세요');
-  if (type === 'solo') requireLevel(user, 'L1');
-  if (type === 'group') requireLevel(user, settings.visibility.propose, '그룹 챌린지 제안은 리더 등급부터 할 수 있습니다');
-  if (type === 'official') requireStaff(user);
-  const proposal = {};
-  for (const k of ['pain', 'product', 'first_sale_plan', 'roles_needed', 'budget', 'preset', 'ownership', 'assets', 'conflict_check', 'after_round', 'goal']) proposal[k] = str(b.proposal?.[k], 2000);
-  const stage = type === 'solo' ? 'active' : (type === 'official' ? 'recruiting' : 'review');
-  const id = await insert(db, 'INSERT INTO challenges (title, type, field_code, stage, round_id, leader_id, summary, proposal, public_numbers) VALUES (?,?,?,?,?,?,?,?,?)',
-    str(b.title, 80), type, b.field_code, stage, b.round_id ? intv(b.round_id, '라운드') : null, user.id, str(b.summary, 500), J(proposal), J({ has_sales: false, customers_band: '0', hours: 0 }));
-  await run(db, "INSERT INTO group_members (challenge_id, user_id, role, role_weight, status, joined_at) VALUES (?,?,'leader',1.0,'active',datetime('now'))", id, user.id);
-  if (type === 'group') await notifyStaff(db, '새 챌린지 제안', `${user.nickname} · ${b.title}`, '#/admin/challenges');
-  await audit(db, user.id, 'challenge.create', 'challenges:' + id, { type, title: b.title });
-  return { ok: true, id, stage };
-});
-
-on('GET', '/challenges/:id', async ({ db, settings, user, params }) => {
-  requireLevel(user, settings.visibility.card);
-  const c = await loadChallenge(db, params.id);
-  const m = await membership(db, c.id, user.id);
-  if (['proposed', 'review', 'rejected'].includes(c.stage) && !isStaff(user) && c.leader_id !== user.id) throw forbid('심사 중인 챌린지는 제안자와 운영진만 볼 수 있습니다');
-  const members = await activeMembers(db, c.id);
-  const milestones = await all(db, 'SELECT * FROM milestones WHERE challenge_id = ? ORDER BY due_date, id', c.id);
-  const paper = await one(db, 'SELECT id, status, publish_scope, form, private_fields FROM papers WHERE challenge_id = ?', c.id);
-  const seeLogs = canSeeLogs(user, m, settings);
-  const out = { ...c, field_name: FIELDS[c.field_code] || c.field_code, members: members.map(x => ({ user_id: x.user_id, nickname: x.nickname, role: x.role, role_name: ROLES[x.role], level: x.level })), milestones, my_membership: m, can_see_logs: seeLogs, is_leader: isLeaderOf(user, c, m), is_staff: isStaff(user), paper: paper ? paperSummary({ ...paper, title: c.title, field_code: c.field_code }) : null };
-  if (!isStaff(user) && c.leader_id !== user.id) { delete out.proposal; delete out.review; }
-  if (seeLogs) {
-    out.done_logs = await all(db, 'SELECT d.*, u.nickname FROM done_logs d JOIN users u ON u.id = d.user_id WHERE d.challenge_id = ? AND d.cancelled_at IS NULL ORDER BY d.created_at DESC LIMIT 50', c.id);
-    out.checkins = await all(db, 'SELECT ci.*, (SELECT COUNT(*) FROM checkin_entries e WHERE e.checkin_id = ci.id) AS submitted FROM checkins ci WHERE ci.challenge_id = ? ORDER BY ci.week_no DESC', c.id);
-    if (!m && !isStaff(user)) await run(db, "INSERT INTO view_logs (user_id, target_type, target_id) VALUES (?,'group_logs',?)", user.id, c.id);
-  }
-  if (c.stage === 'recruiting' && (isLeaderOf(user, c, m))) out.applicants = await all(db, "SELECT gm.user_id, gm.apply_note, gm.created_at, u.nickname, u.level, u.interests FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.challenge_id = ? AND gm.status = 'applied'", c.id);
-  return out;
-});
-
-on('PUT', '/challenges/:id', async ({ db, request, user, params }) => {
-  requireUser(user);
-  const c = await loadChallenge(db, params.id); const m = await membership(db, c.id, user.id);
-  if (!isLeaderOf(user, c, m)) throw forbid('그룹장만 수정할 수 있습니다');
-  const b = await readJson(request);
-  const pn = { ...c.public_numbers };
-  if (b.public_numbers) {
-    if (b.public_numbers.has_sales !== undefined) pn.has_sales = !!b.public_numbers.has_sales;
-    if (b.public_numbers.customers_band !== undefined) pn.customers_band = str(b.public_numbers.customers_band, 20);
-    if (b.public_numbers.hours !== undefined) pn.hours = intv(b.public_numbers.hours, '투입 시간', { min: 0 });
-  }
-  await run(db, "UPDATE challenges SET title = COALESCE(?, title), summary = COALESCE(?, summary), field_code = COALESCE(?, field_code), public_numbers = ?, updated_at = datetime('now') WHERE id = ?", str(b.title, 80), str(b.summary, 500), FIELDS[b.field_code] ? b.field_code : null, J(pn), c.id);
-  return { ok: true };
-});
-
-on('POST', '/challenges/:id/apply', async ({ db, request, user, params }) => {
-  requireLevel(user, 'L2', '그룹 챌린지 참여는 메이커 등급부터 가능합니다');
-  const c = await loadChallenge(db, params.id);
-  if (c.stage !== 'recruiting') throw bad('모집 중인 챌린지가 아닙니다');
-  if (c.type === 'solo') throw bad('솔로 챌린지에는 참여할 수 없습니다');
-  const existing = await membership(db, c.id, user.id);
-  if (existing && existing.status !== 'rejected' && existing.status !== 'left') throw bad('이미 지원했거나 참여 중입니다');
-  const other = await one(db, "SELECT COUNT(*) AS c FROM group_members gm JOIN challenges ch ON ch.id = gm.challenge_id WHERE gm.user_id = ? AND gm.status = 'active' AND gm.role <> 'leader' AND ch.type <> 'solo' AND ch.stage IN ('recruiting','agreement','active','settling')", user.id);
-  if ((other?.c || 0) >= 1) throw bad('그룹 챌린지는 동시에 1개만 그룹원으로 참여할 수 있습니다');
-  const b = await readJson(request);
-  if (existing) await run(db, "UPDATE group_members SET status = 'applied', apply_note = ?, created_at = datetime('now') WHERE id = ?", str(b.note, 500), existing.id);
-  else await run(db, "INSERT INTO group_members (challenge_id, user_id, status, apply_note) VALUES (?,?,'applied',?)", c.id, user.id, str(b.note, 500));
-  await notify(db, c.leader_id, `${user.nickname}님이 지원했습니다`, c.title, `#/challenges/${c.id}`);
-  return { ok: true };
-});
-
-on('POST', '/challenges/:id/members/:uid', async ({ db, settings, request, user, params }) => {
-  requireUser(user);
-  const c = await loadChallenge(db, params.id); const m = await membership(db, c.id, user.id);
-  if (!isLeaderOf(user, c, m)) throw forbid('그룹장만 처리할 수 있습니다');
-  const target = await membership(db, c.id, Number(params.uid));
-  if (!target) throw notfound('지원 기록이 없습니다');
-  const b = await readJson(request);
-  if (b.action === 'accept') {
-    const cnt = await one(db, "SELECT COUNT(*) AS c FROM group_members WHERE challenge_id = ? AND status = 'active'", c.id);
-    if ((cnt?.c || 0) >= (settings.max_group || 8)) throw bad('그룹 정원(8명)이 찼습니다');
-    await run(db, "UPDATE group_members SET status = 'active', role = COALESCE(?, 'general'), role_weight = ?, joined_at = datetime('now') WHERE id = ?", ROLES[b.role] ? b.role : null, ROLE_WEIGHTS[b.role] || 1.0, target.id);
-    await notify(db, target.user_id, '그룹 참여가 수락됐습니다', c.title, `#/groups/${c.id}`);
-  } else if (b.action === 'reject') {
-    await run(db, "UPDATE group_members SET status = 'rejected' WHERE id = ?", target.id);
-    await notify(db, target.user_id, '이번에는 함께하지 못하게 됐습니다', `${c.title} · 다른 챌린지에 지원해 보세요`, '#/challenges');
-  } else if (b.action === 'remove') {
-    if (target.role === 'leader') throw bad('그룹장은 제외할 수 없습니다. 운영본부에 교체를 요청하세요');
-    await run(db, "UPDATE group_members SET status = 'left', left_at = datetime('now'), leave_type = ? WHERE id = ?", b.leave_type === 'unannounced' ? 'unannounced' : 'notice', target.id);
-    await notify(db, target.user_id, '그룹에서 이탈 처리됐습니다', `${c.title} · 이탈 시점까지의 기여는 정산에 반영됩니다`, `#/challenges/${c.id}`);
-  } else if (b.action === 'role') {
-    if (!ROLES[b.role]) throw bad('역할을 선택해 주세요');
-    if (b.role === 'leader' && target.role !== 'leader') throw bad('그룹장 변경은 운영본부 승인 절차(MC-03 4.4)로 진행합니다');
-    await run(db, 'UPDATE group_members SET role = ?, role_weight = ?, planned_share = ? WHERE id = ?', b.role, Number(b.weight || ROLE_WEIGHTS[b.role] || 1), b.planned_share == null ? target.planned_share : Number(b.planned_share), target.id);
-  } else throw bad('알 수 없는 동작입니다');
-  await audit(db, user.id, 'member.' + b.action, `challenges:${c.id}/users:${params.uid}`, b);
-  return { ok: true };
-});
-
-on('POST', '/challenges/:id/stage', async ({ db, settings, request, user, params }) => {
-  requireUser(user);
-  const c = await loadChallenge(db, params.id); const m = await membership(db, c.id, user.id);
-  const b = await readJson(request);
-  const to = b.stage;
-  if (to === 'agreement') {
-    if (!isLeaderOf(user, c, m)) throw forbid();
-    if (c.stage !== 'recruiting') throw bad('모집 단계에서만 합의 단계로 넘어갈 수 있습니다');
-    const cnt = await one(db, "SELECT COUNT(*) AS c FROM group_members WHERE challenge_id = ? AND status = 'active'", c.id);
-    const min = isStaff(user) ? 2 : (settings.min_group || 4);
-    if ((cnt?.c || 0) < min) throw bad(`그룹원이 그룹장 포함 ${min}명 이상이어야 합니다 (현재 ${cnt?.c || 0}명)`);
-  } else if (to === 'stopped') {
-    if (!isLeaderOf(user, c, m)) throw forbid();
-    if (!['active', 'settling', 'recruiting', 'agreement'].includes(c.stage)) throw bad('중단할 수 있는 단계가 아닙니다');
-  } else if (to === 'closed' || to === 'active' || to === 'recruiting') {
-    requireStaff(user);
-  } else throw bad('허용되지 않는 단계 변경입니다');
-  await run(db, "UPDATE challenges SET stage = ?, updated_at = datetime('now') WHERE id = ?", to, c.id);
-  if (to === 'stopped') { await notifyStaff(db, '챌린지 중단', c.title + ' · 페이퍼 제출을 안내해 주세요', `#/challenges/${c.id}`); for (const am of await activeMembers(db, c.id)) await notify(db, am.user_id, '챌린지가 중단됐습니다', `${c.title} · 중단해도 프로젝트 페이퍼는 제출합니다`, `#/groups/${c.id}/paper`); }
-  await audit(db, user.id, 'challenge.stage', 'challenges:' + c.id, { from: c.stage, to });
-  return { ok: true };
-});
-
-on('POST', '/admin/challenges/:id/review', async ({ db, settings, request, user, params }) => {
-  requireStaff(user);
-  const c = await loadChallenge(db, params.id);
-  const b = await readJson(request);
-  let total = 0; const scores = {};
-  for (const it of settings.review_items) { const s = Number(b.scores?.[it.key] || 0); if (s < 0 || s > 5) throw bad('점수는 1~5'); scores[it.key] = s; total += s * it.weight; }
-  const review = { scores, total: Math.round(total * 10) / 10, banned: !!b.banned, conflict: !!b.conflict, decision: b.decision, comment: str(b.comment, 2000), reviewer_id: user.id, at: nowIso() };
-  let stage = c.stage;
-  if (b.decision === 'approve') { if (review.banned || review.conflict) throw bad('금지 유형 또는 이해충돌이 체크된 챌린지는 승인할 수 없습니다'); if (total < settings.review_pass_score) throw bad(`합계 ${review.total}점으로 기준(${settings.review_pass_score}점)에 미달합니다. 보완 요청 또는 반려로 처리하세요`); stage = 'recruiting'; }
-  else if (b.decision === 'revise') stage = 'proposed';
-  else if (b.decision === 'reject') stage = 'rejected';
-  else throw bad('decision은 approve / revise / reject');
-  await run(db, "UPDATE challenges SET review = ?, stage = ?, updated_at = datetime('now') WHERE id = ?", J(review), stage, c.id);
-  const msg = { approve: '승인됐습니다. 그룹원 모집을 시작하세요', revise: '보완 요청이 있습니다', reject: '이번에는 반려됐습니다' }[b.decision];
-  await notify(db, c.leader_id, `챌린지 심사 결과: ${c.title}`, `${msg}. ${review.comment || ''}`, `#/challenges/${c.id}`);
-  await audit(db, user.id, 'challenge.review', 'challenges:' + c.id, review);
-  return { ok: true, review, stage };
-});
-
-on('POST', '/challenges/:id/resubmit', async ({ db, user, params }) => {
-  requireUser(user);
-  const c = await loadChallenge(db, params.id);
-  if (c.leader_id !== user.id && !isStaff(user)) throw forbid();
-  if (c.stage !== 'proposed') throw bad('보완 요청 상태에서만 재제출할 수 있습니다');
-  await run(db, "UPDATE challenges SET stage = 'review', updated_at = datetime('now') WHERE id = ?", c.id);
-  await notifyStaff(db, '챌린지 재제출', c.title, '#/admin/challenges');
-  return { ok: true };
-});
-
-on('PUT', '/challenges/:id/proposal', async ({ db, request, user, params }) => {
-  requireUser(user);
-  const c = await loadChallenge(db, params.id);
-  if (c.leader_id !== user.id && !isStaff(user)) throw forbid();
-  if (!['proposed', 'review'].includes(c.stage)) throw bad('심사 전에만 제안서를 고칠 수 있습니다');
-  const b = await readJson(request);
-  const proposal = { ...c.proposal };
-  for (const k of Object.keys(proposal).concat(Object.keys(b.proposal || {}))) if (b.proposal?.[k] !== undefined) proposal[k] = str(b.proposal[k], 2000);
-  await run(db, "UPDATE challenges SET proposal = ?, title = COALESCE(?, title), summary = COALESCE(?, summary), updated_at = datetime('now') WHERE id = ?", J(proposal), str(b.title, 80), str(b.summary, 500), c.id);
-  return { ok: true };
-});
-
-on('POST', '/admin/challenges/:id/complete', async ({ db, settings, request, user, params }) => {
-  requireStaff(user);
-  const c = await loadChallenge(db, params.id);
-  const b = await readJson(request);
-  const presenters = new Set((b.presenters || []).map(Number));
-  const members = await activeMembers(db, c.id);
-  const paper = await one(db, "SELECT status FROM papers WHERE challenge_id = ? AND status IN ('review','approved','published')", c.id);
-  if (!paper) throw bad('프로젝트 페이퍼가 제출되지 않은 챌린지는 완주 처리할 수 없습니다');
-  for (const m of members) {
-    if (!presenters.size || presenters.has(m.user_id)) {
-      await grantBadge(db, m.user_id, m.role === 'leader' ? 'leader_completion' : 'completion', user.id, `challenge:${c.id}`);
-      if (m.role === 'leader') await grantBadge(db, m.user_id, 'completion', user.id, `challenge:${c.id}`);
-      await addPoints(db, settings, m.user_id, 'demo_present', 'challenge', c.id);
-      await notify(db, m.user_id, '라운드 완주가 기록됐습니다', `${c.title} · 완주 배지가 부여됐습니다`, '#/me');
-    }
-  }
-  await audit(db, user.id, 'challenge.complete', 'challenges:' + c.id, { presenters: [...presenters] });
-  return { ok: true };
-});
-
-// =====================================================================
-// 그룹 공간
-// =====================================================================
-async function groupCtx(db, settings, user, id, { write = false, leader = false } = {}) {
-  requireUser(user);
-  const c = await loadChallenge(db, id);
-  const m = await membership(db, c.id, user.id);
-  if (leader && !isLeaderOf(user, c, m)) throw forbid('그룹장만 할 수 있습니다');
-  if (write && !canWriteGroup(user, m)) throw forbid('그룹원만 할 수 있습니다');
-  if (!write && !canSeeLogs(user, m, settings)) throw forbid('그룹 공간은 그룹원과 어치버 이상이 볼 수 있습니다');
-  return { c, m };
-}
-
-on('GET', '/groups/:id', async ({ db, settings, user, params }) => {
-  const { c, m } = await groupCtx(db, settings, user, params.id);
-  const isMember = isStaff(user) || (m && m.status === 'active');
-  const members = await activeMembers(db, c.id);
-  const left = await all(db, "SELECT gm.*, u.nickname FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.challenge_id = ? AND gm.status = 'left'", c.id);
-  const agreement = await latestAgreement(db, c.id);
-  const checkins = await all(db, 'SELECT * FROM checkins WHERE challenge_id = ? ORDER BY week_no DESC', c.id);
-  for (const ck of checkins) ck.entries = (await all(db, 'SELECT e.*, u.nickname FROM checkin_entries e JOIN users u ON u.id = e.user_id WHERE e.checkin_id = ?', ck.id)).map(e => ({ ...e, done: parseJ(e.done, []), goals: parseJ(e.goals, []) }));
-  const done_logs = await all(db, 'SELECT d.*, u.nickname FROM done_logs d JOIN users u ON u.id = d.user_id WHERE d.challenge_id = ? ORDER BY d.created_at DESC LIMIT 100', c.id);
-  const milestones = await all(db, 'SELECT * FROM milestones WHERE challenge_id = ? ORDER BY due_date, id', c.id);
-  const settlements = await all(db, 'SELECT id, period_start, period_end, status, result, created_at FROM settlements WHERE challenge_id = ? ORDER BY created_at DESC', c.id);
-  const paper = await one(db, 'SELECT * FROM papers WHERE challenge_id = ?', c.id);
-  const out = { challenge: { ...c, field_name: FIELDS[c.field_code] }, members: members.map(x => ({ ...x, role_name: ROLES[x.role] })), left, agreement, checkins, done_logs, milestones, is_member: !!isMember, is_leader: isLeaderOf(user, c, m), is_staff: isStaff(user), presets: settings.presets, roles: ROLES, role_weights: ROLE_WEIGHTS, settings: { budget_cap_person: settings.budget_cap_person, budget_cap_group: settings.budget_cap_group, min_settlement: settings.min_settlement, agency_rate: settings.agency_rate, hq_ratio_range: settings.hq_ratio_range, share_adjust_limit: settings.share_adjust_limit },
-    settlements: settlements.map(s => ({ ...s, result: summarizeResult(parseJ(s.result, {})) })), paper: paper ? { ...paper, form: parseJ(paper.form, {}), private_fields: parseJ(paper.private_fields, []) } : null };
-  if (isMember) {
-    out.ledger = await all(db, 'SELECT l.*, u.nickname AS entered_by_name, p.nickname AS payer_name FROM ledger_entries l JOIN users u ON u.id = l.entered_by LEFT JOIN users p ON p.id = l.payer_id WHERE l.challenge_id = ? ORDER BY l.entry_date DESC, l.id DESC', c.id);
-    out.ledger_totals = ledgerTotals(out.ledger);
-    out.contribution = await contributionDraft(db, c, members, agreement);
-  } else {
-    await run(db, "INSERT INTO view_logs (user_id, target_type, target_id) VALUES (?,'group_logs',?)", user.id, c.id);
-  }
-  return out;
-});
-
-function ledgerTotals(rows) {
-  const t = { revenue_external: 0, revenue_internal: 0, expenses: 0, member_contrib: 0, hq_advance: 0 };
-  for (const r of rows) {
-    if (r.kind === 'revenue') { if (r.is_external) t.revenue_external += r.amount; else t.revenue_internal += r.amount; }
-    else { t.expenses += r.amount; if (r.payer_type === 'member') t.member_contrib += r.amount; if (r.payer_type === 'hq') t.hq_advance += r.amount; }
-  }
-  t.net = t.revenue_external - t.expenses;
-  return t;
-}
-
-function summarizeResult(r) { return { status: r.status, N: r.N, D: r.D, A: r.A, L: r.L, P: r.P, carried: r.carried }; }
-
-async function contributionDraft(db, c, members, agreement) {
-  const leaderInPool = !!agreement?.clauses?.leader_in_pool;
-  const pool = members.filter(m => m.role !== 'leader' || leaderInPool);
-  const ckCount = (await one(db, 'SELECT COUNT(*) AS c FROM checkins WHERE challenge_id = ?', c.id))?.c || 0;
-  const rows = [];
-  for (const m of pool) {
-    const done = (await one(db, 'SELECT COUNT(*) AS c FROM done_logs WHERE challenge_id = ? AND user_id = ? AND confirmed_at IS NOT NULL AND cancelled_at IS NULL', c.id, m.user_id))?.c || 0;
-    const att = ckCount ? ((await one(db, 'SELECT COUNT(*) AS c FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id WHERE ci.challenge_id = ? AND e.user_id = ?', c.id, m.user_id))?.c || 0) / ckCount : 1;
-    rows.push({ user_id: m.user_id, nickname: m.nickname, role: m.role, weight: m.role_weight, done, attendance: Math.round(att * 100) / 100, raw: m.role_weight * (1 + done) * (att || 0.0001), planned_share: m.planned_share, actual_share: m.actual_share });
-  }
-  const sum = rows.reduce((a, r) => a + r.raw, 0) || 1;
-  return rows.map(r => ({ ...r, auto_share: Math.round((r.raw / sum) * 10000) / 10000 }));
-}
-
-on('POST', '/groups/:id/milestones/:mid', async ({ db, settings, request, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { leader: true });
-  const m = await one(db, 'SELECT * FROM milestones WHERE id = ? AND challenge_id = ?', params.mid, c.id);
-  if (!m) throw notfound('마일스톤이 없습니다');
-  const b = await readJson(request);
-  if (b.done) await run(db, "UPDATE milestones SET done_at = datetime('now'), evidence = ? WHERE id = ?", str(b.evidence, 500), m.id);
-  else await run(db, 'UPDATE milestones SET done_at = NULL WHERE id = ?', m.id);
-  return { ok: true };
-});
-
-on('POST', '/groups/:id/done-logs', async ({ db, settings, request, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { write: true });
-  const b = await readJson(request);
-  must(b.text, '완료한 일');
-  const id = await insert(db, 'INSERT INTO done_logs (challenge_id, user_id, text, link, shared) VALUES (?,?,?,?,?)', c.id, user.id, str(b.text, 300), str(b.link, 500), b.shared ? 1 : 0);
-  return { ok: true, id };
-});
-on('POST', '/groups/:id/done-logs/:lid', async ({ db, settings, request, user, params }) => {
-  const { c, m } = await groupCtx(db, settings, user, params.id, { write: true });
-  const log = await one(db, 'SELECT * FROM done_logs WHERE id = ? AND challenge_id = ?', params.lid, c.id);
-  if (!log) throw notfound();
-  const b = await readJson(request);
-  if (b.action === 'confirm') {
-    if (!isLeaderOf(user, c, m)) throw forbid('그룹장만 확인할 수 있습니다');
-    if (log.confirmed_at) return { ok: true };
-    await run(db, "UPDATE done_logs SET confirmed_by = ?, confirmed_at = datetime('now') WHERE id = ?", user.id, log.id);
-    await addPoints(db, settings, log.user_id, 'done_log', 'done_log', log.id);
-  } else if (b.action === 'cancel') {
-    if (log.user_id !== user.id && !isLeaderOf(user, c, m)) throw forbid();
-    await run(db, "UPDATE done_logs SET cancelled_at = datetime('now') WHERE id = ?", log.id);
-  } else throw bad('action은 confirm 또는 cancel');
-  return { ok: true };
-});
-
-on('POST', '/groups/:id/checkins', async ({ db, settings, request, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { leader: true });
-  const b = await readJson(request);
-  const week = intv(b.week_no, '주차', { min: 1, max: 52 });
-  const dup = await one(db, 'SELECT id FROM checkins WHERE challenge_id = ? AND week_no = ?', c.id, week);
-  if (dup) throw bad('이미 열린 주차입니다');
-  const id = await insert(db, 'INSERT INTO checkins (challenge_id, week_no, opened_by, due_date) VALUES (?,?,?,?)', c.id, week, user.id, b.due_date || null);
-  for (const m of await activeMembers(db, c.id)) if (m.user_id !== user.id) await notify(db, m.user_id, `${week}주차 체크인이 열렸습니다`, c.title, `#/groups/${c.id}/checkin`);
-  return { ok: true, id };
-});
-on('POST', '/groups/:id/checkins/:cid/entries', async ({ db, settings, request, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { write: true });
-  const ck = await one(db, 'SELECT * FROM checkins WHERE id = ? AND challenge_id = ?', params.cid, c.id);
-  if (!ck) throw notfound('체크인 회차가 없습니다');
-  const b = await readJson(request);
-  const done = (b.done || []).map(s => str(s, 200)).filter(Boolean).slice(0, 5);
-  const goals = (b.goals || []).map(s => str(s, 200)).filter(Boolean).slice(0, 3);
-  if (!done.length && !goals.length) throw bad('지난주 완료 또는 이번 주 목표를 하나 이상 적어 주세요');
-  const hours = Number(b.hours || 0); if (hours < 0 || hours > 168) throw bad('투입 시간을 확인해 주세요');
-  const existing = await one(db, 'SELECT id FROM checkin_entries WHERE checkin_id = ? AND user_id = ?', ck.id, user.id);
-  if (existing) await run(db, 'UPDATE checkin_entries SET done = ?, goals = ?, blocker = ?, hours = ? WHERE id = ?', J(done), J(goals), str(b.blocker, 500), hours, existing.id);
-  else { await run(db, 'INSERT INTO checkin_entries (checkin_id, user_id, done, goals, blocker, hours) VALUES (?,?,?,?,?,?)', ck.id, user.id, J(done), J(goals), str(b.blocker, 500), hours); await addPoints(db, settings, user.id, 'checkin_attend', 'checkin', ck.id); }
-  return { ok: true };
-});
-
-on('POST', '/groups/:id/ledger', async ({ db, settings, request, user, params }) => {
-  const { c, m } = await groupCtx(db, settings, user, params.id, { write: true });
-  const b = await readJson(request);
-  if (!['revenue', 'expense'].includes(b.kind)) throw bad('kind는 revenue 또는 expense');
-  const amount = intv(b.amount, '금액', { min: 1 });
-  must(b.entry_date, '날짜');
-  const payer_type = b.kind === 'expense' ? (['member', 'hq', 'none'].includes(b.payer_type) ? b.payer_type : 'none') : 'none';
-  if (b.kind === 'expense' && payer_type === 'hq' && !isStaff(user)) throw bad('운영본부 선지원은 운영진이 기록합니다');
-  const id = await insert(db, 'INSERT INTO ledger_entries (challenge_id, kind, entry_date, amount, is_external, channel, category, payer_type, payer_id, evidence, note, entered_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-    c.id, b.kind, b.entry_date, amount, b.kind === 'revenue' ? (b.is_external === false ? 0 : 1) : 1, str(b.channel, 50), str(b.category, 50), payer_type, payer_type === 'member' ? (b.payer_id ? Number(b.payer_id) : user.id) : null, str(b.evidence, 500), str(b.note, 300), user.id);
-  if (b.kind === 'revenue' && b.is_external !== false) {
-    const alreadyFirst = await badgeCount(db, c.leader_id, 'first_sale');
-    if (!alreadyFirst) await notifyStaff(db, '첫 외부 매출 기록', `${c.title} · 증빙 확인 후 첫 매출 배지를 부여하세요`, `#/groups/${c.id}/ledger`);
-  }
-  return { ok: true, id };
-});
-on('POST', '/groups/:id/ledger/:eid/confirm', async ({ db, settings, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { leader: true });
-  await run(db, 'UPDATE ledger_entries SET confirmed_by = ? WHERE id = ? AND challenge_id = ?', user.id, params.eid, c.id);
-  return { ok: true };
-});
-
-// ----- 합의서 -----
-on('POST', '/groups/:id/agreement', async ({ db, settings, request, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { leader: true });
-  const b = await readJson(request);
-  const cl = b.clauses || {};
-  const preset = settings.presets[cl.preset];
-  if (!preset) throw bad('배분 프리셋을 선택해 주세요');
-  const ratios = { hq: Number(cl.ratios?.hq ?? preset.hq), leader: Number(cl.ratios?.leader ?? preset.leader), pool: Number(cl.ratios?.pool ?? preset.pool) };
-  if (Math.abs(ratios.hq + ratios.leader + ratios.pool - 1) > 0.001) throw bad('배분 비율 합이 100%여야 합니다');
-  const [lo, hi] = settings.hq_ratio_range;
-  if (cl.preset !== 'official' && (ratios.hq < lo - 1e-9 || ratios.hq > hi + 1e-9) && !isStaff(user)) throw bad(`운영본부 몫은 ${lo * 100}~${hi * 100}% 범위여야 합니다`);
-  for (const k of ['hq', 'leader', 'pool']) if (Math.abs(ratios[k] - preset[k]) > 0.1 + 1e-9) throw bad('프리셋에서 ±10%p 안에서만 조정할 수 있습니다');
-  if (!['A', 'B', 'C'].includes(cl.ownership_type)) throw bad('소유권 유형(A/B/C)을 선택해 주세요');
-  if (cl.ownership_type === 'C' && c.type !== 'official' && !isStaff(user)) throw bad('C형(마챌 소유)은 오피셜 챌린지에서만 선택할 수 있습니다');
-  const capP = intv(cl.budget_cap_person ?? settings.budget_cap_person, '1인 예산 상한', { min: 0 });
-  const capG = intv(cl.budget_cap_group ?? settings.budget_cap_group, '그룹 예산 상한', { min: 0 });
-  if ((capP > settings.budget_cap_person || capG > settings.budget_cap_group) && !isStaff(user)) throw bad('예산 상한을 넘기려면 운영본부 승인이 필요합니다. 운영진에게 요청하세요');
-  const members = await activeMembers(db, c.id);
-  const roles = (cl.roles || []).map(r => ({ user_id: Number(r.user_id), role: ROLES[r.role] ? r.role : 'general', planned_share: r.planned_share == null ? null : Number(r.planned_share) }));
-  for (const m of members) if (!roles.find(r => r.user_id === m.user_id)) throw bad(`${m.nickname}님의 역할이 비어 있습니다`);
-  const leaderInPool = cl.leader_in_pool == null ? !!preset.leader_in_pool : !!cl.leader_in_pool;
-  const poolRoles = roles.filter(r => { const mm = members.find(x => x.user_id === r.user_id); return mm && (mm.role !== 'leader' || leaderInPool); });
-  const shareSum = poolRoles.reduce((a, r) => a + (r.planned_share || 0), 0);
-  if (poolRoles.some(r => r.planned_share != null) && Math.abs(shareSum - 1) > 0.01) throw bad('그룹원 풀의 예정 기여율 합이 100%여야 합니다');
-  const clauses = {
-    principles_ack: true, preset: cl.preset, ratios, leader_in_pool: leaderInPool, ownership_type: cl.ownership_type,
-    budget_cap_person: capP, budget_cap_group: capG, hq_advance_allowed: !!cl.hq_advance_allowed,
-    settlement_mode: ['leader', 'joint', 'agency'].includes(cl.settlement_mode) ? cl.settlement_mode : 'leader',
-    agency_rate: settings.agency_rate, min_settlement: settings.min_settlement, withholding_rate: settings.withholding_rate,
-    roles, checkin_day: str(cl.checkin_day, 10), special_terms: str(cl.special_terms, 2000), after_round: str(cl.after_round, 500),
-    assets: str(cl.assets, 1000), rule_doc: 'MC-03 v1.0',
-  };
-  const latest = await latestAgreement(db, c.id);
-  let id;
-  if (latest && ['draft', 'signing'].includes(latest.status)) {
-    await run(db, "UPDATE agreements SET clauses = ?, status = 'draft' WHERE id = ?", J(clauses), latest.id);
-    await run(db, 'DELETE FROM signatures WHERE agreement_id = ?', latest.id);
-    id = latest.id;
-  } else {
-    if (latest && ['signed', 'approved'].includes(latest.status)) throw bad('운영본부 검토 중인 합의서가 있습니다');
-    id = await insert(db, 'INSERT INTO agreements (challenge_id, version, clauses, created_by) VALUES (?,?,?,?)', c.id, (latest?.version || 0) + 1, J(clauses), user.id);
-  }
-  for (const m of members) if (m.user_id !== user.id) await notify(db, m.user_id, '합의서 서명 요청', `${c.title} · 배분·소유·역할을 확인하고 서명해 주세요`, `#/groups/${c.id}/agreement`);
-  for (const r of roles) { const mm = members.find(x => x.user_id === r.user_id); if (mm) await run(db, 'UPDATE group_members SET role = ?, role_weight = ?, planned_share = ? WHERE id = ?', mm.role === 'leader' ? 'leader' : r.role, mm.role === 'leader' ? 1.0 : (ROLE_WEIGHTS[r.role] || 1), r.planned_share, mm.id); }
-  return { ok: true, id };
-});
-
-on('POST', '/groups/:id/agreement/sign', async ({ db, settings, request, user, params }) => {
-  const { c, m } = await groupCtx(db, settings, user, params.id, { write: true });
-  if (!m || m.status !== 'active') throw forbid('그룹원만 서명합니다');
-  const a = await latestAgreement(db, c.id);
-  if (!a || !['draft', 'signing'].includes(a.status)) throw bad('서명할 합의서가 없습니다');
-  const b = await readJson(request);
-  if (!b.agree) throw bad('조항을 읽고 동의해야 서명할 수 있습니다');
-  const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || null;
-  await run(db, 'INSERT OR IGNORE INTO signatures (agreement_id, user_id, ip) VALUES (?,?,?)', a.id, user.id, ip);
-  const members = await activeMembers(db, c.id);
-  const signed = await all(db, 'SELECT user_id FROM signatures WHERE agreement_id = ?', a.id);
-  const allSigned = members.every(mm => signed.some(s => s.user_id === mm.user_id));
-  await run(db, 'UPDATE agreements SET status = ? WHERE id = ?', allSigned ? 'signed' : 'signing', a.id);
-  if (allSigned) await notifyStaff(db, '합의서 승인 요청', `${c.title} · 전원 서명 완료`, '#/admin/agreements');
-  return { ok: true, all_signed: allSigned };
-});
-
-on('GET', '/admin/agreements', async ({ db, user }) => {
-  requireStaff(user);
-  const rows = await all(db, "SELECT a.id, a.challenge_id, a.version, a.status, a.clauses, a.created_at, c.title, u.nickname AS leader FROM agreements a JOIN challenges c ON c.id = a.challenge_id JOIN users u ON u.id = c.leader_id WHERE a.status IN ('signed','signing','draft') ORDER BY CASE a.status WHEN 'signed' THEN 0 ELSE 1 END, a.created_at DESC");
-  return rows.map(r => ({ ...r, clauses: parseJ(r.clauses, {}) }));
-});
-on('POST', '/admin/agreements/:aid', async ({ db, settings, request, user, params }) => {
-  requireStaff(user);
-  const a = await one(db, 'SELECT * FROM agreements WHERE id = ?', params.aid);
-  if (!a) throw notfound();
-  const b = await readJson(request);
-  const c = await loadChallenge(db, a.challenge_id);
-  if (b.approve) {
-    if (a.status !== 'signed') throw bad('전원 서명이 끝난 합의서만 승인할 수 있습니다');
-    await run(db, "UPDATE agreements SET status = 'locked', approved_by = ?, approved_at = datetime('now') WHERE id = ?", user.id, a.id);
-    if (['agreement', 'recruiting'].includes(c.stage)) {
-      await run(db, "UPDATE challenges SET stage = 'active', updated_at = datetime('now') WHERE id = ?", c.id);
-      const existing = await one(db, 'SELECT COUNT(*) AS c FROM milestones WHERE challenge_id = ?', c.id);
-      if (!(existing?.c)) {
-        const base = c.round_start ? new Date(c.round_start) : new Date();
-        for (const ms of settings.milestones) { const d = new Date(base.getTime() + (ms.week * 7 - 1) * 86400000); await run(db, 'INSERT INTO milestones (challenge_id, code, title, due_date) VALUES (?,?,?,?)', c.id, ms.code, ms.title, d.toISOString().slice(0, 10)); }
-      }
-    }
-    for (const m of await activeMembers(db, c.id)) await notify(db, m.user_id, '합의서가 승인됐습니다. 챌린지 시작!', c.title, `#/groups/${c.id}`);
-  } else {
-    await run(db, "UPDATE agreements SET status = 'draft' WHERE id = ?", a.id);
-    await run(db, 'DELETE FROM signatures WHERE agreement_id = ?', a.id);
-    await notify(db, c.leader_id, '합의서 보완 요청', str(b.note, 500) || '운영본부 의견을 확인해 주세요', `#/groups/${c.id}/agreement`);
-  }
-  await audit(db, user.id, b.approve ? 'agreement.approve' : 'agreement.return', 'agreements:' + a.id, { note: b.note });
-  return { ok: true };
-});
-
-// ----- 기여도 -----
-on('GET', '/groups/:id/contribution', async ({ db, settings, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { write: true });
-  return contributionDraft(db, c, await activeMembers(db, c.id), await latestAgreement(db, c.id));
-});
-on('POST', '/groups/:id/contribution', async ({ db, settings, request, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { leader: true });
-  const b = await readJson(request);
-  const draft = await contributionDraft(db, c, await activeMembers(db, c.id), await latestAgreement(db, c.id));
-  const shares = (b.shares || []).map(s => ({ user_id: Number(s.user_id), share: Number(s.share) }));
-  const sum = shares.reduce((a, s) => a + s.share, 0);
-  if (Math.abs(sum - 1) > 0.005) throw bad('실제 기여율 합이 100%여야 합니다');
-  let alert = false;
-  for (const d of draft) {
-    const s = shares.find(x => x.user_id === d.user_id);
-    if (!s) throw bad(`${d.nickname}님의 기여율이 비어 있습니다`);
-    if (!isStaff(user) && Math.abs(s.share - d.auto_share) > settings.share_adjust_limit + 1e-9) throw bad(`${d.nickname}님의 기여율은 자동 산정값(${Math.round(d.auto_share * 100)}%)에서 ±${settings.share_adjust_limit * 100}%p 안에서만 조정할 수 있습니다`);
-    if (d.planned_share != null && Math.abs(s.share - d.planned_share) > settings.share_alert_gap) alert = true;
-    await run(db, 'UPDATE group_members SET actual_share = ? WHERE challenge_id = ? AND user_id = ?', s.share, c.id, d.user_id);
-  }
-  if (alert) await notifyStaff(db, '기여율 차이 확인 필요', `${c.title} · 예정 기여율과 20%p 이상 차이`, `#/groups/${c.id}/settlement`);
-  return { ok: true, alert };
-});
-
-// ----- 정산 -----
-on('POST', '/groups/:id/settlements', async ({ db, settings, request, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { leader: true });
-  const a = await latestAgreement(db, c.id);
-  if (!a || a.status !== 'locked') throw bad('승인(잠금)된 합의서가 있어야 정산할 수 있습니다');
-  const openS = await one(db, "SELECT id FROM settlements WHERE challenge_id = ? AND status IN ('confirming','disputed','reviewed') LIMIT 1", c.id);
-  if (openS) throw bad('진행 중인 정산이 있습니다. 먼저 끝내 주세요');
-  const b = await readJson(request);
-  const ps = b.period_start || '1970-01-01', pe = b.period_end || today();
-  const rows = await all(db, 'SELECT * FROM ledger_entries WHERE challenge_id = ? AND entry_date >= ? AND entry_date <= ?', c.id, ps, pe);
-  const t = ledgerTotals(rows);
-  const contrib = {};
-  for (const r of rows) if (r.kind === 'expense' && r.payer_type === 'member' && r.payer_id) contrib[r.payer_id] = (contrib[r.payer_id] || 0) + r.amount;
-  const members = await activeMembers(db, c.id);
-  const leftMembers = await all(db, "SELECT * FROM group_members WHERE challenge_id = ? AND status = 'left'", c.id);
-  const pool = members.filter(m => m.role !== 'leader' || a.clauses.leader_in_pool);
-  let shares = pool.map(m => ({ user_id: m.user_id, share: m.actual_share ?? m.planned_share ?? (1 / pool.length) }));
-  for (const lm of leftMembers) if (lm.actual_share) shares.push({ user_id: lm.user_id, share: lm.leave_type === 'unannounced' ? lm.actual_share * 0.5 : lm.actual_share });
-  const carried = await all(db, "SELECT id, result FROM settlements WHERE challenge_id = ? AND status = 'carried'", c.id);
-  const carry_in = carried.reduce((s, x) => s + (parseJ(x.result, {}).carried || 0), 0);
-  const hours = (await one(db, 'SELECT COALESCE(SUM(e.hours),0) AS h FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id WHERE ci.challenge_id = ?', c.id))?.h || 0;
-  const input = {
-    revenue_external: t.revenue_external, revenue_internal: t.revenue_internal, expenses: t.expenses,
-    member_contrib: Object.entries(contrib).map(([uid, amount]) => ({ user_id: Number(uid), amount })), hq_advance: t.hq_advance,
-    agency: a.clauses.settlement_mode === 'agency', agency_rate: a.clauses.agency_rate ?? settings.agency_rate,
-    ratios: a.clauses.ratios, leader_id: c.leader_id, shares, min_settlement: a.clauses.min_settlement ?? settings.min_settlement,
-    carry_in, withholding_rate: a.clauses.withholding_rate ?? settings.withholding_rate, total_hours: hours,
-    period: { start: ps, end: pe }, agreement_id: a.id, agreement_version: a.version, preset: a.clauses.preset,
-  };
-  const result = computeSettlement(input);
-  const status = result.status === 'carried' ? 'carried' : (result.status === 'no_distribution' ? 'reviewed' : 'confirming');
-  const id = await insert(db, 'INSERT INTO settlements (challenge_id, period_start, period_end, inputs, result, rule_version, status, created_by) VALUES (?,?,?,?,?,?,?,?)', c.id, ps, pe, J(input), J(result), RULE_VERSION, status, user.id);
-  for (const x of carried) await run(db, "UPDATE settlements SET status = 'carried_used' WHERE id = ?", x.id);
-  if (c.stage === 'active') await run(db, "UPDATE challenges SET stage = 'settling', updated_at = datetime('now') WHERE id = ?", c.id);
-  if (status === 'confirming') for (const m of members) await notify(db, m.user_id, '정산표를 확인해 주세요', `${c.title} · 확인 서명 또는 이의 제기`, `#/settlements/${id}`);
-  if (status === 'reviewed') { for (const r of buildPayouts(result, c.leader_id)) await run(db, 'INSERT INTO settlement_payouts (settlement_id, user_id, kind, gross, withholding_rate, withholding, net) VALUES (?,?,?,?,?,?,?)', id, r.user_id, r.kind, r.gross, r.withholding_rate, r.withholding, r.net); }
-  await audit(db, user.id, 'settlement.create', 'settlements:' + id, { status });
-  return { ok: true, id, status, result };
-});
-
-async function loadSettlement(db, sid) {
-  const s = await one(db, 'SELECT s.*, c.title, c.leader_id, c.type FROM settlements s JOIN challenges c ON c.id = s.challenge_id WHERE s.id = ?', sid);
-  if (!s) throw notfound('정산을 찾을 수 없습니다');
-  s.inputs = parseJ(s.inputs, {}); s.result = parseJ(s.result, {});
-  s.confirmations = await all(db, 'SELECT sc.*, u.nickname FROM settlement_confirmations sc JOIN users u ON u.id = sc.user_id WHERE sc.settlement_id = ?', sid);
-  s.payouts = await all(db, 'SELECT p.*, u.nickname FROM settlement_payouts p LEFT JOIN users u ON u.id = p.user_id WHERE p.settlement_id = ? ORDER BY p.id', sid);
-  return s;
-}
-
-on('GET', '/settlements/:sid', async ({ db, settings, user, params }) => {
-  requireUser(user);
-  const s = await loadSettlement(db, params.sid);
-  const m = await membership(db, s.challenge_id, user.id);
-  if (!isStaff(user) && !(m && ['active', 'left'].includes(m.status))) throw forbid('정산은 그룹원과 운영진만 볼 수 있습니다');
-  const members = await all(db, "SELECT gm.user_id, u.nickname, gm.role, gm.status FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.challenge_id = ? AND gm.status IN ('active','left')", s.challenge_id);
-  const paper = await one(db, 'SELECT id, status FROM papers WHERE challenge_id = ?', s.challenge_id);
-  return { ...s, members, paper, is_staff: isStaff(user), is_leader: s.leader_id === user.id || isStaff(user), my_confirmation: s.confirmations.find(x => x.user_id === user.id) || null };
-});
-
-on('POST', '/settlements/:sid/confirm', async ({ db, request, user, params }) => {
-  requireUser(user);
-  const s = await loadSettlement(db, params.sid);
-  const m = await membership(db, s.challenge_id, user.id);
-  if (!(m && m.status === 'active')) throw forbid('그룹원만 확인합니다');
-  if (!['confirming', 'disputed'].includes(s.status)) throw bad('확인 단계가 아닙니다');
-  const b = await readJson(request);
-  const confirmed = b.confirmed ? 1 : 0;
-  if (!confirmed && !str(b.dispute_note, 10)) throw bad('이의 사유를 적어 주세요');
-  await run(db, 'INSERT INTO settlement_confirmations (settlement_id, user_id, confirmed, dispute_note) VALUES (?,?,?,?) ON CONFLICT(settlement_id, user_id) DO UPDATE SET confirmed = excluded.confirmed, dispute_note = excluded.dispute_note, created_at = datetime(\'now\')', s.id, user.id, confirmed, str(b.dispute_note, 1000));
-  if (!confirmed) {
-    await run(db, "UPDATE settlements SET status = 'disputed' WHERE id = ?", s.id);
-    await insert(db, "INSERT INTO disputes (ref_type, ref_id, filed_by, stage, note) VALUES ('settlement', ?, ?, 1, ?)", s.id, user.id, str(b.dispute_note, 1000));
-    await notify(db, s.leader_id, '정산 이의 제기', `${s.title} · 1차 그룹 내 조정을 진행해 주세요 (7일)`, `#/settlements/${s.id}`);
-    await notifyStaff(db, '정산 이의 접수', s.title, `#/settlements/${s.id}`);
-  } else {
-    // 이의를 냈던 사람이 확인으로 바꾸면 그 이의는 그룹 내 조정으로 종결 처리
-    await run(db, "UPDATE disputes SET status = 'resolved', result = COALESCE(result, '제기자가 조정 후 정산표를 확인함'), resolved_at = datetime('now') WHERE ref_type = 'settlement' AND ref_id = ? AND filed_by = ? AND status IN ('open','mediating')", s.id, user.id);
-    const members = await activeMembers(db, s.challenge_id);
-    const conf = await all(db, 'SELECT user_id, confirmed FROM settlement_confirmations WHERE settlement_id = ?', s.id);
-    const allOk = members.every(mm => conf.some(x => x.user_id === mm.user_id && x.confirmed));
-    if (allOk) { await run(db, "UPDATE settlements SET status = 'confirming' WHERE id = ?", s.id); await notifyStaff(db, '정산 검수 요청', `${s.title} · 전원 확인 완료`, `#/settlements/${s.id}`); }
-  }
-  return { ok: true };
-});
-
-on('POST', '/settlements/:sid/review', async ({ db, request, user, params }) => {
-  requireStaff(user);
-  const s = await loadSettlement(db, params.sid);
-  const b = await readJson(request);
-  if (!b.approve) { await run(db, 'UPDATE settlements SET review_note = ? WHERE id = ?', str(b.note, 1000), s.id); await notify(db, s.leader_id, '정산 검수 보완 요청', str(b.note, 500), `#/settlements/${s.id}`); return { ok: true }; }
-  const paper = await one(db, "SELECT status FROM papers WHERE challenge_id = ? AND status IN ('approved','published')", s.challenge_id);
-  if (!paper) throw bad('프로젝트 페이퍼가 승인되지 않았습니다. 페이퍼 승인이 지급 조건입니다');
-  const members = await activeMembers(db, s.challenge_id);
-  const conf = await all(db, 'SELECT user_id, confirmed FROM settlement_confirmations WHERE settlement_id = ?', s.id);
-  const disputed = conf.filter(x => !x.confirmed);
-  const unconfirmed = members.filter(mm => !conf.some(x => x.user_id === mm.user_id && x.confirmed));
-  if (unconfirmed.length && !b.force) throw bad(`아직 확인하지 않은 그룹원이 있습니다: ${unconfirmed.map(x => x.nickname).join(', ')}`, { unconfirmed: unconfirmed.map(x => x.user_id) });
-  const open = await one(db, "SELECT COUNT(*) AS c FROM disputes WHERE ref_type = 'settlement' AND ref_id = ? AND status IN ('open','mediating')", s.id);
-  if ((open?.c || 0) > 0 && !b.force) throw bad('조정 중인 이의가 있습니다. 이의 금액을 보류하려면 force 옵션으로 승인하고 해당 지급을 보류 처리하세요');
-  await run(db, "UPDATE settlements SET status = 'reviewed', reviewed_by = ?, review_note = ?, reviewed_at = datetime('now') WHERE id = ?", user.id, str(b.note, 1000), s.id);
-  await run(db, 'DELETE FROM settlement_payouts WHERE settlement_id = ?', s.id);
-  for (const r of buildPayouts(s.result, s.leader_id)) {
-    const held = disputed.some(d => d.user_id === r.user_id);
-    await run(db, 'INSERT INTO settlement_payouts (settlement_id, user_id, kind, gross, withholding_rate, withholding, net, status) VALUES (?,?,?,?,?,?,?,?)', s.id, r.user_id, r.kind, r.gross, r.withholding_rate, r.withholding, r.net, held ? 'held' : 'pending');
-  }
-  for (const m of members) await notify(db, m.user_id, '정산이 검수됐습니다', `${s.title} · 7일 이내 지급 예정`, `#/settlements/${s.id}`);
-  await audit(db, user.id, 'settlement.review', 'settlements:' + s.id, { force: !!b.force });
-  return { ok: true };
-});
-
-on('POST', '/settlements/:sid/payouts/:pid', async ({ db, request, user, params }) => {
-  requireUser(user);
-  const s = await loadSettlement(db, params.sid);
-  if (!isStaff(user) && s.leader_id !== user.id) throw forbid('지급 주체(그룹장) 또는 운영진만 처리합니다');
-  const b = await readJson(request);
-  if (!['paid', 'held', 'pending'].includes(b.status)) throw bad('status는 paid / held / pending');
-  await run(db, "UPDATE settlement_payouts SET status = ?, paid_at = CASE WHEN ? = 'paid' THEN datetime('now') ELSE NULL END WHERE id = ? AND settlement_id = ?", b.status, b.status, params.pid, s.id);
-  const left = await one(db, "SELECT COUNT(*) AS c FROM settlement_payouts WHERE settlement_id = ? AND status <> 'paid'", s.id);
-  if ((left?.c || 0) === 0) { await run(db, "UPDATE settlements SET status = 'paid' WHERE id = ?", s.id); }
-  await audit(db, user.id, 'payout.' + b.status, `settlements:${s.id}/payouts:${params.pid}`);
-  return { ok: true, all_paid: (left?.c || 0) === 0 };
-});
-
-// ----- 페이퍼 -----
 const PAPER_FIXED_PUBLIC = ['has_sales', 'customers_band', 'hours'];
 function paperSummary(r) {
   const f = parseJ(r.form, r.form || {}) || {}; const priv = parseJ(r.private_fields, r.private_fields || []) || [];
   return { id: r.id, title: r.title, field_code: r.field_code, field_name: FIELDS[r.field_code], status: r.status, published_at: r.published_at, publish_scope: r.publish_scope,
     summary: { name: f.name, pain: f.pain, state: f.state, has_sales: f.has_sales, customers_band: f.customers_band, hours: f.hours, lesson: (f.good || [])[0] || null } };
 }
+// 프로젝트 페이퍼 — 그룹을 마치며 그룹리더가 정리하는 결과 기록. 성과 기록·출석에서 숫자를 미리 채운다.
+async function paperGroup(db, settings, user, id, leader) {
+  requireUser(user);
+  const c = await loadGroup(db, settings, id);
+  const m = await membership(db, c.id, user.id);
+  if (leader ? !isLeaderOf(user, c) : !(isActive(m) || isStaff(user))) throw forbid(leader ? '그룹리더만 할 수 있습니다' : '그룹원만 볼 수 있습니다');
+  return { c, m };
+}
 on('GET', '/groups/:id/paper/prefill', async ({ db, settings, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { write: true });
-  const rows = await all(db, 'SELECT * FROM ledger_entries WHERE challenge_id = ?', c.id);
-  const t = ledgerTotals(rows);
-  const hours = (await one(db, 'SELECT COALESCE(SUM(e.hours),0) AS h FROM checkin_entries e JOIN checkins ci ON ci.id = e.checkin_id WHERE ci.challenge_id = ?', c.id))?.h || 0;
-  const customers = (await one(db, "SELECT COUNT(*) AS c FROM ledger_entries WHERE challenge_id = ? AND kind = 'revenue' AND is_external = 1", c.id))?.c || 0;
-  const logs = await all(db, 'SELECT text, created_at FROM done_logs WHERE challenge_id = ? AND cancelled_at IS NULL ORDER BY created_at LIMIT 200', c.id);
-  return { name: c.title, field_code: c.field_code, revenue_external: t.revenue_external, revenue_internal: t.revenue_internal, expenses: t.expenses, hours, customers_count: customers, customers_band: band(customers), has_sales: t.revenue_external > 0, hourly: hours ? Math.round((t.revenue_external - t.expenses) / hours) : null, milestones_hint: logs.filter((_, i) => i % Math.max(1, Math.floor(logs.length / 5)) === 0).slice(0, 5).map(l => l.text) };
+  const { c } = await paperGroup(db, settings, user, params.id, false);
+  const t = await one(db, `SELECT COALESCE(SUM(CASE WHEN metric = 'revenue' THEN value END),0) AS revenue, COALESCE(SUM(CASE WHEN metric = 'customers' THEN value END),0) AS customers,
+    COALESCE(SUM(CASE WHEN metric = 'sales' THEN value END),0) AS sales FROM group_results WHERE challenge_id = ? AND deleted_at IS NULL`, c.id);
+  const sess = await one(db, "SELECT COUNT(*) AS n, COALESCE(SUM(duration_min),0) AS mins FROM group_sessions WHERE challenge_id = ? AND status = 'closed'", c.id);
+  const att = await groupAttendance(db, c);
+  const rates = Object.values(att).map(x => x.rate).filter(x => x != null);
+  const members = (await activeMembers(db, c.id)).length;
+  const milestones = (await all(db, 'SELECT title FROM milestones WHERE challenge_id = ? AND done_at IS NOT NULL ORDER BY done_at LIMIT 5', c.id)).map(r => r.title);
+  const hours = Math.round((sess?.mins || 0) / 60 * members);
+  return { name: c.title, field_code: c.field_code, revenue_external: Math.round(t?.revenue || 0), revenue_internal: 0, expenses: 0, customers_count: Math.round(t?.customers || 0), customers_band: band(t?.customers || 0),
+    has_sales: (t?.revenue || 0) > 0, hours, sessions: sess?.n || 0, avg_rate: rates.length ? Math.round(rates.reduce((a, b) => a + b, 0) / rates.length) : null, milestones };
 });
-function band(n) { if (n === 0) return '0'; if (n < 5) return '1~4'; if (n < 20) return '5~19'; if (n < 100) return '20~99'; return '100+'; }
 
 on('POST', '/groups/:id/paper', async ({ db, settings, request, user, params }) => {
-  const { c } = await groupCtx(db, settings, user, params.id, { leader: true });
+  const { c } = await paperGroup(db, settings, user, params.id, true);
   const b = await readJson(request);
   const f = b.form || {};
   const form = {
     name: str(f.name, 80) || c.title, pain: str(f.pain, 500), product: str(f.product, 500), milestones: (f.milestones || []).map(s => str(s, 200)).filter(Boolean).slice(0, 5),
-    revenue_external: intv(f.revenue_external || 0, '외부 매출', { min: 0 }), revenue_internal: intv(f.revenue_internal || 0, '내부 매출', { min: 0 }), customers: intv(f.customers || 0, '외부 고객 수', { min: 0 }),
+    revenue_external: intv(f.revenue_external || 0, '매출', { min: 0 }), revenue_internal: intv(f.revenue_internal || 0, '지인·내부 매출', { min: 0 }), customers: intv(f.customers || 0, '고객 수', { min: 0 }),
     hours: Number(f.hours || 0), expenses: intv(f.expenses || 0, '총 비용', { min: 0 }), state: ['ongoing', 'transferred', 'stopped', 'closed'].includes(f.state) ? f.state : 'ongoing',
     good: (f.good || []).map(s => str(s, 300)).filter(Boolean).slice(0, 3), bad: (f.bad || []).map(s => str(s, 300)).filter(Boolean).slice(0, 3), next: str(f.next, 1000), to_next: str(f.to_next, 1000),
   };
@@ -1021,7 +439,7 @@ on('POST', '/groups/:id/paper', async ({ db, settings, request, user, params }) 
   const priv = (b.private_fields || []).filter(k => !PAPER_FIXED_PUBLIC.includes(k));
   const scope = b.publish_scope === 'public' ? 'public' : 'members';
   const existing = await one(db, 'SELECT * FROM papers WHERE challenge_id = ?', c.id);
-  if (existing && ['review', 'approved', 'published'].includes(existing.status) && !isStaff(user)) throw bad('제출된 페이퍼는 운영진이 보완 요청한 뒤에만 수정할 수 있습니다');
+  if (existing && ['review', 'approved', 'published'].includes(existing.status) && !isStaff(user)) throw bad('제출한 페이퍼는 운영진이 보완을 요청한 뒤에만 고칠 수 있습니다');
   let id;
   if (existing) { await run(db, "UPDATE papers SET form = ?, private_fields = ?, publish_scope = ?, updated_at = datetime('now') WHERE id = ?", J(form), J(priv), scope, existing.id); id = existing.id; }
   else id = await insert(db, 'INSERT INTO papers (challenge_id, form, private_fields, publish_scope) VALUES (?,?,?,?)', c.id, J(form), J(priv), scope);
@@ -1041,8 +459,8 @@ on('POST', '/admin/papers/:pid/review', async ({ db, request, user, params }) =>
   if (b.decision === 'approve') {
     await run(db, "UPDATE papers SET status = 'approved', reviewer_id = ?, review_note = ?, published_at = datetime('now') WHERE id = ?", user.id, str(b.note, 1000), p.id);
     // 페이퍼의 공개 숫자를 챌린지 카드에도 반영
-    const pf = parseJ(p.form, {}); const ch = await loadChallenge(db, p.cid);
-    await run(db, "UPDATE challenges SET public_numbers = ?, updated_at = datetime('now') WHERE id = ?", J({ ...ch.public_numbers, has_sales: !!pf.has_sales, customers_band: pf.customers_band || ch.public_numbers.customers_band, hours: pf.hours || ch.public_numbers.hours }), p.cid);
+    const pf = parseJ(p.form, {}); const ch = await one(db, 'SELECT public_numbers FROM challenges WHERE id = ?', p.cid); const pn = parseJ(ch?.public_numbers, {}) || {};
+    await run(db, "UPDATE challenges SET public_numbers = ?, updated_at = datetime('now') WHERE id = ?", J({ ...pn, has_sales: !!pf.has_sales, customers_band: pf.customers_band || pn.customers_band, hours: pf.hours || pn.hours }), p.cid);
     await grantBadge(db, p.leader_id, 'contributor', user.id, `paper:${p.id}`);
     await notify(db, p.leader_id, '페이퍼가 승인·공개됐습니다', p.title, `#/papers/${p.id}`);
   } else {
@@ -1066,7 +484,7 @@ on('GET', '/papers/:pid', async ({ db, settings, user, params }) => {
   const r = await one(db, 'SELECT p.*, c.title, c.field_code, c.leader_id, c.id AS challenge_id, u.nickname AS leader FROM papers p JOIN challenges c ON c.id = p.challenge_id JOIN users u ON u.id = c.leader_id WHERE p.id = ?', params.pid);
   if (!r) throw notfound();
   const m = await membership(db, r.challenge_id, user.id);
-  const full = isStaff(user) || (m && m.status === 'active') || lvlAtLeast(user, settings.visibility.paper_full);
+  const full = isStaff(user) || isActive(m) || lvlAtLeast(user, settings.visibility.paper_full);
   if (!full && !['approved', 'published'].includes(r.status)) throw forbid();
   const summary = paperSummary(r);
   if (!full) return { ...summary, full: false, leader: r.leader };
@@ -1084,37 +502,40 @@ on('GET', '/admin/papers', async ({ db, user }) => {
 // 커뮤니티 · 이벤트
 // =====================================================================
 async function feedItems(db, limit = 30) {
-  const logs = await all(db, "SELECT 'done' AS kind, d.id, d.text AS title, d.link, d.created_at, u.nickname, c.title AS challenge_title, c.id AS challenge_id FROM done_logs d JOIN users u ON u.id = d.user_id JOIN challenges c ON c.id = d.challenge_id WHERE d.shared = 1 AND d.cancelled_at IS NULL ORDER BY d.created_at DESC LIMIT ?", limit);
-  const posts = await all(db, "SELECT 'post' AS kind, p.id, p.title, p.board, p.created_at, u.nickname, p.helpful_count FROM posts p JOIN users u ON u.id = p.author_id WHERE p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?", limit);
+  const logs = await all(db, "SELECT 'group' AS kind, c.id, c.title, c.type, c.created_at, u.nickname FROM challenges c JOIN users u ON u.id = c.leader_id WHERE c.stage IN ('recruiting','active','closed') ORDER BY c.created_at DESC LIMIT ?", limit);
+  const posts = await all(db, "SELECT 'post' AS kind, p.id, p.title, p.board, p.challenge_id, p.created_at, u.nickname, p.helpful_count FROM posts p JOIN users u ON u.id = p.author_id WHERE p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?", limit);
   const ups = await all(db, "SELECT 'level' AS kind, h.id, h.to_level, h.created_at, u.nickname FROM level_history h JOIN users u ON u.id = h.user_id WHERE h.to_level >= 'L2' ORDER BY h.created_at DESC LIMIT ?", limit);
   const bd = await all(db, "SELECT 'badge' AS kind, b.id, b.code, b.created_at, u.nickname FROM badges b JOIN users u ON u.id = b.user_id WHERE b.revoked_at IS NULL AND b.code IN ('first_sale','completion','repeat_sale') ORDER BY b.created_at DESC LIMIT ?", limit);
-  return [...logs, ...posts, ...ups.map(x => ({ ...x, title: `${x.nickname}님이 ${levelName(x.to_level)}가 되었습니다` })), ...bd.map(x => ({ ...x, title: `${x.nickname}님 · ${BADGE_NAMES[x.code]} 배지` }))].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, limit);
+  return [...logs.map(x => ({ ...x, title: `새 ${GROUP_TYPES[x.type] || '그룹'}: ${x.title}`, challenge_id: x.id })), ...posts, ...ups.map(x => ({ ...x, title: `${x.nickname}님이 ${levelName(x.to_level)}가 되었습니다` })), ...bd.map(x => ({ ...x, title: `${x.nickname}님 · ${BADGE_NAMES[x.code]} 배지` }))].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, limit);
 }
 on('GET', '/feed', async ({ db, user }) => { requireLevel(user, 'L1'); return feedItems(db, 40); });
 
 on('GET', '/posts', async ({ db, settings, user, query }) => {
   requireLevel(user, 'L1');
-  if (query.board === 'swap') requireLevel(user, settings.visibility.swap_board, '품앗이 보드는 메이커부터 볼 수 있습니다');
   const where = ['p.hidden = 0']; const p = [];
   if (query.board) { where.push('p.board = ?'); p.push(query.board); }
-  return all(db, `SELECT p.id, p.board, p.title, p.helpful_count, p.created_at, u.nickname, u.level, (SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.hidden = 0) AS comment_count FROM posts p JOIN users u ON u.id = p.author_id WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT 100`, ...p);
+  if (query.group) { where.push('p.challenge_id = ?'); p.push(Number(query.group)); }
+  return all(db, `SELECT p.id, p.board, p.title, p.helpful_count, p.created_at, p.challenge_id, c.title AS group_title, u.nickname, u.level, (SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.hidden = 0) AS comment_count
+    FROM posts p JOIN users u ON u.id = p.author_id LEFT JOIN challenges c ON c.id = p.challenge_id WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT 100`, ...p);
 });
 on('POST', '/posts', async ({ db, settings, request, user }) => {
   requireLevel(user, 'L1');
   const b = await readJson(request);
-  const board = ['question', 'share', 'review', 'notice', 'swap'].includes(b.board) ? b.board : 'share';
+  const board = BOARDS[b.board] ? b.board : 'share';
   if (board === 'notice') requireStaff(user);
-  if (board === 'swap') requireLevel(user, settings.visibility.swap_board);
   must(b.title, '제목'); must(b.body, '내용');
   const banned = /(원금\s*보장|수익\s*보장|무조건\s*(수익|된다)|월\s*\d+\s*만\s*원\s*보장)/;
   if (banned.test(b.title + ' ' + b.body)) throw bad('수익이나 원금을 보장하는 표현은 쓸 수 없습니다 (마챌 원칙 1)');
-  const id = await insert(db, 'INSERT INTO posts (author_id, board, title, body, challenge_id) VALUES (?,?,?,?,?)', user.id, board, str(b.title, 100), str(b.body, 5000), b.challenge_id ? Number(b.challenge_id) : null);
+  let cid = null;
+  if (b.challenge_id) { const c = await loadGroup(db, settings, b.challenge_id); const m = await membership(db, c.id, user.id); if (!isActive(m) && !isStaff(user)) throw forbid('참여 중인 그룹의 소식만 올릴 수 있습니다'); cid = c.id; }
+  if (board === 'group' && !cid) throw bad('그룹 소식은 그룹을 골라서 올려 주세요');
+  const id = await insert(db, 'INSERT INTO posts (author_id, board, title, body, challenge_id) VALUES (?,?,?,?,?)', user.id, board, str(b.title, 100), str(b.body, 5000), cid);
   await addPoints(db, settings, user.id, 'post', 'post', id);
   return { ok: true, id };
 });
 on('GET', '/posts/:id', async ({ db, user, params }) => {
   requireLevel(user, 'L1');
-  const p = await one(db, 'SELECT p.*, u.nickname, u.level FROM posts p JOIN users u ON u.id = p.author_id WHERE p.id = ? AND p.hidden = 0', params.id);
+  const p = await one(db, 'SELECT p.*, u.nickname, u.level, c.title AS group_title, c.type AS group_type FROM posts p JOIN users u ON u.id = p.author_id LEFT JOIN challenges c ON c.id = p.challenge_id WHERE p.id = ? AND p.hidden = 0', params.id);
   if (!p) throw notfound();
   p.comments = await all(db, 'SELECT c.*, u.nickname, u.level FROM comments c JOIN users u ON u.id = c.author_id WHERE c.post_id = ? AND c.hidden = 0 ORDER BY c.created_at', p.id);
   p.my_helpful = !!(await one(db, 'SELECT 1 AS x FROM helpful WHERE post_id = ? AND user_id = ?', p.id, user.id));
@@ -1151,13 +572,30 @@ on('POST', '/posts/:id/report', async ({ db, request, user, params }) => {
 on('GET', '/events', async ({ db, user }) => {
   requireLevel(user, 'L1');
   const rows = await all(db, "SELECT e.*, (SELECT COUNT(*) FROM registrations r WHERE r.event_id = e.id AND r.status <> 'cancelled') AS registered, (SELECT status FROM registrations r WHERE r.event_id = e.id AND r.user_id = ?) AS my_status FROM events e WHERE e.starts_at >= datetime('now','-21 days') AND (e.status <> 'cancelled' OR ?) ORDER BY e.starts_at", user.id, isStaff(user) ? 1 : 0);
-  return rows.map(r => { const { attendance_code, ...rest } = r; return isStaff(user) ? r : rest; });
+  const ids = rows.map(r => r.id);
+  const pres = ids.length ? await all(db, `SELECT p.id, p.event_id, p.user_id, p.challenge_id, p.title, p.summary, p.link, p.status, u.nickname, c.title AS group_title FROM event_presentations p JOIN users u ON u.id = p.user_id LEFT JOIN challenges c ON c.id = p.challenge_id
+    WHERE p.event_id IN (${ids.map(() => '?').join(',')}) AND (p.status IN ('confirmed','presented') OR p.user_id = ? OR ?) ORDER BY p.created_at`, ...ids, user.id, isStaff(user) ? 1 : 0) : [];
+  // 내가 그룹리더·부리더인 진행 중 그룹 (성과발표회 발표 신청용)
+  const myGroups = await all(db, "SELECT c.id, c.title FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = ? AND gm.status = 'active' AND gm.role IN ('leader','sub') AND c.stage IN ('recruiting','active','closed') ORDER BY c.updated_at DESC", user.id);
+  return { my_groups: myGroups, events: rows.map(r => {
+    const { attendance_code, online_url, ...rest } = r;
+    const out = isStaff(user) ? { ...r } : { ...rest, online_url: ['registered', 'attended'].includes(r.my_status) ? online_url : null };
+    return { ...out, type_name: EVENT_TYPES[r.type] || r.type, topic_names: String(r.topics || '').split(',').filter(Boolean).map(t => EVENT_TOPICS[t] || t), presentations: pres.filter(p => p.event_id === r.id).map(p => ({ ...p, mine: p.user_id === user.id })) };
+  }) };
 });
+export function eventFields(b) {
+  const topics = (Array.isArray(b.topics) ? b.topics : String(b.topics || '').split(',')).map(t => String(t).trim()).filter(t => EVENT_TOPICS[t]);
+  const url = str(b.online_url, 300);
+  if (url && !/^https?:\/\/\S+$/i.test(url)) throw bad('온라인 참여 링크는 http로 시작해야 합니다');
+  return { type: EVENT_TYPES[b.type] ? b.type : 'regular', mode: ['offline', 'online', 'hybrid'].includes(b.mode) ? b.mode : 'offline', online_url: url, topics: topics.join(',') || null };
+}
 on('POST', '/admin/events', async ({ db, request, user }) => {
   requireStaff(user); const b = await readJson(request);
   must(b.title, '제목'); must(b.starts_at, '일시');
-  const type = ['machal_day', 'demo_day', 'seminar', 'study', 'office_hour', 'workshop'].includes(b.type) ? b.type : 'seminar';
-  const id = await insert(db, 'INSERT INTO events (type, title, starts_at, location, capacity, min_level, description, attendance_code, created_by) VALUES (?,?,?,?,?,?,?,?,?)', type, str(b.title, 100), b.starts_at, str(b.location, 100), b.capacity ? Number(b.capacity) : null, LEVELS.includes(b.min_level) ? b.min_level : 'L1', str(b.description, 2000), (b.attendance_code || randomToken(2)).toUpperCase(), user.id);
+  const f = eventFields(b);
+  const id = await insert(db, 'INSERT INTO events (type, title, starts_at, location, capacity, min_level, description, attendance_code, mode, online_url, topics, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    f.type, str(b.title, 100), b.starts_at, str(b.location, 100), b.capacity ? Number(b.capacity) : null, LEVELS.includes(b.min_level) ? b.min_level : 'L1', str(b.description, 2000),
+    (b.attendance_code || randomToken(2)).toUpperCase().slice(0, 8), f.mode, f.online_url, f.topics, user.id);
   await audit(db, user.id, 'event.create', 'events:' + id);
   return { ok: true, id };
 });
@@ -1205,8 +643,10 @@ async function purgeOldApplications(db) {
   }
   return old.length;
 }
-// 현황·회원·그룹·지급·재원·알림·커뮤니티·일정·감사·백업 API는 _lib/admin-routes.js 에 있다.
-registerAdminRoutes(on, { purgeOldApplications, levelProgress, ledgerTotals });
+// 그룹 운영(그룹·모임·출석·기록·성과·그룹리더 신청·발표 신청) API는 _lib/group-routes.js 에 있다.
+registerGroupRoutes(on);
+// 현황·회원·그룹리더·그룹·알림·커뮤니티·일정·감사·백업 API는 _lib/admin-routes.js 에 있다.
+registerAdminRoutes(on, { purgeOldApplications, levelProgress });
 // 이용 통계 수집(/t)과 KPI(/admin/kpi/*)는 _lib/kpi-routes.js 에 있다.
 registerKpiRoutes(on);
 
@@ -1267,19 +707,9 @@ on('POST', '/admin/promotions/:id', async ({ db, request, user, params }) => {
   return { ok: true };
 });
 
-on('GET', '/admin/challenges', async ({ db, user }) => {
-  requireStaff(user);
-  const rows = await all(db, "SELECT c.*, u.nickname AS leader_nickname FROM challenges c JOIN users u ON u.id = c.leader_id WHERE c.stage IN ('review','proposed') ORDER BY c.created_at");
-  return rows.map(r => ({ ...r, proposal: parseJ(r.proposal, {}), review: parseJ(r.review, null), field_name: FIELDS[r.field_code] }));
-});
-on('GET', '/admin/settlements', async ({ db, user }) => {
-  requireStaff(user);
-  const rows = await all(db, "SELECT s.id, s.challenge_id, s.status, s.period_start, s.period_end, s.result, s.created_at, c.title FROM settlements s JOIN challenges c ON c.id = s.challenge_id WHERE s.status IN ('confirming','disputed','reviewed') ORDER BY s.created_at");
-  return rows.map(r => ({ ...r, result: summarizeResult(parseJ(r.result, {})) }));
-});
 on('GET', '/admin/disputes', async ({ db, user }) => {
   requireStaff(user);
-  return all(db, "SELECT d.*, u.nickname FROM disputes d JOIN users u ON u.id = d.filed_by WHERE d.status IN ('open','mediating') ORDER BY d.created_at");
+  return all(db, "SELECT d.*, u.nickname, gm.challenge_id AS group_id FROM disputes d JOIN users u ON u.id = d.filed_by LEFT JOIN group_members gm ON d.ref_type = 'removal' AND gm.id = d.ref_id WHERE d.status IN ('open','mediating') ORDER BY d.created_at");
 });
 on('POST', '/admin/disputes/:id', async ({ db, request, user, params }) => {
   requireStaff(user); const b = await readJson(request);
@@ -1293,7 +723,7 @@ on('PUT', '/admin/settings', async ({ db, request, user }) => {
   await requireOwner(db, user); const b = await readJson(request);
   must(b.key, 'key'); if (b.value === undefined) throw bad('value가 필요합니다');
   const reason = str(b.reason, 300); if (!reason) throw bad('바꾸는 이유를 적어 주세요. 규칙 변경 이력으로 남습니다');
-  const allowed = ['levels', 'points', 'presets', 'hq_ratio_range', 'min_settlement', 'budget_cap_person', 'budget_cap_group', 'agency_rate', 'withholding_rate', 'share_adjust_limit', 'share_alert_gap', 'visibility', 'review_pass_score', 'min_group', 'max_group'];
+  const allowed = ['levels', 'points', 'visibility', 'groups', 'attendance_default', 'analytics', 'kpi_targets'];
   if (!allowed.includes(b.key)) throw bad('수정할 수 없는 설정 키입니다');
   await run(db, "INSERT INTO settings (key, value, version, updated_by) VALUES (?,?,1,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, version = settings.version + 1, updated_by = excluded.updated_by, updated_at = datetime('now')", b.key, J(b.value), user.id);
   await audit(db, user.id, 'settings.update', 'settings:' + b.key, { reason, value: b.value });
@@ -1305,10 +735,11 @@ on('PUT', '/admin/settings', async ({ db, request, user }) => {
 const EXPORTS = {
   users: "SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, created_at, last_seen_at FROM users ORDER BY id",
   applications: "SELECT id, name, email, phone, status, invite_code, created_at, decided_at, note, form FROM applications ORDER BY id",
-  challenges: "SELECT c.id, c.type, c.title, c.field_code, c.stage, u.nickname AS leader, c.round_id, c.created_at, c.updated_at FROM challenges c JOIN users u ON u.id = c.leader_id ORDER BY c.id",
-  ledger: "SELECT l.id, l.challenge_id, c.title AS challenge, l.kind, l.entry_date, l.amount, l.is_external, l.channel, l.category, l.payer_type, l.payer_id, l.evidence, l.note, l.entered_by, l.confirmed_by, l.created_at FROM ledger_entries l JOIN challenges c ON c.id = l.challenge_id ORDER BY l.id",
-  settlements: "SELECT s.id, s.challenge_id, c.title AS challenge, s.status, s.period_start, s.period_end, s.created_at FROM settlements s JOIN challenges c ON c.id = s.challenge_id ORDER BY s.id",
-  payouts: "SELECT p.id, p.settlement_id, p.user_id, COALESCE(u.nickname, '운영본부') AS nickname, u.name, p.kind, p.gross, p.withholding_rate, p.withholding, p.net, p.status, p.paid_at FROM settlement_payouts p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.id",
+  groups: "SELECT c.id, c.type, c.title, c.field_code, c.stage, u.nickname AS leader, c.capacity, c.join_mode, c.goal_metric, c.goal_target, c.start_date, c.end_date, c.created_at, c.closed_at FROM challenges c JOIN users u ON u.id = c.leader_id ORDER BY c.id",
+  members: "SELECT gm.id, gm.challenge_id, c.title AS group_title, gm.user_id, u.nickname, gm.role, gm.status, gm.joined_at, gm.left_at, gm.leave_type FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id JOIN users u ON u.id = gm.user_id ORDER BY gm.challenge_id, gm.id",
+  sessions: "SELECT s.id, s.challenge_id, c.title AS group_title, s.title, s.starts_at, s.duration_min, s.mode, s.status, (SELECT COUNT(*) FROM session_attendance a WHERE a.session_id = s.id AND a.status IN ('present','late')) AS attended, (SELECT COUNT(*) FROM session_attendance a WHERE a.session_id = s.id AND a.status = 'absent') AS absent FROM group_sessions s JOIN challenges c ON c.id = s.challenge_id ORDER BY s.starts_at",
+  attendance: "SELECT a.session_id, s.challenge_id, c.title AS group_title, s.starts_at, a.user_id, u.nickname, a.rsvp, a.status, a.method, a.checked_at FROM session_attendance a JOIN group_sessions s ON s.id = a.session_id JOIN challenges c ON c.id = s.challenge_id JOIN users u ON u.id = a.user_id ORDER BY s.starts_at, a.user_id",
+  results: "SELECT r.id, r.challenge_id, c.title AS group_title, u.nickname, r.metric, r.value, r.label, r.happened_on, r.evidence, r.verified_at, r.created_at FROM group_results r JOIN challenges c ON c.id = r.challenge_id JOIN users u ON u.id = r.user_id WHERE r.deleted_at IS NULL ORDER BY r.happened_on",
   papers: "SELECT p.id, p.challenge_id, c.title AS challenge, p.status, p.publish_scope, p.submitted_at, p.published_at FROM papers p JOIN challenges c ON c.id = p.challenge_id ORDER BY p.id",
   points: "SELECT p.id, p.user_id, u.nickname, p.action, p.points, p.ref_type, p.ref_id, p.quarter, p.created_at FROM points_ledger p JOIN users u ON u.id = p.user_id ORDER BY p.id",
   consents: "SELECT id, subject_type, subject_id, kind, version, created_at FROM consents ORDER BY id",
@@ -1324,7 +755,7 @@ on('GET', '/admin/export', async ({ db, user, query }) => {
   requireStaff(user);
   if (PII_EXPORTS.includes(query.table)) await requireOwner(db, user);
   const sql = EXPORTS[query.table];
-  if (!sql) throw bad('내려받을 수 없는 표입니다. users, applications, challenges, ledger, settlements, payouts, papers, points, consents 중에서 고르세요');
+  if (!sql) throw bad('내려받을 수 없는 표입니다. users, applications, groups, members, sessions, attendance, results, papers, points, consents 중에서 고르세요');
   const rows = await all(db, sql);
   await audit(db, user.id, 'export', 'table:' + query.table, { rows: rows.length });
   const name = `machal-${query.table}-${today()}.csv`;

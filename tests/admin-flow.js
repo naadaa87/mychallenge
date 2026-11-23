@@ -33,17 +33,18 @@ await ev(`(() => { const q = document.querySelector('#adm-q'); q.dispatchEvent(n
 await wait(1200);
 ok(/#\/admin\/users\/\d+/.test(await ev('location.hash')), 'Enter를 누르면 첫 결과로 이동한다');
 
-// 2. 규칙 변경 — 사유를 받아 저장
+// 2. 규칙 변경 — 사유를 받아 저장 (출석 규칙 기본값)
 await go('#/admin/settings');
-const before = (await apiGet('/admin/settings')).settings.min_settlement;
-await ev(`(() => { const f = document.querySelector('form[data-form=money]'); f.min_settlement.value = '${before + 20000}'; f.querySelector('button[type=submit]').click(); })()`);
+const before = (await apiGet('/admin/settings')).settings.attendance_default.min_rate;
+await ev(`(() => { const f = document.querySelector('form[data-form=att]'); f.min_rate.value = '${before === 70 ? 75 : 70}'; f.querySelector('button[type=submit]').click(); })()`);
 await wait(500);
 ok(await ev(`!!document.querySelector('.modal textarea[name=reason]')`), '저장하면 바꾸는 이유를 묻는다');
 await ev(`(() => { const m = document.querySelector('.modal'); m.querySelector('textarea[name=reason]').value = '화면 점검용 변경'; m.querySelector('button[type=submit]').click(); })()`);
 await wait(1500);
-ok((await apiGet('/admin/settings')).settings.min_settlement === before + 20000, '이유를 적으면 값이 바뀐다');
+ok((await apiGet('/admin/settings')).settings.attendance_default.min_rate === (before === 70 ? 75 : 70), '이유를 적으면 출석 규칙 기본값이 바뀐다');
 ok(await ev(`document.body.innerText.includes('화면 점검용 변경')`), '최근 규칙 변경에 이유가 보인다');
-await fetch(BASE + '/api/admin/settings/min_settlement', { method: 'DELETE', headers: { cookie: 'machal_session=' + admin } });
+ok(!(await ev(`!!document.querySelector('form[data-form=money]') || !!document.querySelector('form[data-form=presets]')`)), '돈·배분 규칙 카드는 없다');
+await fetch(BASE + '/api/admin/settings/attendance_default', { method: 'DELETE', headers: { cookie: 'machal_session=' + admin } });
 
 // 3. 단체 알림 — 받는 사람 수 미리보기와 발송
 await go('#/admin/broadcast');
@@ -51,16 +52,26 @@ await wait(400);
 ok(/^\d+명$/.test(await ev(`document.querySelector('#rc').textContent`)), '받는 사람 수가 바로 계산된다');
 await ev(`(() => { const f = document.querySelector('form[data-form=bc]'); f.type.value = 'level'; f.type.dispatchEvent(new Event('change', { bubbles: true })); })()`);
 await wait(500);
-ok(await ev(`!document.querySelector('.seg-extra[data-for=level]').hidden && document.querySelector('.seg-extra[data-for=round]').hidden`), '대상을 바꾸면 필요한 칸만 보인다');
+ok(await ev(`!document.querySelector('.seg-extra[data-for=level]').hidden && document.querySelector('.seg-extra[data-for=challenge]').hidden && !!document.querySelector('form[data-form=bc] option[value=no_group]')`), '대상을 바꾸면 필요한 칸만 보인다 (그룹 참여 여부로도 고른다)');
 await ev(`(() => { window.confirm = () => true; const f = document.querySelector('form[data-form=bc]'); f.title.value = '화면 점검 알림'; f.querySelector('button[type=submit]').click(); })()`);
 await wait(1500);
 ok((await apiGet('/admin/broadcasts'))[0]?.title === '화면 점검 알림', '보낸 알림이 기록된다');
 
 // 4. 그룹 상세 — 내부 메모
 await go('#/admin/groups/1');
-await ev(`(() => { const f = document.querySelector('.adm-notes form'); f.body.value = '그룹장과 통화, 다음 주 첫 공개 예정'; f.querySelector('button[type=submit]').click(); })()`);
+await ev(`(() => { const f = document.querySelector('.adm-notes form'); f.body.value = '그룹리더와 통화, 다음 주 첫 공개 예정'; f.querySelector('button[type=submit]').click(); })()`);
 await wait(1500);
 ok(await ev(`document.querySelector('.adm-notes').innerText.includes('다음 주 첫 공개 예정')`), '내부 메모를 남기면 바로 보인다');
+
+// 4-1. 그룹 상세 — 출석·경고·성과
+ok(await ev(`document.body.innerText.includes('출석 규칙') && document.body.innerText.includes('경고 기록') && document.body.innerText.includes('성과 기록')`), '그룹 상세에 출석 규칙·경고·성과가 보인다');
+// 4-2. 받은 일 — 그룹리더 신청, 매출 확인, 발표 신청
+for (const [sec, txt] of [['leaders', '그룹리더'], ['results', '매출'], ['presentations', '발표']]) {
+  await go('#/admin/' + sec);
+  ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/admin/${sec}"]') && document.querySelector('.adm-head h1').textContent.includes('${txt}') && !document.querySelector('.error-box')`), `받은 일: ${txt} 화면이 열린다`);
+}
+await go('#/admin/settlements');
+ok((await ev('location.hash')) === '#/admin/groups', '예전 정산 주소는 그룹 현황으로 옮겨 간다');
 
 // 5. 회원 상세 — 관리 창
 await go('#/admin/users/3');
@@ -70,11 +81,11 @@ ok(await ev(`!!document.querySelector('.modal select[name=level]') && !document.
 
 // 6. 모바일 메뉴
 await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-await go('#/admin/payouts');
+await go('#/admin/groups');
 ok(await ev(`getComputedStyle(document.querySelector('.adm-side')).display === 'none' && getComputedStyle(document.querySelector('.adm-mnav')).display !== 'none'`), '휴대폰에서는 사이드 메뉴 대신 메뉴 버튼이 보인다');
 await ev(`document.querySelector('.adm-mnav summary').click()`);
 await wait(200);
-ok(await ev(`document.querySelector('.adm-mnav').open && document.querySelectorAll('.adm-mnav-panel a').length === 21`), '메뉴 버튼을 누르면 전체 메뉴가 열린다');
+ok(await ev(`document.querySelector('.adm-mnav').open && document.querySelectorAll('.adm-mnav-panel a').length === 19`), '메뉴 버튼을 누르면 전체 메뉴가 열린다');
 await send('Emulation.clearDeviceMetricsOverride');
 
 // 6-1. KPI 지표 — 탭마다 숫자와 표가 뜬다

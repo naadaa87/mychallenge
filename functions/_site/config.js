@@ -12,7 +12,7 @@ export const SITE = {
   name: '마이챌린지',
   alt: '마챌',
   fullName: '마이챌린지(마챌)',
-  tagline: '사이드프로젝트 수익 도전 모임',
+  tagline: '함께 배우고 함께 도전하는 사이드프로젝트 커뮤니티',
   locale: 'ko_KR',
   lang: 'ko',
   themeColor: '#2457F5',
@@ -46,10 +46,10 @@ export const SITE = {
   },
 
   // 이용약관·개인정보처리방침 시행일. 문서를 고치면 이 날짜도 바꿉니다. 가입 동의 기록에 이 값이 남습니다.
-  policyVersion: '2026-11-18',
+  policyVersion: '2026-11-23',
 
   // 사이트 콘텐츠 기준일 (사이트맵 lastmod 기본값)
-  updated: '2026-11-09',
+  updated: '2026-11-23',
 };
 
 // 런타임(Functions)과 빌드(Node)에서 환경 변수로 덮어쓰기

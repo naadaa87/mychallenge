@@ -1,4 +1,4 @@
-// 전체 흐름 테스트: 초기 설정 → 가입 → 챌린지 → 합의서 → 실행 → 장부 → 정산 → 페이퍼 → 지급
+// 전체 흐름 테스트: 초기 설정 → 가입 → 그룹리더 승인 → 그룹 → 모임·출석·경고 → 기록·성과 → 완주·페이퍼 → 정기모임 → 운영 콘솔 → KPI
 import { makeDb, makeClient, eq, ok, expectOk, expectFail } from './harness.js';
 
 const db = makeDb(process.env.MACHAL_DB || ':memory:');
@@ -29,7 +29,7 @@ async function join(key, name, level) {
   await expectFail(c.post('/auth/register', { invite_code: dec.invite_code, email, password: 'password1', name, nickname: name, agree_terms: true, agree_privacy: true }, { as: key + '2' }), 400, 'code reuse blocked');
   let me = await expectOk(c.get('/me', { as: key }));
   eq([me.level, me.onboarded], ['L0', 0], 'new member L0');
-  await expectFail(c.get('/challenges', { as: key }), 403, 'L0 cannot see board');
+  await expectFail(c.get('/groups', { as: key }), 403, 'L0 cannot see groups');
   await expectFail(c.post('/me/onboarding', { agree: true, quiz: { q1: 'a', q2: 'a', q3: 'b' } }, { as: key }), 400, 'wrong quiz');
   await expectOk(c.post('/me/onboarding', { agree: true, quiz: { q1: 'b', q2: 'a', q3: 'b' } }, { as: key }), 'onboarding');
   me = await expectOk(c.get('/me', { as: key }));
@@ -55,217 +55,270 @@ await expectOk(c.post('/auth/login', { email: 'a@test.kr', password: 'password1'
 await expectOk(c.post('/auth/logout', {}, { as: 'tmp' }));
 await expectFail(c.get('/me', { as: 'tmp' }), 401, 'logged out');
 
-// 2. 라운드 + 제안 + 심사
-const round = await expectOk(c.post('/admin/rounds', { name: '2026 라운드 1', start_date: today, end_date: '2027-02-01', status: 'open' }, { as: 'admin' }));
-await expectFail(c.post('/challenges', { type: 'group', title: 'x', field_code: 'S-01', summary: 'x' }, { as: 'b' }), 403, 'L2 cannot propose group');
-const prop = await expectOk(c.post('/challenges', { type: 'group', title: '동네 카페 인스타 운영 대행 3곳', field_code: 'S-04', round_id: round.id, summary: '자영업자 3곳의 인스타를 월 10만 원에 대행', proposal: { pain: '자영업자는 SNS 할 시간이 없다', product: '월 8개 게시물 대행', first_sale_plan: '단골 카페 사장님 3명', preset: 'basic', ownership: 'A' } }, { as: 'a' }), 'propose');
-eq(prop.stage, 'review');
-await expectFail(c.get(`/challenges/${prop.id}`, { as: 'b' }), 403, 'review stage hidden from others');
-const queue = await expectOk(c.get('/admin/challenges', { as: 'admin' }));
-eq(queue.length, 1);
-await expectFail(c.post(`/admin/challenges/${prop.id}/review`, { scores: { asset: 2, pain: 2, speed: 2, accrue: 2, cost: 2, roles: 2 }, decision: 'approve' }, { as: 'admin' }), 400, 'low score cannot approve');
-await expectOk(c.post(`/admin/challenges/${prop.id}/review`, { scores: { asset: 3, pain: 3, speed: 3, accrue: 3, cost: 3, roles: 3 }, decision: 'revise', comment: '첫 고객 후보를 더 구체적으로' }, { as: 'admin' }));
-eq((await c.get(`/challenges/${prop.id}`, { as: 'a' })).data.stage, 'proposed');
-await expectOk(c.put(`/challenges/${prop.id}/proposal`, { proposal: { first_sale_plan: '카페 A·B·C 사장님과 11/20 미팅' } }, { as: 'a' }));
-await expectOk(c.post(`/challenges/${prop.id}/resubmit`, {}, { as: 'a' }));
-const rv = await expectOk(c.post(`/admin/challenges/${prop.id}/review`, { scores: { asset: 4, pain: 4, speed: 4, accrue: 3, cost: 4, roles: 4 }, decision: 'approve', comment: '좋습니다' }, { as: 'admin' }));
-eq(rv.stage, 'recruiting'); eq(rv.review.total, 34.5, 'weighted score');
-console.log('제안·심사 ok');
+// 한국 시각 문자열 (분 단위로 앞뒤로 옮김)
+const kstAt = min => new Date(Date.now() + 9 * 3600e3 + min * 60e3).toISOString().slice(0, 16);
+const DAY = 24 * 60;
 
-// 3. 모집 → 지원 → 수락
-await expectFail(c.post(`/challenges/${prop.id}/apply`, { note: 'x' }, { as: 'e' }), 403, 'L1 cannot apply');
-for (const k of ['b', 'c', 'd']) await expectOk(c.post(`/challenges/${prop.id}/apply`, { note: '주 5시간 가능, 사진 촬영 가능' }, { as: k }));
-await expectFail(c.post(`/challenges/${prop.id}/apply`, { note: 'x' }, { as: 'b' }), 400, 'duplicate apply');
-await expectFail(c.post(`/challenges/${prop.id}/stage`, { stage: 'agreement' }, { as: 'a' }), 400, 'min members');
-let det = await expectOk(c.get(`/challenges/${prop.id}`, { as: 'a' }));
-eq(det.applicants.length, 3);
-await expectOk(c.post(`/challenges/${prop.id}/members/${B.id}`, { action: 'accept', role: 'maker' }, { as: 'a' }));
-await expectOk(c.post(`/challenges/${prop.id}/members/${C.id}`, { action: 'accept', role: 'marketing' }, { as: 'a' }));
-await expectOk(c.post(`/challenges/${prop.id}/members/${D.id}`, { action: 'accept', role: 'accounting' }, { as: 'a' }));
-await expectFail(c.post(`/challenges/${prop.id}/members/${B.id}`, { action: 'accept' }, { as: 'c' }), 403, 'non-leader cannot accept');
-await expectOk(c.post(`/challenges/${prop.id}/stage`, { stage: 'agreement' }, { as: 'a' }));
-console.log('모집 ok');
+// 2. 모집 시즌 + 그룹리더 신청·승인
+const round = await expectOk(c.post('/admin/rounds', { name: '2026 겨울 시즌', start_date: today, end_date: '2027-02-01', status: 'open' }, { as: 'admin' }));
+await expectFail(c.post('/groups', { type: 'challenge', title: 'x', field_code: 'S-01', summary: 'x' }, { as: 'b' }), 403, 'not approved leader cannot create');
+await expectFail(c.post('/me/leader', { kind: 'challenge', topic: '', plan: 'x' }, { as: 'a' }), 400, 'leader application needs topic');
+const la = await expectOk(c.post('/me/leader', { kind: 'challenge', topic: '동네 가게 인스타 운영 대행', plan: '주 1회 온라인 모임, 8주 안에 첫 고객 1곳', experience: '마케팅 3년', time: '주 6시간', field_code: 'S-04' }, { as: 'a' }));
+await expectFail(c.post('/me/leader', { kind: 'study', topic: 'x', plan: 'y' }, { as: 'a' }), 400, 'duplicate pending application');
+eq((await expectOk(c.get('/me/leader', { as: 'a' }))).application.status, 'pending');
+const ql = await expectOk(c.get('/admin/leaders', { as: 'admin' }));
+ok(ql.applications.length === 1 && ql.applications[0].form.topic === '동네 가게 인스타 운영 대행', 'leader queue');
+await expectFail(c.post(`/admin/leader-applications/${la.id}`, { decision: 'reject' }, { as: 'admin' }), 400, 'reject needs note');
+await expectFail(c.post(`/admin/leader-applications/${la.id}`, { decision: 'approve' }, { as: 'b' }), 403, 'member cannot approve');
+await expectOk(c.post(`/admin/leader-applications/${la.id}`, { decision: 'approve', note: '첫 그룹 응원합니다' }, { as: 'admin' }));
+await expectFail(c.post(`/admin/leader-applications/${la.id}`, { decision: 'approve' }, { as: 'admin' }), 400, 'already decided');
+eq((await expectOk(c.get('/me', { as: 'a' }))).can_lead, true, 'A can lead');
+await expectOk(c.post(`/admin/users/${C.id}/leader`, { on: true, reason: '정기모임 발제 3회' }, { as: 'admin' }), 'grant leader directly');
+console.log('그룹리더 승인 ok');
 
-// 4. 합의서
-const roles = [{ user_id: A.id, role: 'leader' }, { user_id: B.id, role: 'maker', planned_share: 0.4 }, { user_id: C.id, role: 'marketing', planned_share: 0.35 }, { user_id: D.id, role: 'accounting', planned_share: 0.25 }];
-await expectFail(c.post(`/groups/${prop.id}/agreement`, { clauses: { preset: 'basic', ratios: { hq: 0.3, leader: 0.3, pool: 0.4 }, ownership_type: 'A', roles } }, { as: 'a' }), 400, 'hq ratio range');
-await expectFail(c.post(`/groups/${prop.id}/agreement`, { clauses: { preset: 'basic', ownership_type: 'C', roles } }, { as: 'a' }), 400, 'C type only official');
-await expectFail(c.post(`/groups/${prop.id}/agreement`, { clauses: { preset: 'basic', ownership_type: 'A', roles, budget_cap_group: 900000 } }, { as: 'a' }), 400, 'budget cap');
-await expectFail(c.post(`/groups/${prop.id}/settlements`, {}, { as: 'a' }), 400, 'no settlement before locked agreement');
-await expectOk(c.post(`/groups/${prop.id}/agreement`, { clauses: { preset: 'basic', ownership_type: 'A', roles, settlement_mode: 'leader', checkin_day: '수', special_terms: '라운드 후 계정은 그룹장이 유지' } }, { as: 'a' }), 'agreement');
-await expectFail(c.post(`/groups/${prop.id}/agreement/sign`, { agree: true }, { as: 'e' }), 403, 'outsider cannot sign');
-for (const k of ['a', 'b', 'c']) eq((await expectOk(c.post(`/groups/${prop.id}/agreement/sign`, { agree: true }, { as: k }))).all_signed, false);
-const sg = await expectOk(c.post(`/groups/${prop.id}/agreement/sign`, { agree: true }, { as: 'd' }));
-eq(sg.all_signed, true, 'all signed');
-const agq = await expectOk(c.get('/admin/agreements', { as: 'admin' }));
-eq(agq[0].status, 'signed');
-await expectOk(c.post(`/admin/agreements/${agq[0].id}`, { approve: true }, { as: 'admin' }));
-det = await expectOk(c.get(`/challenges/${prop.id}`, { as: 'a' }));
-eq(det.stage, 'active', 'challenge active after approval'); eq(det.milestones.length, 4, 'milestones created');
-console.log('합의서 ok');
+// 3. 그룹 만들기 · 참여
+const policy = { min_rate: 70, late_minutes: 10, late_per_absence: 2, warn_absences: 2, warn_on_low_rate: true, rate_after: 2, kick_warnings: 2, auto_remove: false, excuse: true, excuse_limit: 1, checkin_before: 30 };
+await expectFail(c.post('/groups', { type: 'challenge', title: '', field_code: 'S-04', summary: 'x' }, { as: 'a' }), 400, 'title required');
+await expectFail(c.post('/groups', { type: 'party', title: 'x', field_code: 'S-04', summary: 'x' }, { as: 'a' }), 400, 'bad type');
+await expectFail(c.post('/groups', { type: 'challenge', title: 'x', field_code: 'S-04', summary: 'x', chat_url: 'kakao' }, { as: 'a' }), 400, 'chat url must be link');
+const g1 = await expectOk(c.post('/groups', {
+  type: 'challenge', title: '동네 가게 인스타 운영 대행', field_code: 'S-04', summary: '동네 가게 3곳의 인스타를 대신 운영해 보고 첫 고객을 만든다',
+  description: '매주 화요일 21시 온라인으로 모여 진행을 공유합니다.', goal_text: '8주 안에 유료 고객 1곳, 매출 30만 원', goal_metric: 'revenue', goal_target: 300000,
+  start_date: today, end_date: '2027-01-20', schedule_text: '매주 화 21시 온라인', capacity: 5, join_mode: 'approval', chat_url: 'https://open.kakao.com/o/test', policy,
+  milestones: [{ title: '가게 사장님 5명 인터뷰', due_date: today }, { title: '첫 제안서 발송' }],
+}, { as: 'a' }));
+const g2 = await expectOk(c.post('/groups', { type: 'study', title: 'AI 자동화 스터디', field_code: 'S-06', summary: '업무 자동화 도구를 하나씩 써 보고 정리한다', join_mode: 'open', capacity: 6,
+  policy: { warn_absences: 1, kick_warnings: 1, auto_remove: true, min_rate: 0 } }, { as: 'a' }));
+await expectFail(c.post('/groups', { type: 'study', title: '세 번째', field_code: 'S-01', summary: 'x' }, { as: 'a' }), 400, 'leader max groups');
+const list = await expectOk(c.get('/groups', { as: 'e' }));
+ok(list.length === 2 && list.find(x => x.id === g1.id).type_name === '도전그룹' && list.find(x => x.id === g2.id).type_name === '학습그룹', 'group list');
+eq((await expectOk(c.get('/groups?type=study', { as: 'e' }))).length, 1, 'type filter');
+const g1v = await expectOk(c.get(`/groups/${g1.id}`, { as: 'e' }));
+ok(g1v.group.chat_url === null && g1v.join.can && g1v.join.mode === 'approval' && g1v.milestones.length === 2 && g1v.goal.target === 300000 && g1v.group.policy.min_rate === 70, 'outsider view hides chat link');
+for (const k of ['b', 'd', 'e', 'f']) eq((await expectOk(c.post(`/groups/${g1.id}/join`, { note: '함께하고 싶습니다' }, { as: k }))).status, 'applied', 'apply ' + k);
+await expectFail(c.post(`/groups/${g1.id}/join`, {}, { as: 'b' }), 400, 'already applied');
+await expectFail(c.post(`/groups/${g1.id}/members/${B.id}`, { action: 'approve' }, { as: 'd' }), 403, 'applicant cannot approve');
+const apView = await expectOk(c.get(`/groups/${g1.id}`, { as: 'a' }));
+eq(apView.applicants.length, 4, 'leader sees applicants');
+for (const u of [B, D, E, F]) await expectOk(c.post(`/groups/${g1.id}/members/${u.id}`, { action: 'approve' }, { as: 'a' }));
+eq((await c.post(`/groups/${g1.id}/join`, {}, { as: 'c' })).status, 400, 'group full (capacity 5)');
+eq((await expectOk(c.post(`/groups/${g2.id}/join`, {}, { as: 'c' }))).status, 'active', 'open group joins directly');
+await expectOk(c.post(`/groups/${g1.id}/leave`, { note: '회사 일이 바빠졌습니다' }, { as: 'f' }));
+await expectFail(c.post(`/groups/${g1.id}/leave`, {}, { as: 'a' }), 400, 'leader cannot leave');
+await expectOk(c.post(`/groups/${g1.id}/members/${B.id}`, { action: 'role', role: 'sub' }, { as: 'a' }));
+await expectFail(c.post(`/groups/${g1.id}/members/${D.id}`, { action: 'role', role: 'sub' }, { as: 'b' }), 403, 'sub cannot change roles');
+await expectOk(c.post(`/groups/${g1.id}/stage`, { stage: 'active' }, { as: 'a' }));
+await expectFail(c.post(`/groups/${g1.id}/stage`, { stage: 'stopped' }, { as: 'a' }), 403, 'leader cannot stop');
+const g1m = await expectOk(c.get(`/groups/${g1.id}`, { as: 'd' }));
+ok(g1m.group.chat_url && g1m.me.is_member && !g1m.me.is_manager && g1m.members.length === 4, 'member view');
+// 과거 모임 출석을 시험하려고 가입 시각을 앞당긴다
+db.db.exec(`UPDATE group_members SET joined_at = datetime('now','-10 days') WHERE challenge_id IN (${g1.id}, ${g2.id})`);
+console.log('그룹 만들기·참여 ok');
 
-// 5. 실행: 체크인, 완료 기록, 열람 권한
-await expectFail(c.post(`/groups/${prop.id}/checkins`, { week_no: 1 }, { as: 'b' }), 403, 'only leader opens checkin');
-const ck = await expectOk(c.post(`/groups/${prop.id}/checkins`, { week_no: 1 }, { as: 'a' }));
-await expectFail(c.post(`/groups/${prop.id}/checkins`, { week_no: 1 }, { as: 'a' }), 400, 'duplicate week');
-for (const k of ['a', 'b', 'c']) await expectOk(c.post(`/groups/${prop.id}/checkins/${ck.id}/entries`, { done: ['첫 미팅'], goals: ['게시물 4개'], hours: 5 }, { as: k }));
-// D는 1주차 미제출 → 출석률 0
-const ck2 = await expectOk(c.post(`/groups/${prop.id}/checkins`, { week_no: 2 }, { as: 'a' }));
-for (const k of ['a', 'b', 'c', 'd']) await expectOk(c.post(`/groups/${prop.id}/checkins/${ck2.id}/entries`, { done: ['게시물 발행'], goals: ['고객 미팅'], hours: 4 }, { as: k }));
-const logs = [];
-for (let i = 0; i < 3; i++) logs.push((await expectOk(c.post(`/groups/${prop.id}/done-logs`, { text: `게시물 ${i + 1} 발행`, shared: true }, { as: 'b' }))).id);
-logs.push((await expectOk(c.post(`/groups/${prop.id}/done-logs`, { text: '카페 A 계약', shared: true }, { as: 'c' }))).id);
-await expectFail(c.post(`/groups/${prop.id}/done-logs/${logs[0]}`, { action: 'confirm' }, { as: 'b' }), 403, 'self confirm blocked');
-for (const id of logs) await expectOk(c.post(`/groups/${prop.id}/done-logs/${id}`, { action: 'confirm' }, { as: 'a' }));
-await expectFail(c.post(`/groups/${prop.id}/done-logs`, { text: 'x' }, { as: 'e' }), 403, 'outsider cannot log');
-// 열람: L1은 그룹 공간 불가, L3는 열람 가능(장부 제외)
-await expectFail(c.get(`/groups/${prop.id}`, { as: 'e' }), 403, 'L1 cannot view group logs');
-const fview = await expectOk(c.get(`/groups/${prop.id}`, { as: 'f' }));
-eq([fview.is_member, fview.ledger === undefined, fview.done_logs.length], [false, true, 4], 'L3 sees logs but not ledger');
-const bview = await expectOk(c.get(`/groups/${prop.id}`, { as: 'b' }));
-ok(Array.isArray(bview.ledger) && bview.contribution.length === 3, 'member sees ledger & contribution');
-const card = await expectOk(c.get(`/challenges/${prop.id}`, { as: 'e' }));
-eq([card.can_see_logs, card.proposal === undefined], [false, true], 'L1 sees card without logs/proposal');
-// 포인트: B = 완료기록 2건(하루 상한 2) ×5 + 체크인 2회 중 하루 상한 1 → 20 = 30
-const bpts = await expectOk(c.get('/me/points', { as: 'b' }));
-eq(bpts.totals.total, 30, 'B points with daily caps');
-// 마일스톤 완료 체크
-const ms = (await expectOk(c.get(`/groups/${prop.id}`, { as: 'a' }))).milestones;
-await expectFail(c.post(`/groups/${prop.id}/milestones/${ms[0].id}`, { done: true }, { as: 'b' }), 403, 'only leader marks milestone');
-await expectOk(c.post(`/groups/${prop.id}/milestones/${ms[0].id}`, { done: true, evidence: 'https://example.com/plan' }, { as: 'a' }));
-ok((await expectOk(c.get(`/groups/${prop.id}`, { as: 'a' }))).milestones[0].done_at, 'milestone done');
-console.log('실행·열람 ok');
+// 4. 모임 일정 · 출석 · 경고 · 퇴출
+await expectFail(c.post(`/groups/${g1.id}/sessions`, { title: '주간 모임', starts_at: kstAt(60) }, { as: 'd' }), 403, 'member cannot add session');
+await expectFail(c.post(`/groups/${g1.id}/sessions`, { title: '주간 모임', starts_at: '내일 9시' }, { as: 'a' }), 400, 'bad datetime');
+const past = await expectOk(c.post(`/groups/${g1.id}/sessions`, { title: '주간 모임', starts_at: kstAt(-6 * DAY), mode: 'online', place: 'https://meet.example.com/x', agenda: '이번 주 진행 공유', repeat_weeks: 0 }, { as: 'b' }));
+const s = [past.ids[0]];
+for (const d of [5, 4, 3]) s.push((await expectOk(c.post(`/groups/${g1.id}/sessions`, { title: '주간 모임', starts_at: kstAt(-d * DAY), mode: 'offline', place: '성수 카페' }, { as: 'a' }))).ids[0]);
+const fut = await expectOk(c.post(`/groups/${g1.id}/sessions`, { title: '정기 점검', starts_at: kstAt(3 * DAY), repeat_weeks: 1 }, { as: 'a' }));
+eq(fut.ids.length, 2, 'repeat weekly creates 2');
+ok((await expectOk(c.get('/me/notifications', { as: 'd' }))).some(n => n.title.includes('모임 일정')), 'members notified of sessions');
+// 참석 예정·불참 알림
+await expectFail(c.post(`/groups/${g1.id}/sessions/${fut.ids[0]}/rsvp`, { rsvp: 'no' }, { as: 'd' }), 400, 'absence needs reason');
+eq((await expectOk(c.post(`/groups/${g1.id}/sessions/${fut.ids[0]}/rsvp`, { rsvp: 'no', note: '출장' }, { as: 'd' }))).excuse, true, 'early notice can be excused');
+await expectOk(c.post(`/groups/${g1.id}/sessions/${fut.ids[0]}/rsvp`, { rsvp: 'yes' }, { as: 'e' }));
+await expectFail(c.post(`/groups/${g1.id}/sessions/${fut.ids[1]}/open`, {}, { as: 'a' }), 400, 'cannot open far-future session');
+await expectFail(c.post(`/groups/${g1.id}/sessions/${fut.ids[0]}/close`, {}, { as: 'a' }), 400, 'cannot close before start');
+// 1회차: B 코드 입력(지각), E 공결(리더 표시), D 미표시 → 결석
+await expectFail(c.post(`/groups/${g1.id}/sessions/${s[0]}/checkin`, { code: '0000' }, { as: 'b' }), 400, 'not open yet');
+const op = await expectOk(c.post(`/groups/${g1.id}/sessions/${s[0]}/open`, {}, { as: 'a' }));
+ok(/^\d{4}$/.test(op.code), 'attendance code');
+await expectFail(c.post(`/groups/${g1.id}/sessions/${s[0]}/checkin`, { code: op.code === '0000' ? '1111' : '0000' }, { as: 'b' }), 400, 'wrong code');
+eq((await expectOk(c.post(`/groups/${g1.id}/sessions/${s[0]}/checkin`, { code: op.code }, { as: 'b' }))).status, 'late', 'late after 10 minutes');
+eq((await expectOk(c.post(`/groups/${g1.id}/sessions/${s[0]}/checkin`, { code: op.code }, { as: 'b' }))).already, true, 'checkin idempotent');
+await expectFail(c.post(`/groups/${g1.id}/sessions/${s[0]}/mark`, { user_id: E.id, status: 'excused' }, { as: 'd' }), 403, 'member cannot mark');
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[0]}/mark`, { user_id: E.id, status: 'excused' }, { as: 'a' }));
+await expectFail(c.post(`/groups/${g1.id}/sessions/${s[0]}/mark`, { user_id: E.id, status: 'sleep' }, { as: 'a' }), 400, 'bad status');
+const c1 = await expectOk(c.post(`/groups/${g1.id}/sessions/${s[0]}/close`, {}, { as: 'b' }));
+eq(c1.warned.length, 0, 'no warning yet');
+await expectFail(c.post(`/groups/${g1.id}/sessions/${s[0]}/close`, {}, { as: 'a' }), 400, 'already closed');
+eq(db.db.prepare('SELECT status FROM session_attendance WHERE session_id = ? AND user_id = ?').get(s[0], D.id).status, 'absent', 'unmarked → absent');
+// 2회차: B 지각, E 출석, D 결석 → D 연속 결석 2회 + 출석률 미달 경고, B는 지각 2회 = 결석 1회로 출석률 50% 경고
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[1]}/open`, {}, { as: 'a' }));
+const code2 = db.db.prepare('SELECT code FROM group_sessions WHERE id = ?').get(s[1]).code;
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[1]}/checkin`, { code: code2 }, { as: 'b' }));
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[1]}/mark`, { user_id: E.id, status: 'present' }, { as: 'a' }));
+const c2 = await expectOk(c.post(`/groups/${g1.id}/sessions/${s[1]}/close`, {}, { as: 'a' }));
+ok(c2.warned.some(w => w.user_id === D.id) && c2.warned.some(w => w.user_id === B.id) && c2.kick.length === 0, 'warnings on 2nd session');
+ok(db.db.prepare('SELECT reason FROM group_warnings WHERE user_id = ? AND challenge_id = ?').get(D.id, g1.id).reason.includes('연속 결석 2회'), 'streak reason');
+ok((await expectOk(c.get('/me/notifications', { as: 'd' }))).some(n => n.title.includes('출석 경고 1회')), 'warning notified');
+// 3회차: D 결석(연속 3회 → 새 경고 없음), E 출석
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[2]}/open`, {}, { as: 'a' }));
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[2]}/mark`, { user_id: E.id, status: 'present' }, { as: 'a' }));
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[2]}/mark`, { user_id: B.id, status: 'late' }, { as: 'a' }));
+eq((await expectOk(c.post(`/groups/${g1.id}/sessions/${s[2]}/close`, {}, { as: 'a' }))).warned.length, 0, 'no repeated warning');
+// 4회차: D 연속 4회 → 경고 2회 → 퇴출 대상 (자동 퇴출 꺼짐)
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[3]}/open`, {}, { as: 'a' }));
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[3]}/mark`, { user_id: E.id, status: 'present' }, { as: 'a' }));
+await expectOk(c.post(`/groups/${g1.id}/sessions/${s[3]}/mark`, { user_id: B.id, status: 'late' }, { as: 'a' }));
+const c4 = await expectOk(c.post(`/groups/${g1.id}/sessions/${s[3]}/close`, {}, { as: 'a' }));
+ok(c4.kick.length === 1 && c4.kick[0].user_id === D.id && !c4.kick[0].removed, 'kick candidate');
+ok((await expectOk(c.get('/me/notifications', { as: 'a' }))).some(n => n.title.includes('퇴출 기준')), 'leader told about kick candidate');
+const lv = await expectOk(c.get(`/groups/${g1.id}`, { as: 'a' }));
+const dm = lv.members.find(m => m.user_id === D.id), bm = lv.members.find(m => m.user_id === B.id), em = lv.members.find(m => m.user_id === E.id);
+ok(dm.attendance.streak === 4 && dm.attendance.rate === 0 && dm.warnings === 2, 'D stats');
+ok(bm.attendance.late === 4 && bm.attendance.late_as_absence === 2 && bm.attendance.rate === 50 && bm.warnings === 1, 'B late conversion');
+ok(em.attendance.excused === 1 && em.attendance.rate === 100, 'E excused not counted');
+ok(lv.kick_candidates.length === 1 && lv.matrix.sessions.length === 4 && lv.matrix.cells.length >= 12, 'leader matrix');
+eq(db.db.prepare("SELECT COUNT(*) AS c FROM points_ledger WHERE user_id = ? AND action = 'group_attend'").get(E.id).c, 2, 'attendance points (daily cap 2)');
+// 경고 취소 · 퇴출 · 이의 신청
+const bw = lv.warnings.find(w => w.user_id === B.id);
+await expectOk(c.post(`/groups/${g1.id}/members/${B.id}`, { action: 'clear_warning', warning_id: bw.id }, { as: 'a' }));
+await expectFail(c.post(`/groups/${g1.id}/members/${E.id}`, { action: 'warn' }, { as: 'a' }), 400, 'manual warning needs reason');
+await expectOk(c.post(`/groups/${g1.id}/members/${E.id}`, { action: 'warn', reason: '자료 공유 약속을 두 번 지키지 않음' }, { as: 'b' }));
+await expectFail(c.post(`/groups/${g1.id}/members/${D.id}`, { action: 'remove' }, { as: 'a' }), 400, 'remove needs reason');
+await expectFail(c.post(`/groups/${g1.id}/members/${D.id}`, { action: 'remove', reason: 'x' }, { as: 'b' }), 403, 'sub cannot remove');
+await expectFail(c.post(`/groups/${g1.id}/appeal`, { note: 'x' }, { as: 'd' }), 400, 'appeal only after removal');
+await expectOk(c.post(`/groups/${g1.id}/members/${D.id}`, { action: 'remove', reason: '출석 경고 2회 (연속 결석 4회)' }, { as: 'a' }));
+eq(db.db.prepare('SELECT status, leave_type FROM group_members WHERE challenge_id = ? AND user_id = ?').get(g1.id, D.id), { status: 'removed', leave_type: 'leader' }, 'D removed');
+await expectFail(c.post(`/groups/${g1.id}/logs`, { body: 'x' }, { as: 'd' }), 403, 'removed member cannot write');
+await expectOk(c.post(`/groups/${g1.id}/appeal`, { note: '출장 일정이 겹쳤는데 미리 말씀드리지 못했습니다' }, { as: 'd' }));
+await expectFail(c.post(`/groups/${g1.id}/appeal`, { note: '다시' }, { as: 'd' }), 400, 'duplicate appeal');
+// 학습그룹: 결석 1회 경고 1회 → 자동 퇴출
+const gs = await expectOk(c.post(`/groups/${g2.id}/sessions`, { title: '도구 실습', starts_at: kstAt(-2 * DAY) }, { as: 'a' }));
+await expectOk(c.post(`/groups/${g2.id}/sessions/${gs.ids[0]}/open`, {}, { as: 'a' }));
+const ac = await expectOk(c.post(`/groups/${g2.id}/sessions/${gs.ids[0]}/close`, {}, { as: 'a' }));
+ok(ac.kick.length === 1 && ac.kick[0].removed && ac.kick[0].user_id === C.id, 'auto removal');
+eq(db.db.prepare('SELECT leave_type FROM group_members WHERE challenge_id = ? AND user_id = ?').get(g2.id, C.id).leave_type, 'attendance');
+const rj = await expectOk(c.post(`/groups/${g2.id}/join`, { note: '다시 열심히 하겠습니다' }, { as: 'c' }));
+eq(rj.status, 'applied', 'removed member re-joins via approval even in open group');
+await expectOk(c.post(`/groups/${g2.id}/members/${C.id}`, { action: 'approve' }, { as: 'a' }));
+// 열어 두고 잊은 출석은 끝난 뒤 12시간이 지나면 자동 마감
+const old = await expectOk(c.post(`/groups/${g2.id}/sessions`, { title: '저녁 실습', starts_at: kstAt(-20 * 60), duration_min: 60 }, { as: 'a' }));
+await expectOk(c.post(`/groups/${g2.id}/sessions/${old.ids[0]}/open`, {}, { as: 'a' }));
+await expectOk(c.get(`/groups/${g2.id}`, { as: 'a' }));
+eq(db.db.prepare('SELECT status FROM group_sessions WHERE id = ?').get(old.ids[0]).status, 'closed', 'auto closed');
+console.log('모임·출석·경고·퇴출 ok');
 
-// 6. 장부
-await expectOk(c.post(`/groups/${prop.id}/ledger`, { kind: 'revenue', entry_date: today, amount: 1200000, channel: '대행료 3곳 × 4개월', is_external: true }, { as: 'a' }));
-for (const k of ['a', 'b', 'c', 'd']) await expectOk(c.post(`/groups/${prop.id}/ledger`, { kind: 'expense', entry_date: today, amount: 50000, category: '촬영 소품', payer_type: 'member' }, { as: k }));
-await expectFail(c.post(`/groups/${prop.id}/ledger`, { kind: 'expense', entry_date: today, amount: 100000, payer_type: 'hq' }, { as: 'a' }), 400, 'member cannot record hq advance');
-await expectOk(c.post(`/groups/${prop.id}/ledger`, { kind: 'expense', entry_date: today, amount: 100000, category: '광고비 선지원', payer_type: 'hq' }, { as: 'admin' }));
-const gv = await expectOk(c.get(`/groups/${prop.id}`, { as: 'a' }));
-eq([gv.ledger_totals.revenue_external, gv.ledger_totals.expenses, gv.ledger_totals.member_contrib, gv.ledger_totals.hq_advance], [1200000, 300000, 200000, 100000], 'ledger totals');
-console.log('장부 ok');
+// 5. 도전 기록 · 공지 · 공유 · 마일스톤 · 성과
+await expectFail(c.post(`/groups/${g1.id}/logs`, { kind: 'notice', body: '공지' }, { as: 'e' }), 403, 'notice by managers only');
+const nt = await expectOk(c.post(`/groups/${g1.id}/logs`, { kind: 'notice', body: '다음 주는 오프라인으로 모입니다', pinned: true }, { as: 'a' }));
+const lg = await expectOk(c.post(`/groups/${g1.id}/logs`, { kind: 'progress', body: '사장님 3분 인터뷰 완료\n세 분 모두 사진 촬영을 가장 귀찮아하셨어요', link: 'https://example.com/note', share: true }, { as: 'e' }));
+ok(lg.post_id, 'shared to community');
+await expectFail(c.post(`/groups/${g1.id}/logs`, { body: 'x', link: 'ftp://x' }, { as: 'e' }), 400, 'link must be http');
+const lg2 = await expectOk(c.post(`/groups/${g1.id}/logs`, { kind: 'study', body: '인스타 릴스 편집 도구 비교 정리' }, { as: 'b' }));
+const gp = await expectOk(c.get(`/posts?board=group`, { as: 'f' }));
+ok(gp.some(p => p.id === lg.post_id && p.group_title === '동네 가게 인스타 운영 대행'), 'group board post');
+eq((await expectOk(c.post(`/groups/${g1.id}/logs/${lg.id}`, { action: 'cheer' }, { as: 'c' }))).on, true, 'cheer from another group');
+const outside = await expectOk(c.get(`/groups/${g1.id}`, { as: 'c' }));
+ok(outside.logs.every(l => l.post_id || l.kind === 'notice') && outside.logs.some(l => l.id === lg.id) && !outside.logs.some(l => l.id === lg2.id), 'non-member sees shared logs only');
+ok(!outside.members[0].attendance && !outside.sessions.some(x => x.place), 'non-member sees no attendance or meeting place');
+ok((await expectOk(c.get(`/groups/${g1.id}`, { as: 'f' }))).logs.some(l => l.id === lg2.id), 'L3 sees all group logs');
+await expectFail(c.post(`/groups/${g1.id}/logs/${lg2.id}`, { action: 'share' }, { as: 'e' }), 403, 'only author shares');
+await expectOk(c.post(`/groups/${g1.id}/logs/${lg2.id}`, { action: 'delete' }, { as: 'a' }), 'leader deletes log');
+const ms = (await expectOk(c.get(`/groups/${g1.id}`, { as: 'a' }))).milestones;
+await expectOk(c.post(`/groups/${g1.id}/milestones/${ms[0].id}`, { action: 'done', evidence: '인터뷰 메모 링크' }, { as: 'b' }));
+await expectOk(c.post(`/groups/${g1.id}/milestones`, { title: '첫 유료 계약', due_date: '2027-01-10' }, { as: 'a' }));
+await expectFail(c.post(`/groups/${g1.id}/results`, { metric: 'revenue', value: 0 }, { as: 'e' }), 400, 'result value > 0');
+await expectFail(c.post(`/groups/${g1.id}/results`, { metric: 'revenue', value: 1000, happened_on: '2099-01-01' }, { as: 'e' }), 400, 'future date');
+await expectFail(c.post(`/groups/${g1.id}/results`, { metric: 'custom', value: 3 }, { as: 'e' }), 400, 'custom needs label');
+const rs = await expectOk(c.post(`/groups/${g1.id}/results`, { metric: 'revenue', value: 120000, label: '꽃집 한 달 운영 대행', evidence: 'https://example.com/receipt', share: true }, { as: 'e' }));
+await expectOk(c.post(`/groups/${g1.id}/results`, { metric: 'customers', value: 1, label: '꽃집' }, { as: 'b' }));
+const gr = await expectOk(c.get(`/groups/${g1.id}`, { as: 'e' }));
+ok(gr.goal.value === 120000 && Math.abs(gr.goal.ratio - 0.4) < 1e-9 && gr.result_totals.length === 2, 'goal progress');
+ok((await expectOk(c.get('/admin/results', { as: 'admin' }))).some(r => r.id === rs.id), 'revenue waits for check');
+await expectFail(c.post(`/groups/${g1.id}/results/${rs.id}`, { action: 'verify' }, { as: 'a' }), 403, 'leader cannot verify');
+const vr = await expectOk(c.post(`/groups/${g1.id}/results/${rs.id}`, { action: 'verify' }, { as: 'admin' }));
+eq(vr.granted.sort(), [A.id, B.id, E.id].sort(), 'first sale badges to active members');
+await expectFail(c.post(`/groups/${g1.id}/results/${rs.id}`, { action: 'delete' }, { as: 'e' }), 400, 'verified result locked');
+ok((await c.get('/public/stats')).data.first_sales === 3, 'public first sales');
+ok((await expectOk(c.get('/groups', { as: 'f' }))).find(x => x.id === g1.id).goal_value === 120000, 'list goal value');
+console.log('기록·공유·성과 ok');
 
-// 7. 기여율 + 정산
-const draft = await expectOk(c.get(`/groups/${prop.id}/contribution`, { as: 'a' }));
-const byUser = Object.fromEntries(draft.map(d => [d.user_id, d]));
-ok(byUser[B.id].auto_share > byUser[D.id].auto_share, 'B (3 logs) > D (0 logs, missed checkin)');
-await expectFail(c.post(`/groups/${prop.id}/contribution`, { shares: draft.map(d => ({ user_id: d.user_id, share: d.user_id === B.id ? d.auto_share + 0.3 : d.auto_share - 0.15 })) }, { as: 'a' }), 400, 'adjust limit ±10pp');
-// 30/30/25 비율을 ±10pp 안에서 맞추기 어려우니 자동 산정값을 그대로 확정
-await expectOk(c.post(`/groups/${prop.id}/contribution`, { shares: draft.map(d => ({ user_id: d.user_id, share: d.auto_share })) }, { as: 'a' }));
-await expectFail(c.post(`/groups/${prop.id}/settlements`, {}, { as: 'b' }), 403, 'only leader settles');
-const st = await expectOk(c.post(`/groups/${prop.id}/settlements`, { period_start: '2026-01-01', period_end: today }, { as: 'a' }), 'settlement');
-eq([st.status, st.result.N, st.result.Mr, st.result.Hr, st.result.D, st.result.A, st.result.L, st.result.P], ['confirming', 900000, 200000, 100000, 600000, 60000, 180000, 360000], 'TC1 waterfall via API');
-eq(st.result.members.reduce((a, m) => a + m.gross, 0), 360000, 'pool fully distributed');
-await expectFail(c.post(`/groups/${prop.id}/settlements`, {}, { as: 'a' }), 400, 'one open settlement at a time');
-eq((await c.get(`/challenges/${prop.id}`, { as: 'a' })).data.stage, 'settling');
-await expectFail(c.get(`/settlements/${st.id}`, { as: 'e' }), 403, 'outsider cannot view settlement');
-// 확인/이의
-await expectOk(c.post(`/settlements/${st.id}/confirm`, { confirmed: true }, { as: 'b' }));
-await expectOk(c.post(`/settlements/${st.id}/confirm`, { confirmed: false, dispute_note: '제 완료 기록 하나가 빠진 것 같습니다' }, { as: 'd' }));
-eq((await c.get(`/settlements/${st.id}`, { as: 'a' })).data.status, 'disputed', 'dispute flips status');
-eq((await c.get('/admin/disputes', { as: 'admin' })).data.length, 1);
-await expectOk(c.post(`/settlements/${st.id}/confirm`, { confirmed: true }, { as: 'd' }), 'D confirms after group mediation');
-await expectOk(c.post(`/settlements/${st.id}/confirm`, { confirmed: true }, { as: 'c' }));
-await expectOk(c.post(`/settlements/${st.id}/confirm`, { confirmed: true }, { as: 'a' }));
-// 페이퍼 승인 전 검수 불가
-await expectFail(c.post(`/settlements/${st.id}/review`, { approve: true }, { as: 'admin' }), 400, 'paper required before payout');
-console.log('정산표 ok');
+// 6. 그룹 종료 · 완주 · 프로젝트 페이퍼
+const done = await expectOk(c.post(`/groups/${g1.id}/stage`, { stage: 'closed' }, { as: 'a' }));
+const byId = Object.fromEntries(done.completion.map(x => [x.user_id, x]));
+ok(byId[A.id].completed && byId[E.id].completed && !byId[B.id].completed, 'completion by attendance rule');
+eq(db.db.prepare("SELECT COUNT(*) AS c FROM badges WHERE user_id = ? AND code IN ('completion','leader_completion')").get(A.id).c, 2, 'leader gets both badges');
+eq(db.db.prepare("SELECT COUNT(*) AS c FROM group_sessions WHERE challenge_id = ? AND status = 'cancelled'").get(g1.id).c, 2, 'future sessions cancelled on close');
+await expectFail(c.post(`/groups/${g1.id}/stage`, { stage: 'active' }, { as: 'a' }), 400, 'leader cannot reopen');
+const pf = await expectOk(c.get(`/groups/${g1.id}/paper/prefill`, { as: 'a' }));
+ok(pf.revenue_external === 120000 && pf.sessions === 4 && pf.customers_count === 1 && pf.milestones.length === 1, 'paper prefill');
+await expectFail(c.post(`/groups/${g1.id}/paper`, { form: {} }, { as: 'e' }), 403, 'paper by leader');
+const pp = await expectOk(c.post(`/groups/${g1.id}/paper`, { form: { pain: '가게 사장님들이 SNS 사진 찍을 시간이 없다', product: '월 4회 촬영과 게시 대행', revenue_external: 120000, customers: 1, hours: 60, state: 'ongoing', good: ['인터뷰를 먼저 했다'], bad: ['가격을 늦게 정했다'] }, publish_scope: 'public', submit: true }, { as: 'a' }));
+await expectOk(c.post(`/admin/papers/${pp.id}/review`, { decision: 'approve', note: '좋습니다' }, { as: 'admin' }));
+const pubPapers = (await c.get('/public/papers')).data;
+ok(pubPapers.some(x => x.id === pp.id && x.summary.has_sales), 'public paper');
+const pv = await expectOk(c.get(`/papers/${pp.id}`, { as: 'c' }));
+ok(pv.full === false || pv.full === true, 'paper view');
+console.log('완주·페이퍼 ok');
 
-// 8. 페이퍼
-const pre = await expectOk(c.get(`/groups/${prop.id}/paper/prefill`, { as: 'a' }));
-eq([pre.revenue_external, pre.expenses, pre.hours, pre.has_sales], [1200000, 300000, 31, true], 'prefill from ledger/checkins');
-await expectFail(c.post(`/groups/${prop.id}/paper`, { form: { pain: 'x' } }, { as: 'b' }), 403, 'only leader writes paper');
-const paper = await expectOk(c.post(`/groups/${prop.id}/paper`, { form: { name: pre.name, pain: '자영업자는 SNS 할 시간이 없다', product: '월 8개 게시물 대행', revenue_external: 1200000, expenses: 300000, customers: 3, hours: 31, state: 'ongoing', good: ['단골 관계에서 첫 계약', '역할 분담이 명확했다'], bad: ['촬영 일정 조율이 힘들었다'], next: '계약서 양식을 먼저 만든다', to_next: '첫 고객은 아는 사람에게서 나옵니다' }, private_fields: ['expenses'], publish_scope: 'public', submit: true }, { as: 'a' }), 'paper submit');
-eq(paper.status, 'review');
-await expectFail(c.post(`/groups/${prop.id}/paper`, { form: { pain: 'y' } }, { as: 'a' }), 400, 'submitted paper locked');
-const pq = await expectOk(c.get('/admin/papers', { as: 'admin' }));
-eq(pq.length, 1);
-await expectOk(c.post(`/admin/papers/${paper.id}/review`, { decision: 'approve', note: '좋은 기록입니다' }, { as: 'admin' }));
-// 공개: 비회원 요약, L1 요약, L3 전문(비공개 항목 가림), 그룹원 전문
-const pubList = await expectOk(c.get('/public/papers'));
-eq(pubList.length, 1); eq(pubList[0].summary.revenue_external, undefined, 'exact revenue never in public summary'); eq(pubList[0].summary.has_sales, true);
-const pE = await expectOk(c.get(`/papers/${paper.id}`, { as: 'e' }));
-eq(pE.full, false, 'L1 summary only');
-const pF = await expectOk(c.get(`/papers/${paper.id}`, { as: 'f' }));
-eq([pF.full, pF.form.expenses, pF.form.revenue_external], [true, null, 1200000], 'L3 full with private field masked');
-const pB = await expectOk(c.get(`/papers/${paper.id}`, { as: 'b' }));
-eq(pB.form.expenses, 300000, 'member sees private field');
-eq((await c.get('/public/stats')).data.papers, 1);
-console.log('페이퍼 ok');
+// 7. 정기모임 · 발제 · 성과발표회
+const ev = await expectOk(c.post('/admin/events', { type: 'regular', title: '12월 정기모임', starts_at: kstAt(10 * DAY).replace('T', ' ') + ':00', location: '서울 성수', mode: 'hybrid', online_url: 'https://meet.example.com/regular', topics: ['idea', 'ai', 'nope'], attendance_code: 'MD12' }, { as: 'admin' }));
+const showcase = await expectOk(c.post('/admin/events', { type: 'showcase', title: '겨울 성과발표회', starts_at: kstAt(20 * DAY).replace('T', ' ') + ':00', location: '서울 성수' }, { as: 'admin' }));
+await expectOk(c.post(`/events/${ev.id}/register`, {}, { as: 'e' }));
+const evE = await expectOk(c.get('/events', { as: 'e' }));
+const evRow = evE.events.find(x => x.id === ev.id);
+ok(evRow.online_url === 'https://meet.example.com/regular' && evRow.topics === 'idea,ai' && evRow.topic_names.includes('AI 활용') && evRow.type_name === '정기모임' && !('attendance_code' in evRow), 'event for registered member');
+eq((await expectOk(c.get('/events', { as: 'b' }))).events.find(x => x.id === ev.id).online_url, null, 'online link hidden for unregistered');
+const tp1 = await expectOk(c.post(`/events/${ev.id}/presentations`, { title: '요즘 뜨는 AI 상세페이지 도구 3가지' }, { as: 'b' }));
+await expectFail(c.post(`/events/${ev.id}/presentations`, { title: '두 번째' }, { as: 'b' }), 400, 'one presentation per event');
+await expectFail(c.post(`/events/${showcase.id}/presentations`, { title: '개인 발표' }, { as: 'b' }), 400, 'showcase needs group');
+await expectFail(c.post(`/events/${showcase.id}/presentations`, { title: '그룹 발표', challenge_id: g1.id }, { as: 'e' }), 403, 'showcase by group manager');
+const sp = await expectOk(c.post(`/events/${showcase.id}/presentations`, { title: '동네 가게 인스타 대행 8주 이야기', challenge_id: g1.id }, { as: 'a' }));
+await expectOk(c.post(`/admin/presentations/${tp1.id}`, { status: 'confirmed' }, { as: 'admin' }));
+await expectOk(c.post(`/admin/presentations/${tp1.id}`, { status: 'presented' }, { as: 'admin' }));
+await expectOk(c.post(`/admin/presentations/${tp1.id}`, { status: 'presented' }, { as: 'admin' }));
+eq(db.db.prepare("SELECT COUNT(*) AS c FROM points_ledger WHERE user_id = ? AND action = 'topic_present'").get(B.id).c, 1, 'presentation points once');
+ok((await expectOk(c.get('/events', { as: 'f' }))).events.find(x => x.id === ev.id).presentations.some(p => p.id === tp1.id), 'confirmed presentation visible');
+ok((await expectOk(c.get(`/admin/events/${showcase.id}`, { as: 'admin' }))).presentations.some(p => p.id === sp.id && p.group_title), 'admin sees showcase signups');
+{ const q = await expectOk(c.get('/admin/presentations', { as: 'admin' }));
+  ok(q.some(p => p.id === sp.id && p.event_title && p.group_title) && !q.some(p => p.id === tp1.id), 'admin presentation queue (presented ones drop out)');
+  await expectFail(c.get('/admin/presentations', { as: 'b' }), 403, 'presentation queue staff only'); }
+{ const mk = await expectOk(c.get(`/groups/${g1.id}/sessions/${(await expectOk(c.get(`/groups/${g1.id}`, { as: 'a' }))).sessions[0].id}/marks`, { as: 'a' }));
+  ok(Array.isArray(mk), 'session marks for manager'); }
+await expectFail(c.post(`/events/${ev.id}/attend`, { code: 'WRONG' }, { as: 'e' }), 400, 'wrong attendance code');
+await expectOk(c.post(`/events/${ev.id}/attend`, { code: 'md12' }, { as: 'e' }));
+console.log('정기모임·발표 ok');
 
-// 9. 정산 검수 → 지급
-await expectOk(c.post(`/settlements/${st.id}/review`, { approve: true, note: '장부 확인 완료' }, { as: 'admin' }), 'settlement review');
-let sv = await expectOk(c.get(`/settlements/${st.id}`, { as: 'a' }));
-eq(sv.status, 'reviewed');
-const sum = sv.payouts.reduce((a, p) => a + p.gross, 0);
-eq(sum, 900000, 'payouts sum to N');
-ok(sv.payouts.find(p => p.kind === 'hq' && p.user_id == null && p.gross === 60000), 'hq payout row');
-ok(sv.payouts.find(p => p.kind === 'leader' && p.user_id === A.id && p.gross === 180000 && p.withholding === 5940), 'leader payout w/ 3.3%');
-await expectFail(c.post(`/settlements/${st.id}/payouts/${sv.payouts[0].id}`, { status: 'paid' }, { as: 'b' }), 403, 'member cannot mark paid');
-for (const p of sv.payouts) await expectOk(c.post(`/settlements/${st.id}/payouts/${p.id}`, { status: 'paid' }, { as: 'a' }));
-sv = await expectOk(c.get(`/settlements/${st.id}`, { as: 'a' }));
-eq(sv.status, 'paid', 'all paid');
-// 완주 처리 → 배지
-await expectOk(c.post(`/admin/challenges/${prop.id}/complete`, {}, { as: 'admin' }));
-const meA = await expectOk(c.get('/me', { as: 'a' }));
-ok(meA.badges.some(b => b.code === 'leader_completion') && meA.badges.some(b => b.code === 'completion'), 'leader badges');
-const meB = await expectOk(c.get('/me', { as: 'b' }));
-ok(meB.badges.some(b => b.code === 'completion'), 'member completion badge');
-eq(meB.progress.next, 'L3'); eq(meB.progress.eligible, true, 'B eligible for L3');
-const pr = await expectOk(c.post('/me/promotion', { note: '라운드 완주', evidence: '페이퍼 #1' }, { as: 'b' }));
-await expectFail(c.post('/me/promotion', { note: 'x' }, { as: 'b' }), 400, 'one pending request');
-await expectFail(c.post('/me/promotion', { note: 'x' }, { as: 'e' }), 400, 'L1→L2 is automatic, not by request');
-const prq = await expectOk(c.get('/admin/promotions', { as: 'admin' }));
-eq(prq[0].progress.eligible, true);
-await expectOk(c.post(`/admin/promotions/${pr.id}`, { decision: 'approve', note: '축하합니다' }, { as: 'admin' }));
-eq((await c.get('/me', { as: 'b' })).data.level, 'L3', 'B promoted to L3');
-await expectOk(c.post(`/challenges/${prop.id}/stage`, { stage: 'closed' }, { as: 'admin' }));
-console.log('검수·지급·승급 ok');
-
-// 10. 커뮤니티 · 이벤트 · 자동 승급(설정 변경)
+// 8. 커뮤니티 · 피드 · 설정 · 대시보드
 await expectFail(c.post('/posts', { board: 'share', title: '월 300 보장 방법', body: '이 방법이면 수익 보장됩니다' }, { as: 'b' }), 400, 'banned phrase');
 await expectFail(c.post('/posts', { board: 'notice', title: 'x', body: 'y' }, { as: 'b' }), 403, 'notice staff only');
-await expectFail(c.get('/posts?board=swap', { as: 'e' }), 403, 'swap board L2+');
+await expectFail(c.post('/posts', { board: 'group', title: 'x', body: 'y' }, { as: 'b' }), 400, 'group board needs group');
+await expectFail(c.post('/posts', { board: 'group', title: 'x', body: 'y', challenge_id: g2.id }, { as: 'b' }), 403, 'only own group');
 const po = await expectOk(c.post('/posts', { board: 'question', title: '첫 계약서 양식 어떻게 쓰셨나요?', body: '카페 사장님과 구두로만 합의했는데 문서가 필요할까요?' }, { as: 'c' }));
-await expectOk(c.post(`/posts/${po.id}/comments`, { body: '간단한 1장짜리 합의서라도 쓰는 게 좋았습니다' }, { as: 'b' }));
+const idea = await expectOk(c.post('/posts', { board: 'idea', title: '동네 사진관 예약 대행 어떨까요', body: '사장님들이 예약 관리를 힘들어합니다' }, { as: 'e' }));
+await expectOk(c.post(`/posts/${po.id}/comments`, { body: '간단한 1장짜리 확인서라도 쓰는 게 좋았습니다' }, { as: 'b' }));
 await expectFail(c.post(`/posts/${po.id}/helpful`, {}, { as: 'c' }), 400, 'self helpful');
 eq((await expectOk(c.post(`/posts/${po.id}/helpful`, {}, { as: 'd' }))).on, true);
 const pview = await expectOk(c.get(`/posts/${po.id}`, { as: 'e' }));
 eq([pview.helpful_count, pview.comments.length], [1, 1]);
 const feed = await expectOk(c.get('/feed', { as: 'e' }));
-ok(feed.some(f => f.kind === 'done') && feed.some(f => f.kind === 'post') && feed.some(f => f.kind === 'badge'), 'feed kinds');
-const ev = await expectOk(c.post('/admin/events', { type: 'machal_day', title: '11월 마챌데이', starts_at: '2026-11-25 19:30:00', location: '서울 성수', attendance_code: 'MD11' }, { as: 'admin' }));
-await expectOk(c.post(`/events/${ev.id}/register`, {}, { as: 'e' }));
-await expectFail(c.post(`/events/${ev.id}/attend`, { code: 'WRONG' }, { as: 'e' }), 400, 'wrong attendance code');
-await expectOk(c.post(`/events/${ev.id}/attend`, { code: 'md11' }, { as: 'e' }));
-const evs = await expectOk(c.get('/events', { as: 'e' }));
-eq([evs[0].my_status, evs[0].attendance_code], ['attended', undefined], 'attended; code hidden from members');
-// 설정 변경으로 L2 자동 승급 조건을 낮추고 자산 진단 제출 → 자동 승급
+ok(feed.some(f => f.kind === 'group') && feed.some(f => f.kind === 'post') && feed.some(f => f.kind === 'badge'), 'feed kinds');
 await expectFail(c.put('/admin/settings', { key: 'levels', value: { L2: { points: 30 } } }, { as: 'admin' }), 400, 'settings change needs reason');
 await expectOk(c.put('/admin/settings', { key: 'levels', value: { L2: { points: 30, require_asset_diag: true, require_event: 1, min_days: 0 } }, reason: '테스트용 조건 완화' }, { as: 'admin' }));
-await expectFail(c.put('/admin/settings', { key: 'evil', value: 1, reason: 'x' }, { as: 'admin' }), 400, 'unknown setting key');
+await expectFail(c.put('/admin/settings', { key: 'presets', value: {}, reason: 'x' }, { as: 'admin' }), 400, 'revenue presets gone');
 eq((await c.get('/public/levels')).data.rules.L2.points, 30, 'settings override visible');
 const diag = await expectOk(c.post('/me/asset-diag', { time: '주 6시간', skills: '사진, 엑셀' }, { as: 'e' }));
 eq(diag.promoted, true, 'auto promotion to L2 after conditions met');
 eq((await c.get('/me', { as: 'e' })).data.level, 'L2');
-// 운영 대시보드 · 감사 로그 · 공개 통계
 const dash = await expectOk(c.get('/admin/dashboard', { as: 'admin' }));
-ok(dash.first_sales === 0 && dash.completions === 4 && dash.queues.applications === 0, 'admin dashboard');
-await expectOk(c.post(`/admin/users/${C.id}`, { badge: 'first_sale', evidence: '카페 A 입금 확인' }, { as: 'admin' }));
-eq((await c.get('/public/stats')).data.first_sales, 1);
+ok(dash.first_sales === 3 && dash.completions >= 2 && dash.queues.applications === 0 && dash.kpi.sessions_30d >= 4 && dash.kpi.attendance_rate_30d !== null && dash.queues.disputes >= 1 && dash.queues.presentations >= 1, 'admin dashboard');
 ok((await expectOk(c.get('/admin/audit', { as: 'admin' }))).rows.length > 10, 'audit log');
 await expectFail(c.get('/admin/audit', { as: 'b' }), 403, 'staff only');
+// 회원 대시보드: 다가오는 모임 참석 여부, 리더 할 일
+const g3 = await expectOk(c.post('/groups', { type: 'study', title: '상세페이지 글쓰기 스터디', field_code: 'S-01', summary: '매주 한 편씩 써 보고 서로 고친다', join_mode: 'open' }, { as: 'c' }));
+await expectOk(c.post(`/groups/${g3.id}/join`, {}, { as: 'b' }));
+await expectOk(c.post(`/groups/${g3.id}/sessions`, { title: '첫 모임', starts_at: kstAt(2 * DAY) }, { as: 'c' }));
 const dB = await expectOk(c.get('/dashboard', { as: 'b' }));
-ok(dB.me && Array.isArray(dB.tasks) && Array.isArray(dB.feed), 'member dashboard');
-console.log('커뮤니티·이벤트·설정 ok');
+ok(dB.me && dB.groups.some(g => g.id === g3.id && g.next_session) && dB.tasks.some(t => t.type === 'rsvp') && Array.isArray(dB.feed), 'member dashboard');
+await expectOk(c.post(`/groups/${g3.id}/join`, {}, { as: 'd' }));
+const dC = await expectOk(c.get('/dashboard', { as: 'c' }));
+ok(dC.groups.find(g => g.id === g3.id).role === 'leader', 'leader dashboard');
+console.log('커뮤니티·피드·설정·대시보드 ok');
 
-// 11. 중단 흐름 + 이월 정산 + 솔로 챌린지
-const solo = await expectOk(c.post('/challenges', { type: 'solo', title: '노션 템플릿 1개 판매', field_code: 'S-02', summary: '혼자 하는 챌린지' }, { as: 'e' }));
-eq(solo.stage, 'active', 'solo starts immediately');
-await expectFail(c.post(`/challenges/${solo.id}/apply`, { note: 'x' }, { as: 'b' }), 400, 'cannot apply to solo');
-await expectOk(c.post(`/challenges/${solo.id}/stage`, { stage: 'stopped' }, { as: 'e' }));
-eq((await c.get('/public/stats')).data.closed.stopped, 1);
-// 비밀번호 변경 · 임시 비밀번호
+// 9. 비밀번호 변경 · 임시 비밀번호
 await expectFail(c.put('/me/password', { current: 'wrong', next: 'newpass123' }, { as: 'c' }), 400, 'wrong current password');
 await expectOk(c.put('/me/password', { current: 'password1', next: 'newpass123' }, { as: 'c' }));
 await expectFail(c.post('/auth/login', { email: 'c@test.kr', password: 'password1' }, { as: 'c2' }), 401, 'old password rejected');
@@ -274,7 +327,7 @@ const tp = await expectOk(c.post(`/admin/users/${C.id}`, { temp_password: true }
 ok(/^mc[0-9a-f]{8}$/.test(tp.temp_password), 'temp password issued');
 await expectFail(c.get('/me', { as: 'c2' }), 401, 'sessions cleared after temp password');
 await expectOk(c.post('/auth/login', { email: 'c@test.kr', password: tp.temp_password }, { as: 'c3' }));
-console.log('중단·솔로 ok');
+console.log('비밀번호 ok');
 
 // 12. v1.1 — 동의 기록 · 로그인 시도 제한 · CSV 내려받기 · 회원 탈퇴
 const consentRows = db.db.prepare("SELECT subject_type, kind, COUNT(*) AS c FROM consents GROUP BY subject_type, kind ORDER BY subject_type, kind").all().map(r => `${r.subject_type}:${r.kind}:${r.c}`);
@@ -288,7 +341,7 @@ const loginRes = await (await import('../functions/api/[[path]].js')).onRequest(
 const cookies = loginRes.headers.getSetCookie();
 ok(cookies.some(x => x.startsWith('machal_session=') && x.includes('HttpOnly')) && cookies.some(x => x.startsWith('machal_in=1') && !x.includes('HttpOnly')), 'session + marker cookies');
 await expectFail(c.get('/admin/export?table=users', { as: 'b' }), 403, 'export staff only');
-await expectFail(c.get('/admin/export?table=sessions', { as: 'admin' }), 400, 'export unknown table');
+await expectFail(c.get('/admin/export?table=login_attempts', { as: 'admin' }), 400, 'export unknown table');
 {
   const mod = await import('../functions/api/[[path]].js');
   const req = new Request('http://localhost/api/admin/export?table=users', { headers: { cookie: 'machal_session=' + c.jar.admin.replace('machal_session=', '') } });
@@ -298,8 +351,9 @@ await expectFail(c.get('/admin/export?table=sessions', { as: 'admin' }), 400, 'e
   ok(res.status === 200 && res.headers.get('content-type').startsWith('text/csv') && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF, 'csv with BOM');
   ok(text.split('\r\n')[0].includes('email') && !text.includes('password_hash'), 'csv columns safe');
 }
-// 탈퇴: 진행 중인 챌린지가 있으면 막고, 없으면 익명화
+// 탈퇴: 이끄는 그룹이 진행 중이면 막고, 아니면 익명화
 await expectFail(c.post('/me/withdraw', { password: 'wrong' }, { as: 'f' }), 400, 'withdraw wrong password');
+await expectFail(c.post('/me/withdraw', { password: 'password1' }, { as: 'a' }), 400, 'leader of running group cannot withdraw');
 const fUser = await expectOk(c.get('/me', { as: 'f' }));
 await expectOk(c.post('/me/withdraw', { password: 'password1' }, { as: 'f' }), 'withdraw');
 await expectFail(c.get('/me', { as: 'f' }), 401, 'withdrawn session gone');
@@ -321,20 +375,35 @@ console.log('v1.1 동의·로그인 제한·내보내기·탈퇴·파기 ok');
 
 
 
-// 13. v1.2 — 운영본부 콘솔
+// 13. v1.2·v2.0 — 운영본부 콘솔과 스키마 보강
 {
   const { FakeD1 } = await import('./harness.js');
-  const { runMigrations } = await import('../functions/_lib/admin-routes.js');
-  const { readFileSync } = await import('node:fs');
-  // 예전(v1.1) 스키마 DB에 새 열이 붙는지 확인
-  const oldSql = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8')
-    .replace(/^\s*recruit_until TEXT,.*$/m, '').replace(/^\s*status TEXT NOT NULL DEFAULT 'scheduled',.*$/m, '').replace(/^\s*hidden INTEGER NOT NULL DEFAULT 0,\s+-- v1\.2.*$/m, '').replace(/^\s*scroll INTEGER,.*$/m, '');
-  const old = new FakeD1(); old.db.exec(oldSql);
+  const { runMigrations, MIGRATIONS } = await import('../functions/_lib/admin-routes.js');
+  // 예전(v1.3) 스키마의 핵심 표만 만들어 새 열이 붙고 자료가 옮겨지는지 확인
+  const old = new FakeD1();
+  old.db.exec(`CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE TABLE users (id INTEGER PRIMARY KEY, nickname TEXT, level TEXT, status TEXT DEFAULT 'active');
+    CREATE TABLE rounds (id INTEGER PRIMARY KEY, name TEXT);
+    CREATE TABLE comments (id INTEGER PRIMARY KEY, body TEXT);
+    CREATE TABLE analytics_events (id INTEGER PRIMARY KEY, day TEXT);
+    CREATE TABLE challenges (id INTEGER PRIMARY KEY, title TEXT, type TEXT, stage TEXT, leader_id INTEGER);
+    CREATE TABLE group_members (id INTEGER PRIMARY KEY, challenge_id INTEGER, user_id INTEGER, role TEXT, status TEXT);
+    CREATE TABLE events (id INTEGER PRIMARY KEY, type TEXT, title TEXT);
+    CREATE TABLE posts (id INTEGER PRIMARY KEY, board TEXT);
+    INSERT INTO users (id, nickname, level) VALUES (1, '그룹장', 'L4'), (2, '그룹원', 'L2');
+    INSERT INTO challenges VALUES (1, '정산 중', 'group', 'settling', 1), (2, '심사 중', 'group', 'review', 2), (3, '솔로', 'solo', 'active', 2);
+    INSERT INTO group_members VALUES (1, 1, 1, 'leader', 'active'), (2, 1, 2, 'maker', 'active');
+    INSERT INTO events VALUES (1, 'machal_day', '마챌데이'), (2, 'demo_day', '데모데이');
+    INSERT INTO posts VALUES (1, 'swap');`);
   const cols = t => old.db.prepare(`PRAGMA table_info(${t})`).all().map(r => r.name);
-  ok(!cols('rounds').includes('recruit_until') && !cols('events').includes('status') && !cols('comments').includes('hidden'), 'old schema lacks v1.2 columns');
   await runMigrations(old); await runMigrations(old);
-  ok(cols('rounds').includes('recruit_until') && cols('events').includes('status') && cols('comments').includes('hidden') && cols('analytics_events').includes('scroll'), 'migrations add columns');
-  eq(old.db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get().c, 4, 'migrations recorded once');
+  ok(cols('users').includes('can_lead') && cols('challenges').includes('policy') && cols('challenges').includes('goal_metric') && cols('events').includes('topics') && cols('group_members').includes('leave_note'), 'migrations add v2 columns');
+  eq(old.db.prepare('SELECT stage, type FROM challenges ORDER BY id').all().map(r => r.stage + ':' + r.type), ['active:challenge', 'stopped:challenge', 'active:challenge'], 'old stages mapped');
+  eq(old.db.prepare("SELECT role FROM group_members WHERE id = 2").get().role, 'member', 'old roles mapped');
+  eq(old.db.prepare('SELECT type FROM events ORDER BY id').all().map(r => r.type), ['regular', 'showcase'], 'old event types mapped');
+  eq(old.db.prepare('SELECT board FROM posts').get().board, 'share', 'swap board moved');
+  eq(old.db.prepare('SELECT can_lead FROM users ORDER BY id').all().map(r => r.can_lead), [1, 1], 'existing group leaders keep leading');
+  eq(old.db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get().c, MIGRATIONS.length, 'migrations recorded once');
 }
 eq((await expectOk(c.get('/me', { as: 'admin' }))).is_owner, true, 'setup account is owner');
 eq((await expectOk(c.get('/me', { as: 'b' }))).is_owner, false);
@@ -344,9 +413,10 @@ await expectOk(c.post('/admin/staff', { action: 'grant', who: 'b@test.kr' }, { a
 const staffList = await expectOk(c.get('/admin/staff', { as: 'b' }));
 ok(staffList.rows.length === 2 && staffList.me.is_owner === false && staffList.rows.find(r => r.is_owner).email === 'admin@machal.kr', 'staff list');
 await expectOk(c.get('/admin/dashboard', { as: 'b' }), 'staff sees dashboard');
-await expectFail(c.put('/admin/settings', { key: 'min_group', value: 2, reason: 'x' }, { as: 'b' }), 403, 'non-owner cannot change settings');
+await expectFail(c.put('/admin/settings', { key: 'groups', value: { capacity_default: 6 }, reason: 'x' }, { as: 'b' }), 403, 'non-owner cannot change settings');
 await expectFail(c.get('/admin/export?table=users', { as: 'b' }), 403, 'non-owner cannot export PII');
-await expectOk(c.get('/admin/export?table=ledger', { as: 'b' }), 'staff can export ledger');
+await expectOk(c.get('/admin/export?table=attendance', { as: 'b' }), 'staff can export attendance');
+await expectFail(c.get('/admin/export?table=ledger', { as: 'b' }), 400, 'ledger export gone');
 await expectFail(c.post(`/admin/users/${admin.id}`, { status: 'dormant' }, { as: 'b' }), 403, 'staff cannot touch other staff');
 await expectFail(c.post(`/admin/users/${C.id}`, { role: 'staff' }, { as: 'b' }), 403, 'staff cannot change roles');
 await expectFail(c.post('/admin/staff', { action: 'remove_owner', who: 'admin@machal.kr' }, { as: 'admin' }), 400, 'last owner stays');
@@ -362,38 +432,41 @@ const sr = await expectOk(c.get('/admin/search?q=test.kr', { as: 'admin' }));
 ok(sr.users.length > 0, 'search users');
 const ul = await expectOk(c.get('/admin/users?level=L3&sort=points', { as: 'admin' }));
 ok(ul.total >= 1 && ul.rows.every(r => r.level === 'L3'), 'user filter');
+await expectOk(c.post(`/admin/users/${C.id}`, { badge: 'first_sale', evidence: '카페 A 입금 확인' }, { as: 'admin' }));
 const cd = await expectOk(c.get(`/admin/users/${C.id}`, { as: 'admin' }));
-ok(cd.user.id === C.id && cd.groups.length > 0 && cd.badges.some(x => x.code === 'first_sale') && cd.points.total > 0 && cd.progress && !('password_hash' in cd.user), 'user detail');
+ok(cd.user.id === C.id && cd.user.can_lead === 1 && cd.groups.length > 0 && cd.groups.some(g => g.attendance && g.role_name) && cd.badges.some(x => x.code === 'first_sale') && cd.points.total > 0 && cd.progress && !('password_hash' in cd.user), 'user detail');
 const note = await expectOk(c.post('/admin/notes', { ref_type: 'user', ref_id: C.id, body: '첫 매출 인증 자료 원본은 메일로 받음' }, { as: 'b' }));
 eq((await expectOk(c.get(`/admin/users/${C.id}`, { as: 'admin' }))).notes.length, 1, 'note visible');
 await expectOk(c.del(`/admin/notes/${note.id}`, { as: 'admin' }), 'owner deletes note');
 // 그룹 모니터링
 const groups = await expectOk(c.get('/admin/groups', { as: 'admin' }));
-ok(groups.length >= 2 && groups.every(g => 'health' in g && 'checkin_rate' in g), 'groups list');
-const gd = await expectOk(c.get(`/admin/groups/${groups.find(g => g.type === 'group').id}`, { as: 'admin' }));
-ok(gd.members.length > 0 && Array.isArray(gd.checkins) && gd.ledger && Array.isArray(gd.history), 'group detail');
-await expectFail(c.post(`/admin/groups/${solo.id}/stage`, { stage: 'closed' }, { as: 'admin' }), 400, 'stage change needs reason');
-await expectOk(c.post(`/admin/groups/${solo.id}/stage`, { stage: 'closed', reason: '본인 요청으로 종료' }, { as: 'admin' }));
-eq((await expectOk(c.get(`/admin/groups/${solo.id}`, { as: 'admin' }))).challenge.stage, 'closed');
-// 지급 · 재원
-const pays = await expectOk(c.get('/admin/payouts?status=paid', { as: 'admin' }));
-ok(pays.rows.length > 0 && pays.totals.length > 0, 'payouts list');
-await expectFail(c.post('/admin/payouts/bulk', { status: 'paid', ids: [] }, { as: 'admin' }), 400, 'bulk needs ids');
-await expectOk(c.post('/admin/hq/expenses', { spent_on: today, category: 'casebook', amount: 120000, memo: '사례집 인쇄' }, { as: 'admin' }));
-await expectFail(c.post('/admin/hq/expenses', { spent_on: today, category: 'party', amount: 1 }, { as: 'admin' }), 400, 'hq category');
-const hq = await expectOk(c.get('/admin/hq', { as: 'admin' }));
-ok(hq.quarters.length >= 1 && hq.quarters[0].spent === 120000 && hq.quarters[0].income > 0, 'hq report');
-const pub = (await c.get('/public/hq-report')).data;
-ok(pub.quarters[0].by_category.casebook === 120000 && !('refund_hq' in pub.quarters[0]), 'public hq report');
+ok(groups.length >= 3 && groups.every(g => 'health' in g && 'recent_rate' in g && 'warnings' in g), 'groups list');
+const gd = await expectOk(c.get(`/admin/groups/${g1.id}`, { as: 'admin' }));
+ok(gd.members.length >= 4 && gd.sessions.length >= 4 && gd.warnings.length >= 2 && gd.results.some(r => r.verified_at) && Array.isArray(gd.history), 'group detail');
+await expectFail(c.post(`/admin/groups/${g3.id}/stage`, { stage: 'stopped' }, { as: 'admin' }), 400, 'stage change needs reason');
+await expectOk(c.post(`/admin/groups/${g3.id}/stage`, { stage: 'stopped', reason: '그룹리더 요청으로 잠시 멈춤' }, { as: 'admin' }));
+eq((await expectOk(c.get(`/admin/groups/${g3.id}`, { as: 'admin' }))).group.stage, 'stopped');
+ok(!(await expectOk(c.get('/groups', { as: 'e' }))).some(x => x.id === g3.id), 'stopped group hidden from list');
+await expectOk(c.post(`/admin/groups/${g3.id}/stage`, { stage: 'active', reason: '다시 시작' }, { as: 'admin' }));
+await expectOk(c.post(`/admin/groups/${g2.id}/leader`, { user_id: C.id, reason: '리더 교대' }, { as: 'admin' }));
+eq((await expectOk(c.get(`/groups/${g2.id}`, { as: 'c3' }))).me.is_leader, true, 'leader changed');
+// 그룹리더 목록 · 자격 해제
+const lead = await expectOk(c.get('/admin/leaders?view=decided', { as: 'admin' }));
+ok(lead.applications.length >= 1 && lead.leaders.some(l => l.id === A.id), 'leaders list');
+await expectFail(c.post(`/admin/users/${C.id}/leader`, { on: false }, { as: 'admin' }), 400, 'revoke needs reason');
+await expectFail(c.post(`/admin/users/${C.id}/leader`, { on: false, reason: 'x' }, { as: 'admin' }), 400, 'cannot revoke while leading');
+await expectOk(c.post(`/admin/users/${A.id}/leader`, { on: false, reason: '활동 중단' }, { as: 'admin' }));
+await expectFail(c.post('/groups', { type: 'study', title: 'x', field_code: 'S-01', summary: 'y' }, { as: 'a' }), 403, 'revoked leader cannot create');
 // 단체 알림
 {
   let n = 0; for (const lv of ['L3', 'L4', 'L5']) n += (await expectOk(c.get(`/admin/users?level=${lv}&status=active`, { as: 'admin' }))).total;
   eq((await expectOk(c.get('/admin/broadcast/preview?type=level&level=L3', { as: 'admin' }))).count, n, 'segment count');
+  ok((await expectOk(c.get('/admin/broadcast/preview?type=leaders', { as: 'admin' }))).count >= 1 && (await expectOk(c.get('/admin/broadcast/preview?type=in_groups', { as: 'admin' }))).count >= 3, 'group segments');
 }
 await expectFail(c.post('/admin/broadcast', { type: 'challenge', title: 'x' }, { as: 'admin' }), 400, 'challenge segment needs id');
-const bc = await expectOk(c.post('/admin/broadcast', { type: 'all', title: '12월 마챌데이 장소 안내', body: '성수동으로 바뀝니다', link: '#/events', post_notice: true }, { as: 'admin' }));
+const bc = await expectOk(c.post('/admin/broadcast', { type: 'all', title: '12월 정기모임 장소 안내', body: '성수동으로 바뀝니다', link: '#/events', post_notice: true }, { as: 'admin' }));
 ok(bc.recipients >= 5 && bc.post_id, 'broadcast sent');
-ok((await expectOk(c.get('/me/notifications', { as: 'd' }))).some(n => n.title === '12월 마챌데이 장소 안내'), 'member got broadcast');
+ok((await expectOk(c.get('/me/notifications', { as: 'd' }))).some(n => n.title === '12월 정기모임 장소 안내'), 'member got broadcast');
 eq((await expectOk(c.get('/admin/broadcasts', { as: 'admin' })))[0].recipients, bc.recipients);
 // 커뮤니티 관리
 await expectOk(c.post(`/posts/${po.id}/report`, { note: '광고 같아요' }, { as: 'd' }));
@@ -414,7 +487,7 @@ eq(db.db.prepare("SELECT COUNT(*) AS c FROM points_ledger WHERE user_id = ? AND 
 const evd = await expectOk(c.get(`/admin/events/${ev2.id}`, { as: 'admin' }));
 eq(evd.registrations[0].status, 'attended');
 await expectOk(c.put(`/admin/events/${ev2.id}`, { status: 'cancelled', reason: '강사 일정 변경' }, { as: 'admin' }));
-ok(!(await expectOk(c.get('/events', { as: 'd' }))).some(x => x.id === ev2.id), 'cancelled event hidden for members');
+ok(!(await expectOk(c.get('/events', { as: 'd' }))).events.some(x => x.id === ev2.id), 'cancelled event hidden for members');
 ok(!(await c.get('/public/events')).data.some(x => x.id === ev2.id), 'cancelled hidden publicly');
 await expectFail(c.post(`/events/${ev2.id}/register`, {}, { as: 'e' }), 400, 'cannot register cancelled');
 ok((await expectOk(c.get('/me/notifications', { as: 'd' }))).some(n => n.title === '신청한 일정이 취소됐습니다'), 'cancel notice');
@@ -435,7 +508,7 @@ const au2 = await expectOk(c.get('/admin/audit?limit=5', { as: 'admin' }));
 ok(au2.rows.length === 5 && au2.next_before, 'audit paging');
 ok((await expectOk(c.get(`/admin/audit?limit=5&before=${au2.next_before}`, { as: 'admin' }))).rows[0].id < au2.next_before, 'audit next page');
 const sys = await expectOk(c.get('/admin/system', { as: 'b' }));
-ok(sys.tables.length === 39 && sys.migrations.length === 4, 'system info');
+{ const { MIGRATIONS } = await import('../functions/_lib/admin-routes.js'); ok(sys.tables.length === 37 && sys.migrations.length === MIGRATIONS.length, 'system info'); }
 await expectFail(c.get('/admin/backup', { as: 'b' }), 403, 'backup owner only');
 const bk = await expectOk(c.get('/admin/backup', { as: 'admin' }));
 ok(bk.tables.users.length > 0 && !('password_hash' in bk.tables.users[0]) && !bk.tables.sessions, 'backup safe');
@@ -487,7 +560,7 @@ ok(db.db.prepare("SELECT user_id FROM analytics_events WHERE vid = 'vmemd0001' L
 {
   const ins = db.db.prepare('INSERT INTO analytics_events (day, hour, vid, sid, user_id, kind, area, path, title, source, ref_host, target, label, zone, dur, device, is_new, entry) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
   const kst = d => new Date(Date.now() + 9 * 3600e3 - d * 86400e3).toISOString().slice(0, 10);
-  const pages = [['/', '마이챌린지'], ['/how-it-works/', '운영 방식'], ['/rules/', '수익 배분 규칙'], ['/guide/side-project-start/', '사이드프로젝트 시작'], ['/guide/side-income-tax/', '부업 소득 세금'], ['/faq/', '자주 묻는 질문'], ['/apply/', '가입 신청'], ['/levels/', '등급과 포인트']];
+  const pages = [['/', '마이챌린지'], ['/how-it-works/', '운영 방식'], ['/goals/', '수익목표'], ['/guide/side-project-start/', '사이드프로젝트 시작'], ['/guide/side-income-tax/', '부업 소득 세금'], ['/faq/', '자주 묻는 질문'], ['/apply/', '가입 신청'], ['/levels/', '등급과 포인트']];
   const srcs = [['네이버 검색', 'search.naver.com'], ['직접 방문', null], ['인스타그램', 'instagram.com'], ['구글 검색', 'google.com'], ['네이버 블로그', 'blog.naver.com']];
   let seed = 7; const rnd = n => { seed = (seed * 9301 + 49297) % 233280; return Math.floor(seed / 233280 * n); };
   for (let d = 29; d >= 1; d--) {
@@ -521,7 +594,7 @@ ok(kc.site.find(x => x.path === '/').views > 10 && kc.guides.length >= 2 && kc.f
 const km = await expectOk(c.get('/admin/kpi/members?range=30', { as: 'admin' }));
 ok(km.list.length >= 4 && km.funnel.length === 6 && km.levels.length === 6 && km.mau >= 1 && km.list.find(x => x.id === D.id).views >= 2, 'kpi members');
 const kg = await expectOk(c.get('/admin/kpi/groups?range=30', { as: 'admin' }));
-ok(kg.groups.length >= 1 && kg.totals.min === 4 && 'participation' in kg.totals && Array.isArray(kg.events) && kg.by_field.length === 6, 'kpi groups');
+ok(kg.groups.length >= 3 && kg.totals.sessions >= 4 && kg.totals.group_attendance !== null && kg.totals.warnings >= 3 && 'participation' in kg.totals && Array.isArray(kg.events) && kg.by_field.length === 6 && kg.series.sessions.length === 30, 'kpi groups');
 const kcm = await expectOk(c.get('/admin/kpi/community?range=30', { as: 'admin' }));
 ok(kcm.cur.posts >= 1 && kcm.top.length >= 1 && kcm.top.find(x => x.id === po.id)?.views >= 1, 'kpi community');
 // 기간 직접 고르기

@@ -140,38 +140,36 @@ export function registerKpiRoutes(on) {
     };
   }
 
-  // 활동 회원: 회원 공간 방문 또는 기록(체크인·완료·글·댓글·출석·장부)이 있는 회원
-  const ACTIVE_SQL = `SELECT DISTINCT uid FROM (
-      SELECT user_id AS uid, day FROM analytics_events WHERE user_id IS NOT NULL
-      UNION ALL SELECT user_id, ${K('submitted_at')} FROM checkin_entries
-      UNION ALL SELECT user_id, ${K('created_at')} FROM done_logs
+  // 활동 회원: 회원 공간 방문 또는 기록(그룹 모임 출석·도전 기록·성과 기록·글·댓글·정기모임 출석)이 있는 회원
+  const ACT_UNION = `SELECT user_id AS uid, day FROM analytics_events WHERE user_id IS NOT NULL
+      UNION ALL SELECT user_id, ${K('checked_at')} FROM session_attendance WHERE status IN ('present','late') AND checked_at IS NOT NULL
+      UNION ALL SELECT user_id, ${K('created_at')} FROM group_logs WHERE deleted_at IS NULL
+      UNION ALL SELECT user_id, ${K('created_at')} FROM group_results WHERE deleted_at IS NULL
       UNION ALL SELECT author_id, ${K('created_at')} FROM posts
       UNION ALL SELECT author_id, ${K('created_at')} FROM comments
-      UNION ALL SELECT user_id, ${K('attended_at')} FROM registrations WHERE status = 'attended'
-      UNION ALL SELECT entered_by, ${K('created_at')} FROM ledger_entries
-    ) a JOIN users u ON u.id = a.uid WHERE u.role = 'member' AND a.day BETWEEN ? AND ?`;
+      UNION ALL SELECT user_id, ${K('attended_at')} FROM registrations WHERE status = 'attended'`;
+  const ACTIVE_SQL = `SELECT DISTINCT uid FROM (${ACT_UNION}) a JOIN users u ON u.id = a.uid WHERE u.role = 'member' AND a.day BETWEEN ? AND ?`;
   const activeCount = (db, s, e) => c1(db, `SELECT COUNT(*) AS c FROM (${ACTIVE_SQL})`, s, e);
   const memberTotal = db => c1(db, "SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND status = 'active' AND level <> 'L0'");
 
-  async function checkinRate(db, s, e) {
-    const cks = await all(db, `SELECT ci.id, ci.challenge_id, ci.created_at, (SELECT COUNT(*) FROM checkin_entries x WHERE x.checkin_id = ci.id) AS subs,
-      (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = ci.challenge_id AND gm.status IN ('active','left') AND (gm.joined_at IS NULL OR gm.joined_at <= ci.created_at) AND (gm.left_at IS NULL OR gm.left_at > ci.created_at)) AS expected
-      FROM checkins ci WHERE ${K('ci.created_at')} BETWEEN ? AND ?`, s, e);
-    const subs = cks.reduce((t, r) => t + Math.min(r.subs, r.expected || r.subs), 0), exp = cks.reduce((t, r) => t + (r.expected || 0), 0);
-    return { checkins: cks.length, subs, expected: exp, rate: rate(subs, exp) };
+  // 그룹 모임 출석률: 기간 안에 마감한 모임에서 (출석+지각) ÷ (출석+지각+결석). 공결은 빼고 센다
+  async function groupAttendanceRate(db, s, e) {
+    const r = await one(db, `SELECT COUNT(DISTINCT gs.id) AS sessions, SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END) AS ok, SUM(CASE WHEN a.status IN ('present','late','absent') THEN 1 ELSE 0 END) AS n
+      FROM group_sessions gs LEFT JOIN session_attendance a ON a.session_id = gs.id WHERE gs.status = 'closed' AND substr(gs.starts_at, 1, 10) BETWEEN ? AND ?`, s, e);
+    return { sessions: Number(r?.sessions || 0), ok: Number(r?.ok || 0), n: Number(r?.n || 0), rate: rate(Number(r?.ok || 0), Number(r?.n || 0)) };
   }
   async function attendance(db, s, e) {
     const r = await one(db, `SELECT COUNT(*) AS reg, SUM(CASE WHEN r.status = 'attended' THEN 1 ELSE 0 END) AS att FROM registrations r JOIN events ev ON ev.id = r.event_id
       WHERE r.status <> 'cancelled' AND ev.status <> 'cancelled' AND substr(ev.starts_at, 1, 10) BETWEEN ? AND ?`, s, e);
     return { registered: Number(r?.reg || 0), attended: Number(r?.att || 0), rate: rate(Number(r?.att || 0), Number(r?.reg || 0)) };
   }
-  const RUNNING = "('recruiting','agreement','active','settling')";
-  async function groupNow(db, settings) {
-    const g = await all(db, `SELECT c.id, (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'active') AS n FROM challenges c WHERE c.type <> 'solo' AND c.stage IN ${RUNNING}`);
-    const min = settings.min_group ?? 4;
+  const RUNNING = "('recruiting','active')";
+  async function groupNow(db) {
+    const g = await all(db, `SELECT c.id, c.capacity, (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'active') AS n FROM challenges c WHERE c.stage IN ${RUNNING}`);
     const inGroup = await c1(db, `SELECT COUNT(DISTINCT gm.user_id) AS c FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id JOIN users u ON u.id = gm.user_id
       WHERE gm.status = 'active' AND c.stage IN ${RUNNING} AND u.role = 'member'`);
-    return { running: g.length, avg_size: g.length ? Math.round(g.reduce((t, r) => t + r.n, 0) / g.length * 10) / 10 : null, min_met: rate(g.filter(r => r.n >= min).length, g.length), in_group: inGroup };
+    return { running: g.length, avg_size: g.length ? Math.round(g.reduce((t, r) => t + r.n, 0) / g.length * 10) / 10 : null,
+      fill: g.length ? Math.round(g.reduce((t, r) => t + (r.capacity ? r.n / r.capacity : 0), 0) / g.length * 1000) / 10 : null, in_group: inGroup };
   }
 
   // ─────────────────────── 요약 ───────────────────────
@@ -185,20 +183,20 @@ export function registerKpiRoutes(on) {
       const onboarded = await c1(db, `SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND level <> 'L0' AND ${K('created_at')} BETWEEN ? AND ?`, s, e);
       const goals = await c1(db, "SELECT COUNT(DISTINCT sid) AS c FROM analytics_events WHERE kind = 'click' AND target = 'goal:apply' AND day BETWEEN ? AND ?", s, e);
       const active = await activeCount(db, s, e);
-      const ck = await checkinRate(db, s, e);
+      const ck = await groupAttendanceRate(db, s, e);
       const att = await attendance(db, s, e);
       const posts = await c1(db, `SELECT COUNT(*) AS c FROM posts x JOIN users u ON u.id = x.author_id WHERE u.role = 'member' AND x.hidden = 0 AND ${K('x.created_at')} BETWEEN ? AND ?`, s, e);
       const comments = await c1(db, `SELECT COUNT(*) AS c FROM comments x JOIN users u ON u.id = x.author_id WHERE u.role = 'member' AND x.hidden = 0 AND ${K('x.created_at')} BETWEEN ? AND ?`, s, e);
       const writers = await c1(db, `SELECT COUNT(DISTINCT uid) AS c FROM (SELECT author_id AS uid, created_at FROM posts WHERE hidden = 0 UNION ALL SELECT author_id, created_at FROM comments WHERE hidden = 0) x JOIN users u ON u.id = x.uid WHERE u.role = 'member' AND ${K('x.created_at')} BETWEEN ? AND ?`, s, e);
-      const opened = await c1(db, `SELECT COUNT(*) AS c FROM challenges WHERE type <> 'solo' AND ${K('created_at')} BETWEEN ? AND ?`, s, e);
-      const joins = await c1(db, `SELECT COUNT(*) AS c FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE c.type <> 'solo' AND gm.role <> 'leader' AND ${K('gm.created_at')} BETWEEN ? AND ?`, s, e);
+      const opened = await c1(db, `SELECT COUNT(*) AS c FROM challenges WHERE ${K('created_at')} BETWEEN ? AND ?`, s, e);
+      const joins = await c1(db, `SELECT COUNT(*) AS c FROM group_members gm WHERE gm.role <> 'leader' AND ${K('gm.created_at')} BETWEEN ? AND ?`, s, e);
       const completions = await c1(db, `SELECT COUNT(*) AS c FROM badges WHERE code = 'completion' AND revoked_at IS NULL AND ${K('created_at')} BETWEEN ? AND ?`, s, e);
       const firstSales = await c1(db, `SELECT COUNT(*) AS c FROM badges WHERE code = 'first_sale' AND revoked_at IS NULL AND ${K('created_at')} BETWEEN ? AND ?`, s, e);
       return { ...t, apps, signups, onboarded, goals, active, ck, att, posts, comments, writers, opened, joins, completions, firstSales };
     };
     const cur = await calc(p.start, p.end), prev = await calc(p.prevStart, p.prevEnd);
     const members = await memberTotal(db);
-    const g = await groupNow(db, settings);
+    const g = await groupNow(db);
     const card = (group, key, label, value, prevValue, unit, def, opt = {}) => ({ group, key, label, value, prev: prevValue, unit, def, ...opt });
     const tracking_since = (await one(db, 'SELECT MIN(day) AS d FROM analytics_events'))?.d || null;
     // 방문 통계가 지난 기간 전체를 덮지 못하면 비교하지 않는다
@@ -213,16 +211,16 @@ export function registerKpiRoutes(on) {
       card('전환', 'apply_conv', '방문자 → 신청 전환율', rate(cur.apps, cur.visitors), pv(rate(prev.apps, prev.visitors)), '%', '가입 신청 수 ÷ 방문자 수'),
       card('전환', 'signups', '새 회원', cur.signups, prev.signups, '명', '초대 코드로 계정을 만든 회원'),
       card('전환', 'onboard', '오리엔테이션 완료율', rate(cur.onboarded, cur.signups), rate(prev.onboarded, prev.signups), '%', '기간 안에 가입한 회원 중 챌린저(L1) 이상이 된 비율'),
-      card('참여', 'active', '활동 회원', cur.active, pv(prev.active), '명', `정회원 ${members}명 중 ${rate(cur.active, members) ?? '-'}% · 회원 공간 방문이나 체크인·완료·글·댓글·출석·장부 기록이 있는 회원`),
-      card('참여', 'checkin', '체크인 제출률', cur.ck.rate, prev.ck.rate, '%', `기간 안에 열린 체크인 ${cur.ck.checkins}회 · 제출 ${cur.ck.subs}/${cur.ck.expected}`),
-      card('참여', 'attend', '일정 참석률', cur.att.rate, prev.att.rate, '%', `신청 ${cur.att.registered}명 중 출석 ${cur.att.attended}명`),
+      card('참여', 'active', '활동 회원', cur.active, pv(prev.active), '명', `정회원 ${members}명 중 ${rate(cur.active, members) ?? '-'}% · 회원 공간 방문이나 모임 출석·도전 기록·성과 기록·글·댓글이 있는 회원`),
+      card('참여', 'checkin', '그룹 모임 출석률', cur.ck.rate, prev.ck.rate, '%', `기간 안에 마감한 그룹 모임 ${cur.ck.sessions}번 · 출석 ${cur.ck.ok}/${cur.ck.n} (공결 제외)`),
+      card('참여', 'attend', '정기모임·일정 참석률', cur.att.rate, prev.att.rate, '%', `신청 ${cur.att.registered}명 중 출석 ${cur.att.attended}명`),
       card('참여', 'community', '커뮤니티 글·댓글', cur.posts + cur.comments, prev.posts + prev.comments, '건', `회원이 쓴 글 ${cur.posts} · 댓글 ${cur.comments} · 쓴 사람 ${cur.writers}명`),
-      card('모임', 'opened', '새로 개설된 모임', cur.opened, prev.opened, '개', '그룹·오피셜 챌린지 제안 수 (솔로 제외)'),
-      card('모임', 'joins', '모임 참여 신청', cur.joins, prev.joins, '건', '그룹원으로 지원한 수 (그룹장 제외)'),
-      card('모임', 'running', '진행 중인 모임', g.running, null, '개', `모집·합의·진행·정산 단계 · 평균 ${g.avg_size ?? '-'}명`),
-      card('모임', 'group_part', '회원 모임 참여율', rate(g.in_group, members), null, '%', `정회원 중 진행 중인 그룹에 들어가 있는 회원 ${g.in_group}명`),
-      card('성과', 'completions', '라운드 완주', cur.completions, prev.completions, '명', '완주 배지를 받은 회원'),
-      card('성과', 'first_sales', '첫 매출', cur.firstSales, prev.firstSales, '명', '첫 매출 배지를 받은 회원 (증빙 확인 후)'),
+      card('그룹', 'opened', '새로 만든 그룹', cur.opened, prev.opened, '개', '그룹리더가 연 학습그룹·도전그룹 수'),
+      card('그룹', 'joins', '그룹 참여 신청', cur.joins, prev.joins, '건', '그룹원으로 참여하거나 신청한 수 (그룹리더 제외)'),
+      card('그룹', 'running', '진행 중인 그룹', g.running, null, '개', `모집 중·진행 중 · 평균 ${g.avg_size ?? '-'}명 · 정원 대비 ${g.fill ?? '-'}%`),
+      card('그룹', 'group_part', '회원 그룹 참여율', rate(g.in_group, members), null, '%', `정회원 중 진행 중인 그룹에 들어가 있는 회원 ${g.in_group}명`),
+      card('성과', 'completions', '그룹 완주', cur.completions, prev.completions, '명', '그룹 출석 기준을 채우고 완주 배지를 받은 회원'),
+      card('성과', 'first_sales', '첫 매출', cur.firstSales, prev.firstSales, '명', '그룹의 매출 기록을 운영진이 확인해 첫 매출 배지를 받은 회원'),
       card('성과', 'new_rate', '처음 온 방문자 비율', cur.new_rate, pv(prev.new_rate), '%', '방문자 중 이 브라우저로 처음 들어온 사람 — 새 사람에게 닿고 있는지'),
       card('성과', 'goals', '신청서 제출 방문', cur.goals, pv(prev.goals), '회', '브라우저에서 가입 신청서 제출을 마친 방문 (홍보 효과 확인용)'),
     ];
@@ -348,12 +346,7 @@ export function registerKpiRoutes(on) {
     const dormant = await c1(db, "SELECT COUNT(*) AS c FROM users WHERE role = 'member' AND status = 'active' AND level <> 'L0' AND (last_seen_at IS NULL OR last_seen_at < datetime('now','-30 days'))");
     const appsS = await all(db, `SELECT ${K('created_at')} AS day, COUNT(*) AS n FROM applications WHERE ${K('created_at')} BETWEEN ? AND ? GROUP BY day`, s, e);
     const signS = await all(db, `SELECT ${K('created_at')} AS day, COUNT(*) AS n FROM users WHERE role = 'member' AND ${K('created_at')} BETWEEN ? AND ? GROUP BY day`, s, e);
-    const actRows = await all(db, `SELECT DISTINCT uid, day FROM (
-        SELECT user_id AS uid, day FROM analytics_events WHERE user_id IS NOT NULL
-        UNION ALL SELECT user_id, ${K('submitted_at')} FROM checkin_entries UNION ALL SELECT user_id, ${K('created_at')} FROM done_logs
-        UNION ALL SELECT author_id, ${K('created_at')} FROM posts UNION ALL SELECT author_id, ${K('created_at')} FROM comments
-        UNION ALL SELECT user_id, ${K('attended_at')} FROM registrations WHERE status = 'attended' UNION ALL SELECT entered_by, ${K('created_at')} FROM ledger_entries
-      ) a JOIN users u ON u.id = a.uid WHERE u.role = 'member' AND a.day BETWEEN ? AND ?`, s, e);
+    const actRows = await all(db, `SELECT DISTINCT uid, day FROM (${ACT_UNION}) a JOIN users u ON u.id = a.uid WHERE u.role = 'member' AND a.day BETWEEN ? AND ?`, s, e);
     // 기간 안에 들어온 신청서 기준 흐름
     const funnelApps = await one(db, `SELECT COUNT(*) AS a, SUM(CASE WHEN status IN ('approved','joined') THEN 1 ELSE 0 END) AS ap, SUM(CASE WHEN status = 'joined' THEN 1 ELSE 0 END) AS j FROM applications WHERE ${K('created_at')} BETWEEN ? AND ?`, s, e);
     const cohort = `FROM users u WHERE u.role = 'member' AND ${K('u.created_at')} BETWEEN ? AND ?`;
@@ -363,7 +356,7 @@ export function registerKpiRoutes(on) {
       ['계정 생성', Number(funnelApps?.j || 0)],
       ['오리엔테이션 완료(L1)', await c1(db, `SELECT COUNT(*) AS c ${cohort} AND u.level <> 'L0'`, s, e)],
       ['메이커(L2) 이상', await c1(db, `SELECT COUNT(*) AS c ${cohort} AND u.level IN ('L2','L3','L4','L5')`, s, e)],
-      ['모임 참여', await c1(db, `SELECT COUNT(*) AS c ${cohort} AND EXISTS (SELECT 1 FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = u.id AND c.type <> 'solo' AND gm.status IN ('active','left'))`, s, e)],
+      ['그룹 참여', await c1(db, `SELECT COUNT(*) AS c ${cohort} AND EXISTS (SELECT 1 FROM group_members gm WHERE gm.user_id = u.id AND gm.status IN ('active','left','removed'))`, s, e)],
     ];
     // 가입 월별로 최근 30일 활동 비율
     const months = await all(db, `SELECT substr(${K('created_at')}, 1, 7) AS m, COUNT(*) AS n, GROUP_CONCAT(id) AS ids FROM users WHERE role = 'member' AND status = 'active' GROUP BY m ORDER BY m DESC LIMIT 6`);
@@ -373,8 +366,8 @@ export function registerKpiRoutes(on) {
     const list = await all(db, `SELECT u.id, u.nickname, u.name, u.level, u.status, u.created_at, u.last_seen_at,
       (SELECT COUNT(*) FROM analytics_events a WHERE a.user_id = u.id AND a.kind = 'view' AND a.day BETWEEN ?1 AND ?2) AS views,
       (SELECT COALESCE(SUM(dur),0) FROM analytics_events a WHERE a.user_id = u.id AND a.kind = 'leave' AND a.day BETWEEN ?1 AND ?2) AS secs,
-      (SELECT COUNT(*) FROM checkin_entries x WHERE x.user_id = u.id AND ${K('x.submitted_at')} BETWEEN ?1 AND ?2) AS checkins,
-      (SELECT COUNT(*) FROM done_logs x WHERE x.user_id = u.id AND x.cancelled_at IS NULL AND ${K('x.created_at')} BETWEEN ?1 AND ?2) AS done,
+      (SELECT COUNT(*) FROM session_attendance x JOIN group_sessions gs ON gs.id = x.session_id WHERE x.user_id = u.id AND x.status IN ('present','late') AND substr(gs.starts_at,1,10) BETWEEN ?1 AND ?2) AS checkins,
+      (SELECT COUNT(*) FROM group_logs x WHERE x.user_id = u.id AND x.deleted_at IS NULL AND ${K('x.created_at')} BETWEEN ?1 AND ?2) AS done,
       (SELECT COUNT(*) FROM posts x WHERE x.author_id = u.id AND ${K('x.created_at')} BETWEEN ?1 AND ?2) + (SELECT COUNT(*) FROM comments x WHERE x.author_id = u.id AND ${K('x.created_at')} BETWEEN ?1 AND ?2) AS talk,
       (SELECT COUNT(*) FROM registrations x JOIN events ev ON ev.id = x.event_id WHERE x.user_id = u.id AND x.status = 'attended' AND substr(ev.starts_at,1,10) BETWEEN ?1 AND ?2) AS attended,
       (SELECT COUNT(*) FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = u.id AND gm.status = 'active' AND c.stage IN ${RUNNING}) AS groups,
@@ -390,45 +383,56 @@ export function registerKpiRoutes(on) {
     };
   });
 
-  // ─────────────────────── 모임(챌린지·일정) ───────────────────────
-  on('GET', '/admin/kpi/groups', async ({ db, user, query, settings }) => {
+  // ─────────────────────── 그룹·정기모임 ───────────────────────
+  on('GET', '/admin/kpi/groups', async ({ db, user, query }) => {
     requireStaff(user);
     const p = period(query); const s = p.start, e = p.end;
-    const min = settings.min_group ?? 4, max = settings.max_group ?? 8;
     const created = await all(db, `SELECT ${K('created_at')} AS day, type, field_code FROM challenges WHERE ${K('created_at')} BETWEEN ? AND ?`, s, e);
-    const stages = await all(db, "SELECT stage, COUNT(*) AS n FROM challenges WHERE stage <> 'rejected' AND type <> 'solo' GROUP BY stage");
-    const groups = await all(db, `SELECT c.id, c.title, c.type, c.stage, c.field_code, c.created_at, u.nickname AS leader, r.name AS round_name,
+    const stages = await all(db, "SELECT stage, COUNT(*) AS n FROM challenges GROUP BY stage");
+    const groups = await all(db, `SELECT c.id, c.title, c.type, c.stage, c.field_code, c.capacity, c.created_at, c.goal_metric, c.goal_target, u.nickname AS leader,
       (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.role <> 'leader') AS applied,
       (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.role <> 'leader' AND gm.status IN ('active','left','removed')) AS accepted,
       (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'active') AS active,
       (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status IN ('left','removed')) AS left_n,
-      (SELECT COUNT(*) FROM checkins ci WHERE ci.challenge_id = c.id) AS checkins,
-      (SELECT COUNT(*) FROM checkin_entries x JOIN checkins ci ON ci.id = x.checkin_id WHERE ci.challenge_id = c.id) AS subs,
-      (SELECT COUNT(*) FROM done_logs d WHERE d.challenge_id = c.id AND d.cancelled_at IS NULL) AS done,
-      (SELECT COALESCE(SUM(amount),0) FROM ledger_entries l WHERE l.challenge_id = c.id AND l.kind = 'revenue' AND l.is_external = 1) AS revenue
-      FROM challenges c JOIN users u ON u.id = c.leader_id LEFT JOIN rounds r ON r.id = c.round_id
-      WHERE c.stage NOT IN ('rejected') AND c.type <> 'solo' ORDER BY CASE WHEN c.stage IN ${RUNNING} THEN 0 ELSE 1 END, c.created_at DESC LIMIT 300`);
-    const rows = groups.map(g => ({ ...g, field_name: FIELDS[g.field_code], fill_rate: rate(g.active, max), min_met: g.active >= min || !['recruiting', 'agreement', 'active', 'settling'].includes(g.stage), accept_rate: rate(g.accepted, g.applied), checkin_rate: g.checkins && g.active ? Math.min(100, rate(g.subs, g.checkins * g.active)) : null }));
-    const running = rows.filter(r => ['recruiting', 'agreement', 'active', 'settling'].includes(r.stage));
+      (SELECT COUNT(*) FROM group_members gm WHERE gm.challenge_id = c.id AND gm.status = 'removed' AND gm.leave_type = 'attendance') AS removed_att,
+      (SELECT COUNT(*) FROM group_sessions gs WHERE gs.challenge_id = c.id AND gs.status = 'closed') AS sessions,
+      (SELECT SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END) FROM session_attendance a JOIN group_sessions gs ON gs.id = a.session_id WHERE gs.challenge_id = c.id AND gs.status = 'closed') AS att_ok,
+      (SELECT SUM(CASE WHEN a.status IN ('present','late','absent') THEN 1 ELSE 0 END) FROM session_attendance a JOIN group_sessions gs ON gs.id = a.session_id WHERE gs.challenge_id = c.id AND gs.status = 'closed') AS att_n,
+      (SELECT COUNT(*) FROM group_warnings w WHERE w.challenge_id = c.id) AS warnings,
+      (SELECT COUNT(*) FROM group_logs l WHERE l.challenge_id = c.id AND l.deleted_at IS NULL) AS done,
+      (SELECT COUNT(*) FROM group_results r WHERE r.challenge_id = c.id AND r.deleted_at IS NULL) AS results,
+      (SELECT COALESCE(SUM(value),0) FROM group_results r WHERE r.challenge_id = c.id AND r.deleted_at IS NULL AND r.metric = 'revenue') AS revenue,
+      (SELECT COALESCE(SUM(value),0) FROM group_results r WHERE r.challenge_id = c.id AND r.deleted_at IS NULL AND r.metric = c.goal_metric) AS goal_value
+      FROM challenges c JOIN users u ON u.id = c.leader_id ORDER BY CASE WHEN c.stage IN ${RUNNING} THEN 0 ELSE 1 END, c.created_at DESC LIMIT 300`);
+    const rows = groups.map(g => ({ ...g, field_name: FIELDS[g.field_code], fill_rate: rate(g.active, g.capacity), accept_rate: rate(g.accepted, g.applied), checkin_rate: rate(g.att_ok || 0, g.att_n || 0),
+      goal_rate: g.goal_target ? Math.min(100, rate(g.goal_value, g.goal_target)) : null }));
+    const running = rows.filter(r => ['recruiting', 'active'].includes(r.stage));
     const members = await memberTotal(db);
-    const g = await groupNow(db, settings);
+    const g = await groupNow(db);
+    const ga = await groupAttendanceRate(db, s, e);
+    const removed = await c1(db, `SELECT COUNT(*) AS c FROM group_members WHERE status = 'removed' AND leave_type = 'attendance' AND ${K('left_at')} BETWEEN ? AND ?`, s, e);
+    const warned = await c1(db, `SELECT COUNT(*) AS c FROM group_warnings WHERE ${K('created_at')} BETWEEN ? AND ?`, s, e);
     const totals = {
-      opened: created.filter(r => r.type !== 'solo').length, solo: created.filter(r => r.type === 'solo').length,
-      running: running.length, avg_size: g.avg_size, min_met: g.min_met, fill_rate: running.length ? Math.round(running.reduce((t, r) => t + (r.fill_rate || 0), 0) / running.length * 10) / 10 : null,
+      opened: created.length, study: created.filter(r => r.type === 'study').length, challenge: created.filter(r => r.type === 'challenge').length,
+      running: running.length, avg_size: g.avg_size, fill_rate: g.fill,
       accept_rate: rate(rows.reduce((t, r) => t + r.accepted, 0), rows.reduce((t, r) => t + r.applied, 0)),
       dropout_rate: rate(rows.reduce((t, r) => t + r.left_n, 0), rows.reduce((t, r) => t + r.active + r.left_n, 0)),
       completion_rate: rate(rows.filter(r => r.stage === 'closed').length, rows.filter(r => ['closed', 'stopped'].includes(r.stage)).length),
-      participation: rate(g.in_group, members), in_group: g.in_group, members, min, max,
+      participation: rate(g.in_group, members), in_group: g.in_group, members,
+      group_attendance: ga.rate, sessions: ga.sessions, warnings: warned, removed,
     };
+    const sessRows = await all(db, `SELECT substr(starts_at, 1, 10) AS day, COUNT(*) AS n FROM group_sessions WHERE status = 'closed' AND substr(starts_at, 1, 10) BETWEEN ? AND ? GROUP BY day`, s, e);
     const events = await all(db, `SELECT ev.id, ev.title, ev.type, ev.starts_at, ev.capacity, ev.status,
       (SELECT COUNT(*) FROM registrations r WHERE r.event_id = ev.id AND r.status <> 'cancelled') AS registered,
-      (SELECT COUNT(*) FROM registrations r WHERE r.event_id = ev.id AND r.status = 'attended') AS attended
+      (SELECT COUNT(*) FROM registrations r WHERE r.event_id = ev.id AND r.status = 'attended') AS attended,
+      (SELECT COUNT(*) FROM event_presentations x WHERE x.event_id = ev.id AND x.status IN ('confirmed','presented')) AS presentations
       FROM events ev WHERE substr(ev.starts_at, 1, 10) BETWEEN ? AND ? ORDER BY ev.starts_at DESC`, s, e);
     const att = await attendance(db, s, e);
     return {
       period: p, labels: buckets(p), totals,
-      series: { opened: series(p, created.filter(r => r.type !== 'solo').map(r => ({ day: r.day, n: 1 }))) },
+      series: { opened: series(p, created.map(r => ({ day: r.day, n: 1 }))), sessions: series(p, sessRows) },
       by_field: Object.entries(FIELDS).map(([code, name]) => ({ code, name, n: created.filter(r => r.field_code === code).length })),
+      by_type: [['학습그룹', totals.study], ['도전그룹', totals.challenge]],
       stages, groups: rows,
       events: events.map(ev => ({ ...ev, attend_rate: rate(ev.attended, ev.registered), fill_rate: ev.capacity ? rate(ev.registered, ev.capacity) : null })), attendance: att,
     };

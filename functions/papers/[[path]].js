@@ -25,7 +25,7 @@ async function onePaper(db, id) {
 
 const card = p => {
   const f = p.form;
-  return `<a class="p-card" href="/papers/${p.id}/"><div class="p-tags"><span class="chip">${esc(FIELDS[p.field_code] || '')}</span>${f.has_sales ? '<span class="chip chip-green">매출 발생</span>' : '<span class="chip">매출 없음</span>'}${f.state ? `<span class="chip">${esc(STATE[f.state] || f.state)}</span>` : ''}</div><h2>${esc(f.name || p.title)}</h2>${f.pain ? `<p>${esc(f.pain)}</p>` : ''}<p class="small">외부 고객 ${esc(f.customers_band || '0')}명 · 투입 ${esc(String(f.hours || 0))}시간</p></a>`;
+  return `<a class="p-card" href="/papers/${p.id}/"><div class="p-tags"><span class="chip">${esc(FIELDS[p.field_code] || '')}</span>${f.has_sales ? '<span class="chip chip-green">매출 발생</span>' : '<span class="chip">매출 없음</span>'}${f.state ? `<span class="chip">${esc(STATE[f.state] || f.state)}</span>` : ''}</div><h2>${esc(f.name || p.title)}</h2>${f.pain ? `<p>${esc(f.pain)}</p>` : ''}<p class="small">고객 ${esc(f.customers_band || '0')}명 · 들인 시간 ${esc(String(f.hours || 0))}시간</p></a>`;
 };
 
 function notFound(o) {
@@ -48,14 +48,14 @@ export async function onRequestGet({ request, env, params }) {
     const crumbs = [['홈', '/'], ['프로젝트 페이퍼', '/papers/']];
     const ld = { '@context': 'https://schema.org', '@type': 'CollectionPage', name: '마이챌린지 프로젝트 페이퍼', url: base + '/papers/', mainEntity: { '@type': 'ItemList', itemListElement: list.map((p, i) => ({ '@type': 'ListItem', position: i + 1, url: `${base}/papers/${p.id}/`, name: p.form.name || p.title })) } };
     return html(renderPage({
-      path: '/papers/', title: '프로젝트 페이퍼: 12주 사이드프로젝트의 숫자와 회고', ogImage: '/og/papers.png',
-      description: '마이챌린지 그룹 챌린지가 12주 동안 무엇을 만들고 얼마나 팔았으며 무엇을 배웠는지 남긴 프로젝트 페이퍼입니다. 매출이 없었던 챌린지와 멈춘 챌린지도 함께 공개합니다.',
+      path: '/papers/', title: '프로젝트 페이퍼: 그룹 사이드프로젝트의 숫자와 회고', ogImage: '/og/papers.png',
+      description: '마이챌린지의 학습그룹과 도전그룹이 무엇을 만들고 얼마나 팔았으며 무엇을 배웠는지 남긴 프로젝트 페이퍼입니다. 매출 없이 마무리한 그룹과 멈춘 그룹도 함께 공개합니다.',
       crumbs, jsonld: [ld],
-      body: `${h.pageHero('프로젝트 페이퍼', '잘된 길도, 멈춘 길도 기록으로 남깁니다', '그룹이 외부 공개에 동의한 페이퍼의 요약입니다. 매출 유무, 외부 고객 수 구간, 투입 시간은 모든 페이퍼에서 공개합니다. 전문은 어치버(L3) 이상 회원이 볼 수 있습니다.', crumbs, '', { name: 'spot-completed-work', alt: '', frame: false, cls: 'ph-spot' })}
+      body: `${h.pageHero('프로젝트 페이퍼', '잘된 길도, 멈춘 길도 기록으로 남깁니다', '그룹이 외부 공개에 동의한 페이퍼의 요약입니다. 매출 유무, 고객 수 구간, 들인 시간은 모든 페이퍼에서 공개합니다. 전문은 어치버(L3) 이상 회원이 볼 수 있습니다.', crumbs, '', { name: 'spot-completed-work', alt: '', frame: false, cls: 'ph-spot' })}
 <section class="sec sec-tight"><div class="wrap">
-${list.length ? `<div class="paper-list">${list.map(card).join('')}</div>` : `<div class="empty-box"><b>아직 공개된 페이퍼가 없습니다</b>첫 라운드가 끝나면 이곳이 채워집니다. 쓰는 방식이 궁금하다면 <a href="/guide/project-paper/">프로젝트 페이퍼 쓰는 법</a>을 먼저 읽어 보세요.</div>`}
+${list.length ? `<div class="paper-list">${list.map(card).join('')}</div>` : `<div class="empty-box"><b>아직 공개된 페이퍼가 없습니다</b>첫 그룹들이 마무리되면 이곳이 채워집니다. 쓰는 방식이 궁금하다면 <a href="/guide/project-paper/">프로젝트 페이퍼 쓰는 법</a>을 먼저 읽어 보세요.</div>`}
 </div></section>
-${h.cta('다음 페이퍼의 주인공이 되어 보세요', '12주 동안 그룹으로 실행하고, 결과를 숫자로 남깁니다.')}`,
+${h.cta('다음 페이퍼의 주인공이 되어 보세요', '그룹으로 함께 도전하고, 결과를 숫자로 남깁니다.')}`,
     }, o));
   }
 
@@ -68,7 +68,7 @@ ${h.cta('다음 페이퍼의 주인공이 되어 보세요', '12주 동안 그�
   const name = f.name || p.title;
   const path = `/papers/${p.id}/`;
   const crumbs = [['홈', '/'], ['프로젝트 페이퍼', '/papers/'], [name, path]];
-  const desc = `${FIELDS[p.field_code] || ''} 분야 그룹 챌린지의 프로젝트 페이퍼. ${f.pain ? f.pain.slice(0, 70) : ''} ${f.has_sales ? '외부 매출 발생' : '매출 없이 종료'}, 외부 고객 ${f.customers_band || '0'}명, 투입 ${f.hours || 0}시간.`.replace(/\s+/g, ' ').trim();
+  const desc = `${FIELDS[p.field_code] || ''} 분야 그룹의 프로젝트 페이퍼. ${f.pain ? f.pain.slice(0, 70) : ''} ${f.has_sales ? '매출 기록 있음' : '매출 없이 마무리'}, 고객 ${f.customers_band || '0'}명, 들인 시간 ${f.hours || 0}시간.`.replace(/\s+/g, ' ').trim();
   const published = (p.published_at || '').slice(0, 10);
   const ld = { '@context': 'https://schema.org', '@type': 'Article', headline: name, description: desc, inLanguage: 'ko-KR', datePublished: published || undefined, author: { '@type': 'Organization', name: SITE.fullName }, publisher: { '@type': 'Organization', name: SITE.fullName, logo: { '@type': 'ImageObject', url: base + '/icon-512.png' } }, mainEntityOfPage: base + path };
   const lesson = (f.good || [])[0];
@@ -82,15 +82,15 @@ ${h.cta('다음 페이퍼의 주인공이 되어 보세요', '12주 동안 그�
     <h1>${esc(name)}</h1>
     <p class="article-meta"><span>${f.state ? esc(STATE[f.state] || f.state) : ''}</span>${published ? `<span>공개 ${dateKo(p.published_at)}</span>` : ''}</p>
   </header>
-  <div class="p-nums"><div><small>외부 매출</small><b>${f.has_sales ? '있음' : '없음'}</b></div><div><small>외부 고객</small><b>${esc(f.customers_band || '0')}명</b></div><div><small>투입 시간</small><b>${esc(String(f.hours || 0))}시간</b></div></div>
-  ${f.pain ? `<h2>풀려던 불편</h2><p>${esc(f.pain)}</p>` : ''}
+  <div class="p-nums"><div><small>매출</small><b>${f.has_sales ? '있음' : '없음'}</b></div><div><small>고객</small><b>${esc(f.customers_band || '0')}명</b></div><div><small>들인 시간</small><b>${esc(String(f.hours || 0))}시간</b></div></div>
+  ${f.pain ? `<h2>해결하려던 문제 · 배우려던 것</h2><p>${esc(f.pain)}</p>` : ''}
   ${lesson ? `<h2>잘된 것 한 가지</h2><p>${esc(lesson)}</p>` : ''}
   <div class="callout"><strong>전문은 회원 공간에서</strong><p>만든 것, 마일스톤, 숫자, 잘된 것과 안 된 것, 다음 사람에게 남긴 말은 어치버(L3) 이상 회원이 볼 수 있습니다. 그룹이 비공개로 정한 숫자는 회원에게도 보이지 않습니다.</p></div>
   <div class="article-foot"><a class="btn btn-primary btn-sm" href="/app/#/papers/${p.id}">회원 공간에서 전문 보기</a><a class="btn btn-line btn-sm" href="/papers/">다른 페이퍼 보기</a></div>
 </article>
 <aside class="side">
-  <div class="side-box"><b>페이퍼가 궁금하다면</b><ul><li><a href="/guide/project-paper/">프로젝트 페이퍼 쓰는 법</a></li><li><a href="/how-it-works/">12주 운영 방식</a></li></ul></div>
-  <div class="side-box side-cta"><b>나도 해 보기</b><p>다음 라운드에서 그룹으로 실행해 보세요.</p><a class="btn btn-primary" href="/apply/">가입 신청</a></div>
+  <div class="side-box"><b>페이퍼가 궁금하다면</b><ul><li><a href="/guide/project-paper/">프로젝트 페이퍼 쓰는 법</a></li><li><a href="/how-it-works/">함께 도전하는 방식</a></li><li><a href="/goals/">수익목표</a></li></ul></div>
+  <div class="side-box side-cta"><b>나도 해 보기</b><p>정기모임에서 시작해 그룹으로 도전해 보세요.</p><a class="btn btn-primary" href="/apply/">가입 신청</a></div>
 </aside>
 </div>`,
   }, o));

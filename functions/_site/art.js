@@ -9,7 +9,6 @@ export const GUIDE_ART = {
   'side-job-ideas': ['act-field-visit', '지도를 들고 동네 가게를 둘러보며 메모하는 네 사람'],
   'first-sale-12-weeks': ['act-product-pack', '첫 판매를 위해 상품을 촬영하고 포장하는 사람들'],
   'why-group': ['act-peer-feedback', '테이블에 둘러앉아 서로의 시안을 보고 의견을 나누는 그룹'],
-  'profit-sharing': ['act-workshop', '화이트보드 앞에서 역할과 계획을 함께 정리하는 사람들'],
   'side-job-company-rules': ['act-online-meeting', '퇴근 후 집에서 온라인으로 그룹 회의에 참여하는 사람'],
   'side-income-tax': ['act-digital-product', '표와 서류를 펼쳐 놓고 숫자를 확인하는 사람들'],
   'avoid-side-job-course-scams': ['act-exhibition', '전시물을 꼼꼼히 살펴보며 메모하는 사람들'],

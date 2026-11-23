@@ -562,3 +562,66 @@ details.card[open] > summary::after { content: '접기'; }
 .kpi-body code, .kpi-bar + * code { overflow-wrap: anywhere; }
 /* 넓은 표가 휴대폰에서 운영본부 화면 전체를 옆으로 밀어내지 않게 (표는 .table-wrap 안에서 넘긴다) */
 .adm-main { min-width: 0; }
+
+/* ===== v2.0 그룹 · 모임 · 출석 ===== */
+.group-kinds .card { padding: 14px 16px; }
+.ch-card .ch-goal small { display: block; color: var(--muted); font-size: .8rem; margin-top: 4px; }
+.ch-card .ch-goal .progress { height: 6px; }
+.ch-card .ch-meta { margin-top: -2px; }
+.goal-bar .progress { margin-top: 6px; }
+.form-section { margin: 18px 0 8px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 1rem; }
+.rule-list { margin: 6px 0 0; padding-left: 18px; }
+.rule-list li + li { margin-top: 4px; }
+.steps-list { margin: 0; padding-left: 20px; }
+.steps-list li + li { margin-top: 6px; }
+.clamp1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.kv-list > div { display: grid; grid-template-columns: 110px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.kv-list > div:last-child { border-bottom: 0; }
+.next-session .title { font-weight: 750; font-size: 1.05rem; }
+.next-session.is-open { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(36,87,245,.10); }
+.notice + .tabs, .notice + .grid { margin-top: 14px; }
+.log-item { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.log-item:last-child { border-bottom: 0; }
+.log-item.pinned { background: var(--blue-tint); margin: 0 -10px; padding: 12px 10px; border-radius: 10px; border-bottom: 0; }
+.log-item .log-body { margin-top: 6px; font-size: .95rem; }
+.notice-card { border-color: #d9e2ff; }
+.btn.xs { padding: 3px 8px; font-size: .78rem; border-radius: 7px; }
+.chip.soft { background: #fff; color: var(--muted); }
+.avatar-row { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.avatar-row .who { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; }
+.avatar-row .avatar, .list-item > .avatar { width: 30px; height: 30px; border-radius: 9px; font-size: .85rem; cursor: default; flex: none; }
+.mini-stats { gap: 8px; }
+.mini-stats .stat { padding: 10px 12px; }
+.mini-stats .stat .num { font-size: 1.25rem; }
+.session-row:hover { background: var(--bg-2); text-decoration: none; }
+.session-row .title .chip { margin-left: 4px; }
+.attend-card { text-align: center; }
+.attend-card .attend-input { display: block; width: 100%; max-width: 240px; margin: 8px auto 14px; text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 2.4rem; font-weight: 800; letter-spacing: .35em; padding: 10px 0 10px .35em; border: 2px solid var(--line); border-radius: 14px; outline: none; }
+.attend-card .attend-input:focus { border-color: var(--blue); box-shadow: 0 0 0 4px rgba(36,87,245,.14); }
+.attend-code { flex-direction: column; text-align: center; justify-content: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; flex: none; }
+.seg button { border: 0; background: #fff; padding: 6px 10px; font-size: .82rem; font-weight: 650; color: var(--muted); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button:hover { background: var(--bg-2); }
+.seg button.on.green { background: var(--green-soft); color: var(--green); }
+.seg button.on.amber { background: var(--amber-soft); color: var(--amber); }
+.seg button.on.red { background: var(--red-soft); color: var(--red); }
+.seg button.on.blue { background: var(--blue-soft); color: var(--blue); }
+.risk-row { background: var(--red-soft); margin: 0 -10px; padding-left: 10px; padding-right: 10px; border-radius: 10px; }
+.att-matrix td.att { text-align: center; font-size: .8rem; font-weight: 700; }
+.att-matrix .att-present { color: var(--green); }
+.att-matrix .att-late { color: var(--amber); }
+.att-matrix .att-absent { color: var(--red); background: var(--red-soft); }
+.att-matrix .att-excused { color: var(--blue); }
+.att-matrix .att-none { color: var(--line); }
+.task-item.warn { background: var(--red-soft); border-color: #f5c2bd; }
+.task-item:not(.warn) { background: var(--blue-tint); border-color: #d9e2ff; }
+.pres-list { margin-top: 8px; padding: 8px 10px; background: var(--bg-2); border-radius: 10px; }
+.pres-list > div + div { margin-top: 4px; }
+.ev-intro .card { padding: 14px 16px; }
+@media (max-width: 720px) {
+  .kv-list > div { grid-template-columns: 90px 1fr; }
+  .list-item:has(.seg) { flex-wrap: wrap; }
+  .seg { width: 100%; }
+  .seg button { flex: 1; }
+}

@@ -1,6 +1,6 @@
 // 사람 — 회원 목록·상세, 운영진
 import { api, post, esc, nl2br, toast, go, reload, field, input, textarea, select, check, bindForms, bindActions, num, fmtDate, fmtLocal, ago, LEVEL_NAMES, LEVELS, FIELDS, ROLES, BADGES, EVENT_TYPES, lvChip, stageChip, typeChip, empty, modal, closeModal, progressBar } from '../../core.js';
-import { kpi, kv, pager, qs, notesBox, mountNotes, invalidateCounts } from './shared.js';
+import { kpi, kv, pager, qs, notesBox, mountNotes, invalidateCounts, askReason } from './shared.js';
 
 const STATUS = { active: '활동', dormant: '휴면', removed: '제명·탈퇴' };
 const statusChip = s => s === 'active' ? '' : `<span class="chip ${s === 'removed' ? 'red' : 'amber'}">${STATUS[s] || s}</span>`;
@@ -34,7 +34,7 @@ export const people = {
     const counts = await api('/admin/counts');
     const isOwner = !!counts.is_owner;
     const u = d.user;
-    const activeGroups = d.groups.filter(g => g.status === 'active' && ['recruiting', 'agreement', 'active', 'settling'].includes(g.stage));
+    const activeGroups = d.groups.filter(g => g.status === 'active' && ['recruiting', 'active'].includes(g.stage));
     const attended = d.events.filter(e => e.status === 'attended').length;
     const lastApp = d.applications[0];
     const canEdit = u.role !== 'staff' || u.id === me.id || isOwner;
@@ -42,13 +42,19 @@ export const people = {
       <div class="kpi-grid kpi-4">
         ${kpi('활동 포인트', num(d.points.total) + '<small>점</small>', d.points.by_action.slice(0, 2).map(p => `${esc(p.label)} ${num(p.pts)}`).join(' · '))}
         ${kpi('배지', num(d.badges.filter(b => !b.revoked_at).length) + '<small>개</small>', d.badges.filter(b => !b.revoked_at).map(b => esc(b.name)).join(' · ') || '아직 없음')}
-        ${kpi('참여 중인 챌린지', num(activeGroups.length) + '<small>개</small>', `지금까지 ${d.groups.length}개`)}
+        ${kpi('참여 중인 그룹', num(activeGroups.length) + '<small>개</small>', `지금까지 ${d.groups.length}개${u.can_lead ? ' · 그룹리더' : ''}`)}
         ${kpi('일정 참석', num(attended) + '<small>회</small>', `신청 ${d.events.length}회`)}
       </div>
       <div class="adm-two wide-left">
         <div class="stack">
-          <section class="card"><div class="card-head"><h3>참여한 챌린지</h3></div>
-            ${d.groups.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>챌린지</th><th>역할</th><th class="num">체크인</th><th class="num">시간</th><th class="num">확인된 완료</th><th class="num">기여율 예정→실제</th></tr></thead><tbody>${d.groups.map(g => `<tr><td><a href="#/admin/groups/${g.id}">${esc(g.title)}</a><br>${typeChip(g.type)} ${stageChip(g.stage)} ${g.status !== 'active' ? `<span class="chip">${{ applied: '지원', left: g.leave_type === 'unannounced' ? '무단 이탈' : '이탈', removed: '제외', rejected: '거절' }[g.status] || g.status}</span>` : ''}</td><td>${esc(ROLES[g.role] || g.role)}</td><td class="num">${g.submitted}/${g.checkins}</td><td class="num">${num(g.hours)}</td><td class="num">${num(g.done_confirmed)}</td><td class="num">${g.planned_share == null ? '-' : Math.round(g.planned_share * 100) + '%'} → ${g.actual_share == null ? '-' : Math.round(g.actual_share * 100) + '%'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted small">아직 참여한 챌린지가 없습니다.</p>'}
+          <section class="card"><div class="card-head"><h3>참여한 그룹</h3></div>
+            ${d.groups.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>그룹</th><th>역할</th><th class="num">출석률</th><th class="num">출석·지각·결석·공결</th><th class="num">경고</th><th class="num">기록·성과</th></tr></thead><tbody>${d.groups.map(g => { const st = g.attendance || {}; return `<tr class="${g.status !== 'active' ? 'dim' : ''}"><td><a href="#/admin/groups/${g.id}">${esc(g.title)}</a><br>${typeChip(g.type)} ${stageChip(g.stage)} ${g.status !== 'active' ? `<span class="chip">${g.status === 'applied' ? '신청' : { self: '스스로 나감', attendance: '출석 기준 퇴출', leader: '리더가 내보냄', staff: '운영진 조치' }[g.leave_type] || '나감'}</span>` : ''}</td>
+              <td>${esc(g.role_name)}</td><td class="num"><b class="${g.min_rate && st.rate != null && st.rate < g.min_rate ? 'error' : ''}">${st.rate == null ? '-' : st.rate + '%'}</b>${g.min_rate ? `<br><small class="muted">기준 ${g.min_rate}%</small>` : ''}</td><td class="num">${st.present || 0}·${st.late || 0}·${st.absent || 0}·${st.excused || 0}</td><td class="num">${g.warnings ? `<b class="error">${g.warnings}</b>` : '0'}</td><td class="num">${num(g.logs)} · ${num(g.results)}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="muted small">아직 참여한 그룹이 없습니다.</p>'}
+          </section>
+          <section class="card"><div class="card-head"><h3>그룹리더</h3>${u.can_lead ? '<span class="chip ink">승인됨</span>' : ''}</div>
+            <p class="small" style="margin:0 0 8px">${u.can_lead ? `${u.leader_since ? fmtDate(u.leader_since) + '부터 ' : ''}그룹리더입니다. 언제든 그룹을 만들 수 있습니다.` : '아직 그룹리더가 아닙니다. 신청 없이 운영진이 바로 자격을 줄 수도 있습니다.'}</p>
+            ${d.leader_applications.length ? `<div class="list">${d.leader_applications.map(a => `<div class="list-item small"><div class="grow"><b>${esc(a.form.topic || '')}</b> <span class="muted">· ${esc({ study: '학습그룹', challenge: '도전그룹' }[a.form.kind] || '')}</span>${a.note ? `<div class="muted">${esc(a.note)}</div>` : ''}</div><span>${{ pending: '검토 중', approved: '승인', rejected: '반려' }[a.status]} · ${fmtDate(a.created_at)}</span></div>`).join('')}</div>` : ''}
+            ${canEdit && u.role !== 'staff' ? `<div class="btn-row" style="margin-top:8px">${u.can_lead ? '<button class="btn sm danger" data-act="lead" data-on="0">그룹리더 자격 해제</button>' : '<button class="btn sm primary" data-act="lead" data-on="1">그룹리더 자격 주기</button>'}${d.leader_applications.some(a => a.status === 'pending') ? '<a class="btn sm" href="#/admin/leaders">신청 검토</a>' : ''}</div>` : ''}
           </section>
           <section class="card"><div class="card-head"><h3>다음 등급까지</h3>${d.progress.next ? `<span class="chip ${d.progress.eligible ? 'green' : ''}">${d.progress.eligible ? '조건 충족' : '진행 중'}</span>` : ''}</div>
             ${d.progress.next ? `<p class="small" style="margin:0 0 8px">${lvChip(u.level)} → <b class="lv lv-${d.progress.next}">${esc(d.progress.next_name)}</b> ${d.progress.auto ? '<small class="muted">(조건을 채우면 자동 승급)</small>' : '<small class="muted">(신청 후 심사)</small>'}</p>
@@ -90,6 +96,12 @@ export const people = {
         },
         async temp() { if (!confirm(`${u.nickname}님의 임시 비밀번호를 만들까요? 지금 로그인된 기기는 모두 로그아웃됩니다.`)) return; const r = await post(`/admin/users/${u.id}`, { temp_password: true }); modal(`<h3>임시 비밀번호</h3><p>${esc(u.nickname)}님에게 직접 전해 주세요. 로그인한 뒤 내 정보에서 바꾸도록 안내합니다. 이 창을 닫으면 다시 볼 수 없습니다.</p><pre class="json" style="font-size:1.15rem">${esc(r.temp_password)}</pre><button class="btn primary" data-close-modal>닫기</button>`); },
         async revoke(el) { await post(`/admin/users/${u.id}`, { revoke_badge_id: Number(el.dataset.id), reason: '운영진 회수' }); toast('회수했습니다'); reload(); },
+        async lead(el) {
+          const on = el.dataset.on === '1';
+          const reason = await askReason(on ? '그룹리더 자격 주기' : '그룹리더 자격 해제', { label: on ? '회원에게 보낼 말' : '해제 사유 (회원에게 전달됩니다)', hint: on ? '자격을 받으면 바로 학습그룹·도전그룹을 만들 수 있습니다.' : '진행 중인 그룹을 이끌고 있다면 먼저 그룹리더를 바꾸거나 그룹을 종료해야 합니다.', button: on ? '자격 주기' : '해제', danger: !on });
+          if (!reason) return;
+          await post(`/admin/users/${u.id}/leader`, { on: on ? 1 : 0, reason }); invalidateCounts(); toast(on ? '그룹리더 자격을 줬습니다' : '해제했습니다'); reload();
+        },
       });
     } };
   },
@@ -106,7 +118,7 @@ export const people = {
         <div class="stack">
           ${owner ? `<form class="card form" data-form="add"><h3>운영진 추가</h3>${field('회원 이메일 또는 닉네임', input('who', { required: true, placeholder: '가입한 회원만 지정할 수 있습니다' }))}<button class="btn primary" type="submit">운영진으로 지정</button></form>` : '<div class="notice">운영진 지정과 해제는 운영자만 할 수 있습니다.</div>'}
           <section class="card soft"><h3>권한 차이</h3><div class="table-wrap"><table class="tbl perm"><thead><tr><th></th><th>운영진</th><th>운영자</th></tr></thead><tbody>
-            ${[['받은 일 처리 (가입·심사·정산·페이퍼·승급·이의)', 1, 1], ['회원 등급·배지·상태 조정', 1, 1], ['단체 알림, 일정, 커뮤니티 관리', 1, 1], ['지급 처리, 재원 기록', 1, 1], ['장부·정산·페이퍼 CSV', 1, 1], ['규칙 설정 변경', 0, 1], ['회원·신청서·동의 기록 CSV, 전체 백업', 0, 1], ['운영진 지정·해제, 다른 운영진 정보 변경', 0, 1]].map(([l, a, b]) => `<tr><td>${l}</td><td>${a ? '✓' : '–'}</td><td>${b ? '✓' : '–'}</td></tr>`).join('')}
+            ${[['받은 일 처리 (가입·그룹리더·매출 확인·발표·페이퍼·승급·이의)', 1, 1], ['회원 등급·배지·상태·그룹리더 자격 조정', 1, 1], ['그룹 중단·종료·리더 교체', 1, 1], ['단체 알림, 정기모임·일정, 커뮤니티 관리', 1, 1], ['그룹·출석·성과 CSV', 1, 1], ['규칙 설정 변경', 0, 1], ['회원·신청서·동의 기록 CSV, 전체 백업', 0, 1], ['운영진 지정·해제, 다른 운영진 정보 변경', 0, 1]].map(([l, a, b]) => `<tr><td>${l}</td><td>${a ? '✓' : '–'}</td><td>${b ? '✓' : '–'}</td></tr>`).join('')}
           </tbody></table></div><p class="small muted" style="margin:10px 0 0">운영자는 최소 한 명이 있어야 합니다. 모든 처리는 감사 로그에 남습니다.</p></section>
         </div>
       </div>`;
