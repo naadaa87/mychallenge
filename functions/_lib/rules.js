@@ -85,6 +85,8 @@ export const DEFAULT_SETTINGS = {
   community_chat: { enabled: true, name: SITE.communityChat?.name || '마챌 단체카톡방', url: SITE.communityChat?.url || '', code: '', intro: '' },
   // 신규 회원 정착: 며칠 이내 가입자를 볼지, 며칠 접속이 없으면 '멈춤'으로 볼지, 같은 회원에게 안내를 다시 보내기까지 며칠을 둘지
   onboarding: { window_days: 30, stall_days: 7, nudge_gap_days: 3 },
+  // 사이트 운영 (총괄관리자): 회원 신청 받기, 공지 띠
+  site: { applications_open: true, applications_closed_message: '', banner: { enabled: false, text: '', link: '', audience: 'members', until: '', v: 0 } },
 };
 
 export function levelIndex(l) { const i = LEVELS.indexOf(l); return i < 0 ? 0 : i; }

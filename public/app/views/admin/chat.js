@@ -83,7 +83,7 @@ function draft(kind, d, ids) {
 // ───────── 단체카톡방 ─────────
 async function chatPage({ query }) {
   const tab = ['compose', 'settings'].includes(query.tab) ? query.tab : 'members';
-  const tabs = `<div class="pill-tabs" style="margin-bottom:14px">${[['members', '참여 현황'], ['compose', '공지 만들기'], ['settings', '설정']].map(([k, l]) => `<a href="#/admin/chat${k === 'members' ? '' : '?tab=' + k}" class="${tab === k ? 'active' : ''}">${l}</a>`).join('')}</div>`;
+  const tabs = `<div class="pill-tabs" style="margin-bottom:14px">${[['members', '참여 현황'], ['compose', '공지 만들기'], ['settings', '설정']].map(([k, l]) => `<a href="#/chat${k === 'members' ? '' : '?tab=' + k}" class="${tab === k ? 'active' : ''}">${l}</a>`).join('')}</div>`;
   const out = tab === 'compose' ? await composeTab(query) : tab === 'settings' ? await settingsTab() : await membersTab(query);
   return { title: '단체카톡방', sub: '회원이 마챌 단체카톡방에 들어왔는지 확인하고, 대화방에 올릴 공지를 만듭니다.', body: tabs + out.body, mount: out.mount };
 }
@@ -101,22 +101,22 @@ async function membersTab(query) {
     if (m.chat_status !== 'left' && m.chat_status !== 'none') acts.push(`<button class="btn sm ghost" data-act="set" data-id="${m.id}" data-s="left">나감</button>`);
     if (!['joined', 'verified'].includes(m.chat_status) && m.onboarded) acts.push(`<button class="btn sm ghost" data-act="remind1" data-id="${m.id}">안내</button>`);
     return `<tr><td><input type="checkbox" class="pick" value="${m.id}" aria-label="${esc(m.nickname)} 선택"></td>
-      <td><a href="#/admin/users/${m.id}"><b>${esc(m.nickname)}</b></a> ${lvChip(m.level)}<br><small class="muted">${esc(m.name)}${m.onboarded ? '' : ' · 오리엔테이션 전'}</small></td>
+      <td><a href="#/users/${m.id}"><b>${esc(m.nickname)}</b></a> ${lvChip(m.level)}<br><small class="muted">${esc(m.name)}${m.onboarded ? '' : ' · 오리엔테이션 전'}</small></td>
       <td>${chatChip(m.chat_status)}${m.chat_at ? `<br><small class="muted">${ago(m.chat_at)}</small>` : ''}</td>
       <td><small>${m.last_reminded_at ? ago(m.last_reminded_at) : '-'}</small></td>
       <td><small>${fmtDate(m.created_at)}</small></td>
       <td class="btn-cell">${acts.join('')}</td></tr>`;
   };
   const body = `
-    ${off ? `<div class="notice warn" style="margin-bottom:12px">단체카톡방 안내가 꺼져 있거나 주소가 비어 있어 회원 화면에 보이지 않습니다. <a href="#/admin/chat?tab=settings">설정</a>에서 주소를 확인해 주세요.</div>` : ''}
+    ${off ? `<div class="notice warn" style="margin-bottom:12px">단체카톡방 안내가 꺼져 있거나 주소가 비어 있어 회원 화면에 보이지 않습니다. <a href="#/chat?tab=settings">설정</a>에서 주소를 확인해 주세요.</div>` : ''}
     <div class="kpi-grid kpi-4">
       ${kpi('단체카톡방 참여율', s.rate == null ? '-' : s.rate + '<small>%</small>', `활동 중인 회원 ${num(s.members)}명 중 ${num(s.in)}명`, { accent: true })}
       ${kpi('운영진이 확인', num(s.verified) + '<small>명</small>', '대화방 참여자 목록과 맞춰 본 회원')}
-      ${kpi('확인이 필요한 회원', num(s.joined) + '<small>명</small>', '회원이 참여했다고 표시함', { href: '#/admin/chat?status=joined' })}
-      ${kpi('아직 안 들어온 회원', num(notIn) + '<small>명</small>', `링크만 누름 ${num(s.clicked)} · 나감 ${num(s.left)}`, { href: '#/admin/chat?status=none' })}
+      ${kpi('확인이 필요한 회원', num(s.joined) + '<small>명</small>', '회원이 참여했다고 표시함', { href: '#/chat?status=joined' })}
+      ${kpi('아직 안 들어온 회원', num(notIn) + '<small>명</small>', `링크만 누름 ${num(s.clicked)} · 나감 ${num(s.left)}`, { href: '#/chat?status=none' })}
     </div>
     <div class="toolbar">
-      <div class="pill-tabs sm">${filterTabs.map(([k, l, n]) => `<a href="#/admin/chat${qs({ status: k, q: query.q })}" class="${status === k ? 'active' : ''}">${l} ${num(n)}</a>`).join('')}</div>
+      <div class="pill-tabs sm">${filterTabs.map(([k, l, n]) => `<a href="#/chat${qs({ status: k, q: query.q })}" class="${status === k ? 'active' : ''}">${l} ${num(n)}</a>`).join('')}</div>
       <form class="toolbar-search" data-form="q"><input type="search" name="q" value="${esc(query.q || '')}" placeholder="닉네임·이름·이메일"><button class="btn sm" type="submit">찾기</button></form>
     </div>
     ${d.members.length ? `<div class="bulkbar"><label class="check"><input type="checkbox" data-all> <span>전체 선택</span></label>
@@ -137,11 +137,11 @@ async function membersTab(query) {
         </ol></section>
       <section class="card soft small"><h3>참여 안내는 이렇게 갑니다</h3>
         <p style="margin:0 0 6px">오리엔테이션을 마친 회원에게만 회원 공간 알림으로 보냅니다. 누르면 참여 방법 화면이 열립니다.</p>
-        <p class="muted" style="margin:0">같은 회원에게는 ${num(d.remind_gap_days)}일에 한 번만 보냅니다. 이메일·문자는 보내지 않습니다. 간격은 <a href="#/admin/chat?tab=settings">설정</a>에서 바꿀 수 있습니다.</p></section>
+        <p class="muted" style="margin:0">같은 회원에게는 ${num(d.remind_gap_days)}일에 한 번만 보냅니다. 이메일·문자는 보내지 않습니다. 간격은 <a href="#/chat?tab=settings">설정</a>에서 바꿀 수 있습니다.</p></section>
     </div>`;
   return { body, mount(root) {
     bindPickAll(root);
-    bindForms(root, { q(v) { go('#/admin/chat' + qs({ status, q: v.q })); } });
+    bindForms(root, { q(v) { go('#/chat' + qs({ status, q: v.q })); } });
     const remind = async (ids, label) => { const r = await post('/admin/chat/remind', { ids }); resultToast(r, label); reload(); };
     bindActions(root, {
       async set(el) { await post('/admin/chat/members', { ids: [Number(el.dataset.id)], status: el.dataset.s }); invalidateCounts(); toast('바꿨습니다'); reload(); },
@@ -167,7 +167,7 @@ async function composeTab(query) {
     <div class="adm-two wide-left">
       <section class="card">
         <div class="card-head"><h3>대화방에 올릴 글</h3><span class="muted small">문안을 다듬어 복사한 뒤 카카오톡에 붙여 넣으세요</span></div>
-        <div class="pill-tabs sm" style="margin-bottom:12px">${Object.entries(TEMPLATES).map(([k, l]) => `<a href="#/admin/chat${qs({ tab: 'compose', kind: k, days: days === 14 ? '' : days })}" class="${kind === k ? 'active' : ''}">${l}${counts[k] != null ? ` ${counts[k]}` : ''}</a>`).join('')}</div>
+        <div class="pill-tabs sm" style="margin-bottom:12px">${Object.entries(TEMPLATES).map(([k, l]) => `<a href="#/chat${qs({ tab: 'compose', kind: k, days: days === 14 ? '' : days })}" class="${kind === k ? 'active' : ''}">${l}${counts[k] != null ? ` ${counts[k]}` : ''}</a>`).join('')}</div>
         ${kind === 'welcome' ? `<div class="row between small" style="margin-bottom:8px"><span class="muted">오리엔테이션을 마쳤고 아직 소개하지 않은 회원</span>${select('days', [[7, '최근 7일 가입'], [14, '최근 14일 가입'], [30, '최근 30일 가입'], [60, '최근 60일 가입']], days)}</div>
           ${d.newcomers.length ? `<div class="check-pick">${d.newcomers.map(u => `<label class="check"><input type="checkbox" class="nc" value="${u.id}" checked> <span><b>${esc(u.nickname)}</b> <small class="muted">${fmtDate(u.created_at)} 가입${u.interest_names.length ? ' · ' + esc(u.interest_names.slice(0, 2).join(', ')) : ''}${['joined', 'verified'].includes(u.chat_status) ? '' : ' · 아직 대화방에 없음'}</small></span></label>`).join('')}</div>
             <p class="small muted" style="margin:6px 0 10px">아직 대화방에 없는 회원은 소개 글을 볼 수 없으니, 먼저 참여 안내를 보내도 좋습니다. 기록하면 소개한 회원은 다음 목록에서 빠집니다.</p>` : ''}` : ''}
@@ -200,7 +200,7 @@ async function composeTab(query) {
     bindCopy(root);
     const ta = root.querySelector('#compose-text');
     const sel = root.querySelector('select[name=days]');
-    if (sel) sel.addEventListener('change', () => go('#/admin/chat' + qs({ tab: 'compose', kind: 'welcome', days: sel.value })));
+    if (sel) sel.addEventListener('change', () => go('#/chat' + qs({ tab: 'compose', kind: 'welcome', days: sel.value })));
     const chosen = () => [...root.querySelectorAll('.nc:checked')].map(c => Number(c.value));
     root.querySelectorAll('.nc').forEach(c => c.addEventListener('change', () => { ta.value = draft('welcome', d, chosen()); }));
     bindForms(root, { async post(v) {
@@ -217,7 +217,7 @@ async function settingsTab() {
   const d = await api('/admin/chat?only=settings');
   const c = d.settings || {}, o = d.onboarding || {};
   if (!d.is_owner) {
-    return { body: `<div class="notice" style="margin-bottom:12px">설정은 운영자만 바꿀 수 있습니다. 바꿀 내용이 있으면 운영자에게 알려 주세요.</div>
+    return { body: `<div class="notice" style="margin-bottom:12px">설정은 총괄관리자만 바꿀 수 있습니다. 바꿀 내용이 있으면 총괄관리자에게 알려 주세요.</div>
       <section class="card">${kv([['안내', c.enabled && c.url ? '켜짐' : '꺼짐'], ['대화방 이름', esc(c.name || '-')], ['주소', c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.url)}</a>` : '-'], ['참여코드', c.code ? '설정됨' : '없음'], ['정착 기간', `가입 후 ${num(o.window_days)}일`], ['멈춤 기준', `${num(o.stall_days)}일 넘게 접속 없음`], ['같은 안내 간격', `${num(o.nudge_gap_days)}일`]])}</section>` };
   }
   const body = `<form class="card form" data-form="cs" style="max-width:760px">
@@ -260,7 +260,7 @@ async function onboardingPage({ query }) {
   const cur = { days: query.days, view, q: query.q };
   const row = m => `<tr class="${m.state === 'done' ? 'dim' : ''}">
       <td>${m.next ? `<input type="checkbox" class="pick" value="${m.id}" aria-label="${esc(m.nickname)} 선택">` : ''}</td>
-      <td><a href="#/admin/users/${m.id}"><b>${esc(m.nickname)}</b></a> ${lvChip(m.level)}<br><small class="muted">${esc(m.name)} · ${m.days == null ? '-' : m.days ? m.days + '일 전 가입' : '오늘 가입'}</small></td>
+      <td><a href="#/users/${m.id}"><b>${esc(m.nickname)}</b></a> ${lvChip(m.level)}<br><small class="muted">${esc(m.name)} · ${m.days == null ? '-' : m.days ? m.days + '일 전 가입' : '오늘 가입'}</small></td>
       <td>${stepDots(m, d.steps)}</td>
       <td>${m.next_name ? esc(m.next_name) : '<span class="muted">-</span>'}</td>
       <td>${stateChip(m.state)}<br><small class="muted">${m.last_seen_at ? '접속 ' + ago(m.last_seen_at) : '접속 기록 없음'}</small></td>
@@ -268,13 +268,13 @@ async function onboardingPage({ query }) {
       <td class="btn-cell">${m.next ? `<button class="btn sm${m.state === 'stalled' ? ' primary' : ''}" data-act="nudge1" data-id="${m.id}" ${m.can_nudge ? '' : `data-force="1" data-confirm="${esc(m.nickname)}님은 최근에 안내를 받았습니다. 그래도 보낼까요?"`}>다음 단계 안내</button>` : ''}</td></tr>`;
   const body = `
     <div class="toolbar">
-      <div class="row">${select('days', [7, 14, 30, 60, 90, 180, 365].map(n => [n, `최근 ${n}일 가입`]), d.days)}<span class="muted small">정착 기준은 <a href="#/admin/chat?tab=settings">설정</a>에서 바꿉니다</span></div>
+      <div class="row">${select('days', [7, 14, 30, 60, 90, 180, 365].map(n => [n, `최근 ${n}일 가입`]), d.days)}<span class="muted small">정착 기준은 <a href="#/chat?tab=settings">설정</a>에서 바꿉니다</span></div>
       <form class="toolbar-search" data-form="q"><input type="search" name="q" value="${esc(query.q || '')}" placeholder="닉네임·이름·이메일"><button class="btn sm" type="submit">찾기</button></form>
     </div>
     <div class="kpi-grid kpi-4">
       ${kpi(`최근 ${d.days}일 새 회원`, num(total) + '<small>명</small>', `막 가입 ${num(d.states.new)} · 진행 중 ${num(d.states.progress)}`, { accent: true })}
-      ${kpi('정착 완료', num(d.states.done) + '<small>명</small>', total ? `첫 도전 기록까지 마친 회원 ${Math.round(d.states.done / total * 100)}%` : '7단계를 모두 마친 회원', { href: '#/admin/onboarding' + qs({ ...cur, view: 'done' }) })}
-      ${kpi('멈춘 회원', num(d.states.stalled) + '<small>명</small>', `${num(d.settings.stall_days)}일 넘게 접속이 없고 단계가 남음`, { href: '#/admin/onboarding' + qs({ ...cur, view: 'stalled' }) })}
+      ${kpi('정착 완료', num(d.states.done) + '<small>명</small>', total ? `첫 도전 기록까지 마친 회원 ${Math.round(d.states.done / total * 100)}%` : '7단계를 모두 마친 회원', { href: '#/onboarding' + qs({ ...cur, view: 'done' }) })}
+      ${kpi('멈춘 회원', num(d.states.stalled) + '<small>명</small>', `${num(d.settings.stall_days)}일 넘게 접속이 없고 단계가 남음`, { href: '#/onboarding' + qs({ ...cur, view: 'stalled' }) })}
       ${kpi('가장 많이 멈춘 단계', worst && worst.n ? esc(worst.name) : '-', worst && worst.n ? `${num(worst.n)}명이 이 단계 앞에 있음` : '멈춘 단계가 없습니다')}
     </div>
     <div class="adm-two">
@@ -283,7 +283,7 @@ async function onboardingPage({ query }) {
         <div class="list">${d.by_next.map(b => `<div class="list-item"><div class="grow"><b>${esc(b.name)}</b> <span class="muted small">· ${num(b.n)}명 대기${b.n && b.nudgeable < b.n ? ` · ${num(b.n - b.nudgeable)}명은 최근 안내 받음` : ''}</span><div class="meta">${esc(d.steps.find(s => s.key === b.step)?.title || '')}</div></div>${b.nudgeable ? `<button class="btn sm" data-act="nudgeStep" data-step="${b.step}" data-ids="${b.ids.join(',')}">${num(b.nudgeable)}명에게 안내</button>` : ''}</div>`).join('')}</div>
       </section>
     </div>
-    <div class="toolbar" style="margin-top:6px"><div class="pill-tabs sm">${tabs.map(([k, l, n]) => `<a href="#/admin/onboarding${qs({ ...cur, view: k })}" class="${view === k ? 'active' : ''}">${l} ${num(n)}</a>`).join('')}</div></div>
+    <div class="toolbar" style="margin-top:6px"><div class="pill-tabs sm">${tabs.map(([k, l, n]) => `<a href="#/onboarding${qs({ ...cur, view: k })}" class="${view === k ? 'active' : ''}">${l} ${num(n)}</a>`).join('')}</div></div>
     ${d.members.length ? `<div class="bulkbar"><label class="check"><input type="checkbox" data-all> <span>전체 선택</span></label>
         <input class="mini-input" name="note" id="nudge-note" placeholder="덧붙일 말 (선택) 예: 목요일 정기모임에서 봬요" style="flex:1;min-width:200px">
         <button class="btn sm primary" data-act="nudgeSel">선택한 회원에게 다음 단계 안내</button></div>
@@ -294,7 +294,7 @@ async function onboardingPage({ query }) {
         ${d.invites.length ? `<div class="list">${d.invites.map(a => `<div class="list-item small"><div class="grow"><b>${esc(a.name)}</b> <span class="muted">${esc(a.email)}</span><div class="meta">승인 ${a.days == null ? '-' : a.days ? a.days + '일 전' : '오늘'} · 코드 <span class="kbd">${esc(a.invite_code)}</span></div></div>${a.days >= 3 ? '<span class="chip amber">다시 연락</span>' : ''}${copyBtn(inviteMessage(a.invite_code, a.email), '안내문 복사')}</div>`).join('')}</div>` : '<p class="muted small" style="margin:0">승인한 분은 모두 가입했습니다.</p>'}
       </section>
       <section class="card"><div class="card-head"><h3>최근 보낸 안내</h3></div>
-        ${d.nudges.length ? `<div class="list">${d.nudges.map(n => `<div class="list-item small"><div class="grow"><a href="#/admin/users/${n.user_id}"><b>${esc(n.nickname)}</b></a> · ${esc(n.title)}<div class="meta">${esc(n.sent_by_name || '-')} · ${ago(n.created_at)}</div></div></div>`).join('')}</div>` : '<p class="muted small" style="margin:0">아직 보낸 안내가 없습니다.</p>'}
+        ${d.nudges.length ? `<div class="list">${d.nudges.map(n => `<div class="list-item small"><div class="grow"><a href="#/users/${n.user_id}"><b>${esc(n.nickname)}</b></a> · ${esc(n.title)}<div class="meta">${esc(n.sent_by_name || '-')} · ${ago(n.created_at)}</div></div></div>`).join('')}</div>` : '<p class="muted small" style="margin:0">아직 보낸 안내가 없습니다.</p>'}
       </section>
     </div>
     <section class="card soft small" style="margin-top:14px"><h3>상태 구분</h3>
@@ -304,8 +304,8 @@ async function onboardingPage({ query }) {
   return { title: '신규 회원 정착', sub: '새로 가입한 회원이 첫 그룹 활동까지 어디쯤 왔는지 보고, 멈춘 단계에 맞춰 안내합니다.', body, mount(root) {
     bindPickAll(root); bindCopy(root);
     const sel = root.querySelector('select[name=days]');
-    sel.addEventListener('change', () => go('#/admin/onboarding' + qs({ ...cur, days: sel.value })));
-    bindForms(root, { q(v) { go('#/admin/onboarding' + qs({ ...cur, q: v.q })); } });
+    sel.addEventListener('change', () => go('#/onboarding' + qs({ ...cur, days: sel.value })));
+    bindForms(root, { q(v) { go('#/onboarding' + qs({ ...cur, q: v.q })); } });
     const note = () => root.querySelector('#nudge-note')?.value || '';
     bindActions(root, {
       async nudge1(el) { const r = await post('/admin/onboarding/nudge', { ids: [Number(el.dataset.id)], note: note(), force: !!el.dataset.force }); resultToast(r, '안내'); reload(); },

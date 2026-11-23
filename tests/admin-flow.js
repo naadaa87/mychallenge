@@ -12,7 +12,7 @@ ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.
 const send = (method, params = {}) => new Promise(res => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
 const ev = async expr => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })).result?.result?.value;
 const wait = ms => new Promise(r => setTimeout(r, ms));
-const go = async hash => { await send('Page.navigate', { url: BASE + '/app/' + hash }); await wait(1200); };
+const go = async hash => { const adm = hash.startsWith('#/admin'); await send('Page.navigate', { url: BASE + (adm ? '/admin/' + hash.replace(/^#\/admin\/?/, '#/') : '/app/' + hash) }); await wait(1200); };
 await send('Page.enable'); await send('Runtime.enable'); await send('Network.enable');
 const fails = []; const ok = (c, m) => { console.log(`${c ? '✔' : '✗'} ${m}`); if (!c) fails.push(m); };
 async function tokenOf(email, password) {
@@ -25,13 +25,13 @@ await send('Network.setCookie', { name: 'machal_session', value: admin, url: BAS
 
 // 1. 통합 검색
 await go('#/admin');
-ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/admin"]')`), '사이드 메뉴에서 현황이 선택돼 있다');
+ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/"]')`), '사이드 메뉴에서 현황이 선택돼 있다');
 await ev(`(() => { const q = document.querySelector('#adm-q'); q.value = '메이커'; q.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 await wait(900);
-ok(await ev(`!document.querySelector('#adm-q-box').hidden && document.querySelectorAll('#adm-q-box a[href^="#/admin/users/"]').length >= 3`), '검색어를 넣으면 회원 결과가 뜬다');
+ok(await ev(`!document.querySelector('#adm-q-box').hidden && document.querySelectorAll('#adm-q-box a[href^="#/users/"]').length >= 3`), '검색어를 넣으면 회원 결과가 뜬다');
 await ev(`(() => { const q = document.querySelector('#adm-q'); q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
 await wait(1200);
-ok(/#\/admin\/users\/\d+/.test(await ev('location.hash')), 'Enter를 누르면 첫 결과로 이동한다');
+ok(/#\/users\/\d+/.test(await ev('location.hash')), 'Enter를 누르면 첫 결과로 이동한다');
 
 // 2. 규칙 변경 — 사유를 받아 저장 (출석 규칙 기본값)
 await go('#/admin/settings');
@@ -68,10 +68,10 @@ ok(await ev(`document.body.innerText.includes('출석 규칙') && document.body.
 // 4-2. 받은 일 — 그룹리더 신청, 매출 확인, 발표 신청
 for (const [sec, txt] of [['leaders', '그룹리더'], ['results', '매출'], ['presentations', '발표']]) {
   await go('#/admin/' + sec);
-  ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/admin/${sec}"]') && document.querySelector('.adm-head h1').textContent.includes('${txt}') && !document.querySelector('.error-box')`), `받은 일: ${txt} 화면이 열린다`);
+  ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/${sec}"]') && document.querySelector('.adm-head h1').textContent.includes('${txt}') && !document.querySelector('.error-box')`), `받은 일: ${txt} 화면이 열린다`);
 }
 await go('#/admin/settlements');
-ok((await ev('location.hash')) === '#/admin/groups', '예전 정산 주소는 그룹 현황으로 옮겨 간다');
+ok((await ev('location.hash')) === '#/groups', '예전 정산 주소는 그룹 현황으로 옮겨 간다');
 
 // 5. 회원 상세 — 관리 창
 await go('#/admin/users/3');
@@ -85,7 +85,7 @@ await go('#/admin/groups');
 ok(await ev(`getComputedStyle(document.querySelector('.adm-side')).display === 'none' && getComputedStyle(document.querySelector('.adm-mnav')).display !== 'none'`), '휴대폰에서는 사이드 메뉴 대신 메뉴 버튼이 보인다');
 await ev(`document.querySelector('.adm-mnav summary').click()`);
 await wait(200);
-ok(await ev(`document.querySelector('.adm-mnav').open && document.querySelectorAll('.adm-mnav-panel a').length === 21`), '메뉴 버튼을 누르면 전체 메뉴가 열린다');
+ok(await ev(`document.querySelector('.adm-mnav').open && document.querySelectorAll('.adm-mnav-panel a').length === 24`), '메뉴 버튼을 누르면 전체 메뉴가 열린다');
 await send('Emulation.clearDeviceMetricsOverride');
 
 // 6-1. KPI 지표 — 탭마다 숫자와 표가 뜬다
@@ -93,7 +93,7 @@ for (const [tab, sel, n] of [['', '.kpi-d', 20], ['traffic', '.kpi-d', 8], ['con
   await go('#/admin/kpi' + (tab ? '?tab=' + tab : ''));
   await wait(400);
   const got = await ev(`document.querySelectorAll('${sel}').length`);
-  ok(got >= n && await ev(`!!document.querySelector('.adm-side a.active[href="#/admin/kpi"]') && !document.querySelector('.error-box')`), `KPI ${tab || 'summary'} 탭이 열린다 (${got})`);
+  ok(got >= n && await ev(`!!document.querySelector('.adm-side a.active[href="#/kpi"]') && !document.querySelector('.error-box')`), `KPI ${tab || 'summary'} 탭이 열린다 (${got})`);
 }
 await go('#/admin/kpi?range=7');
 ok(await ev(`document.querySelector('.kpi-bar .pill-tabs.sm a.active')?.textContent === '7일' && document.querySelectorAll('.cols')[0]?.children.length === 7`), '기간을 7일로 바꾸면 막대가 7개');
@@ -104,12 +104,15 @@ const mrows = await ev(`document.querySelectorAll('#kpi-mlist tbody tr').length`
 ok(mrows >= 1 && await ev(`[...document.querySelectorAll('#kpi-mlist tbody tr')].every(tr => tr.textContent.includes('메이커'))`), `회원 목록을 이름으로 거른다 (${mrows})`);
 const kpiTracked = Number((await (await fetch(BASE + '/api/admin/kpi/members?range=7', { headers: { cookie: 'machal_session=' + admin } })).json()).list.length >= 0);
 ok(kpiTracked === 1, 'KPI API 응답');
-await go('#/admin/kpi?tab=content');
+ok(await ev(`!window.machalTrack`), '운영본부(/admin)에는 방문 기록 스크립트를 넣지 않는다');
+await go('#/dashboard');
 ok(await ev(`!!window.machalTrack && typeof window.machalTrack.goal === 'function'`), '회원 공간에 방문 기록 스크립트가 들어 있다');
+await send('Page.navigate', { url: BASE + '/app/#/admin/chat?tab=compose' }); await wait(1500);
+ok((await ev('location.pathname + location.hash')) === '/admin/#/chat?tab=compose', '회원 공간의 예전 운영 주소는 /admin 으로 이어진다');
 
 // 6-2. 단체카톡방 — 참여 현황, 확인 처리, 공지 만들기, 설정
 await go('#/admin/chat');
-ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/admin/chat"]') && document.querySelector('.adm-head h1').textContent.includes('단체카톡방') && document.querySelectorAll('tbody tr').length >= 1 && !document.querySelector('.error-box')`), '단체카톡방 참여 현황이 열린다');
+ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/chat"]') && document.querySelector('.adm-head h1').textContent.includes('단체카톡방') && document.querySelectorAll('tbody tr').length >= 1 && !document.querySelector('.error-box')`), '단체카톡방 참여 현황이 열린다');
 const target = await ev(`(() => { const b = [...document.querySelectorAll('button[data-act=set][data-s=verified]')][0]; if (!b) return null; const id = b.dataset.id; b.click(); return Number(id); })()`);
 await wait(1300);
 const chatAfter = await apiGet('/admin/chat?status=verified');
@@ -125,7 +128,7 @@ ok(await ev(`document.querySelector('form[data-form=cs] input[name=url]')?.value
 
 // 6-3. 신규 회원 정착
 await go('#/admin/onboarding?days=365');
-ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/admin/onboarding"]') && document.querySelectorAll('.ob-dots').length >= 1 && document.querySelectorAll('.hbar').length === 8 && !document.querySelector('.error-box')`), '신규 회원 정착 화면에 단계 점과 정착 단계 막대가 보인다');
+ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/onboarding"]') && document.querySelectorAll('.ob-dots').length >= 1 && document.querySelectorAll('.hbar').length === 8 && !document.querySelector('.error-box')`), '신규 회원 정착 화면에 단계 점과 정착 단계 막대가 보인다');
 const obBefore = (await apiGet('/admin/onboarding?days=365')).nudges.length;
 await ev(`document.querySelector('button[data-act=nudge1]:not([data-force])')?.click()`);
 await wait(1300);
@@ -136,19 +139,54 @@ ok(await ev(`document.body.innerText.includes('정착 단계') && document.body.
 await go('#/admin');
 ok(await ev(`document.body.innerText.includes('단체카톡방 참여') && document.querySelectorAll('.kpi-grid.kpi-4 .kpi').length >= 8`), '현황에 단체카톡방 참여율과 새 회원 지표가 보인다');
 
+// 6-4. 총괄 관리 — 총괄 현황, 보안·접속, 사이트 운영, 운영진 담당 영역, 데이터 정리
+const apiPut = async (p, body) => (await fetch(BASE + '/api' + p, { method: 'PUT', headers: { cookie: 'machal_session=' + admin, 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
+await go('#/admin/overview');
+ok(await ev(`document.querySelectorAll('.own-ci').length >= 7 && document.querySelector('.adm-head h1').textContent.includes('총괄 현황') && !!document.querySelector('.adm-side a.active[href="#/overview"]')`), '총괄 현황에 점검표와 처리 속도가 보인다');
+await go('#/admin/security');
+ok(await ev(`document.body.innerText.includes('지금 이 기기') && document.body.innerText.includes('운영진 로그인 기기')`), '보안·접속에 지금 쓰는 기기가 표시된다');
+await go('#/admin/site');
+await ev(`(() => { const f = document.querySelector('form[data-form=site]'); f.banner_enabled.checked = true; f.banner_text.value = '12월 정기모임 신청을 받고 있습니다'; f.banner_text.dispatchEvent(new Event('input')); f.banner_link.value = '#/events'; f.reason.value = '정기모임 안내'; f.querySelector('button[type=submit]').click(); })()`);
+await wait(1300);
+ok((await (await fetch(BASE + '/api/public/notice')).json()).banner?.text === '12월 정기모임 신청을 받고 있습니다', '사이트 운영에서 공지 띠를 켜면 바로 반영된다');
+await go('#/dashboard');
+ok(await ev(`document.querySelector('.site-notice')?.innerText.includes('12월 정기모임')`), '회원 공간 맨 위에 공지 띠가 보인다');
+await apiPut('/admin/site', { reason: '홈페이지 점검', applications_open: false, applications_closed_message: '1월 시즌 모집은 12월 15일에 열립니다', banner: { enabled: true, text: '1월 시즌 모집 일정 안내', link: '/goals/', audience: 'all' } });
+await send('Page.navigate', { url: BASE + '/apply/' }); await wait(1500);
+ok(await ev(`document.querySelector('.site-notice')?.innerText.includes('1월 시즌') && document.querySelector('.apply-closed')?.innerText.includes('12월 15일') && document.querySelector('#apply-form button[type=submit]').disabled`), '홈페이지에도 공지 띠가 보이고, 신청을 닫으면 신청서가 잠긴다');
+await apiPut('/admin/site', { reason: '테스트 정리', applications_open: true, banner: { enabled: false } });
+await go('#/admin/staff');
+const bId = await ev(`(() => { const b = document.querySelector('button[data-act=scope]'); if (!b) return null; b.click(); return Number(b.dataset.id); })()`);
+await wait(400);
+await ev(`(() => { const m = document.querySelector('.modal'); m.querySelector('input[name=mode][value=some]').checked = true; m.querySelector('input[name="scopes[]"][value=comms]').checked = true; m.querySelector('button[type=submit]').click(); })()`);
+await wait(1300);
+const bRow = (await apiGet('/admin/staff')).rows.find(r => r.id === bId);
+ok(bRow && JSON.stringify(bRow.scopes) === '["comms"]' && await ev(`document.body.innerText.includes('정기모임·소통')`), '운영진 담당 영역을 고르면 저장되고 표에 보인다');
+await fetch(BASE + `/api/admin/staff/${bId}/scopes`, { method: 'POST', headers: { cookie: 'machal_session=' + admin, 'content-type': 'application/json' }, body: JSON.stringify({ scopes: null }) });
+await go('#/admin/data');
+ok(await ev(`document.body.innerText.includes('데이터 정리') && document.body.innerText.includes('만료된 로그인 기록')`), '데이터·백업에 데이터 정리가 보인다');
+
 // 7. 일반 회원은 들어올 수 없다
 await send('Network.clearBrowserCookies');
 const member = await tokenOf('e@test.kr', 'password1');
 await send('Network.setCookie', { name: 'machal_session', value: member, url: BASE, httpOnly: true });
 await send('Page.navigate', { url: 'about:blank' }); await wait(200);
 await go('#/admin/settings');
-await wait(600); const h7 = await ev('location.hash'); ok(h7 === '#/dashboard' && !(await ev(`!!document.querySelector('.adm')`)), '일반 회원이 운영 화면 주소로 오면 대시보드로 돌려보낸다 (' + h7 + ')');
+await wait(600); ok(await ev(`document.body.innerText.includes('운영진 계정이 아닙니다') && !document.querySelector('.adm')`), '일반 회원이 /admin 에 오면 운영진 계정이 아니라고 안내한다');
 
 // 8. 회원 화면 — 단체카톡방 안내와 링크 (링크를 눌러도 화면이 막히지 않고 기록만 남는다)
 await go('#/chat');
 ok(await ev(`document.body.innerText.includes('내 참여 상태') && !!document.querySelector('a[data-chat-link][target=_blank]')`), '회원은 단체카톡방 참여 방법 화면을 볼 수 있다');
 const prevented = await ev(`(() => { const a = document.querySelector('a[data-chat-link]'); let p = null; document.addEventListener('click', e => { p = e.defaultPrevented; e.preventDefault(); }, { once: true }); a.click(); return p; })()`);
 ok(prevented === false, '단체카톡방 링크 클릭을 막지 않는다 (새 창으로 열린다)');
+
+// 9. /admin 로그인 화면
+await send('Network.clearBrowserCookies');
+await send('Page.navigate', { url: BASE + '/admin' }); await wait(1300);
+ok(await ev(`location.pathname === '/admin/' && !!document.querySelector('form[data-form=login]') && document.title.includes('운영본부')`), '로그인하지 않으면 /admin 에서 운영본부 로그인 화면이 나온다');
+await ev(`(() => { const f = document.querySelector('form[data-form=login]'); f.email.value = 'admin@machal.kr'; f.password.value = 'adminpass1'; f.querySelector('button[type=submit]').click(); })()`);
+await wait(1800);
+ok(await ev(`!!document.querySelector('.adm-side a.active[href="#/"]') && document.querySelector('#topbar-right').innerText.includes('로그아웃')`), '로그인하면 바로 운영 현황이 열린다');
 
 ws.close(); chrome.kill();
 if (errors.length) { console.log('\nJS 오류:'); errors.forEach(e => console.log(' -', e)); }

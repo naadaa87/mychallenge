@@ -14,6 +14,7 @@ import { LEVELS, LEVEL_NAMES, FIELDS, BADGE_NAMES, BOARDS, EVENT_TYPES, EVENT_TO
 import { registerGroupRoutes, myGroupsSummary, loadGroup, membership, activeMembers, isActive, isManagerOf, isLeaderOf, groupAttendance, emptyStats, band, kstNow } from '../_lib/group-routes.js';
 import { registerAdminRoutes, runMigrations, isOwner, requireOwner } from '../_lib/admin-routes.js';
 import { registerKpiRoutes } from '../_lib/kpi-routes.js';
+import { registerOwnerRoutes, checkScope, deviceOf, publicNotice, scopesOf } from '../_lib/owner-routes.js';
 import { registerCommunityRoutes, chatInfo } from '../_lib/community-routes.js';
 
 const routes = [];
@@ -55,6 +56,7 @@ export async function onRequest(context) {
       if (!params) continue;
       const settings = await getSettings(db);
       const user = await currentUser(db, request);
+      if (pathParts[0] === 'admin') await checkScope(db, user, request.method, '/' + pathParts.join('/'));
       const ctx = { db, env, request, url, params, query: Object.fromEntries(url.searchParams), user, settings };
       const result = await r.handler(ctx);
       if (result instanceof Response) return result;
@@ -115,7 +117,9 @@ async function recordConsents(db, request, subjectType, subjectId, kinds) {
   for (const k of kinds) await run(db, 'INSERT INTO consents (subject_type, subject_id, kind, version, ip) VALUES (?,?,?,?,?)', subjectType, subjectId, k, POLICY_VERSION, clientIp(request));
 }
 
-on('POST', '/apply', async ({ db, request }) => {
+on('POST', '/apply', async ({ db, request, settings }) => {
+  const notice = publicNotice(settings);
+  if (!notice.applications.open) throw bad(notice.applications.message);
   const b = await readJson(request);
   must(b.name, '이름'); must(b.email, '이메일');
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(b.email)) throw bad('이메일 형식을 확인해 주세요');
@@ -145,13 +149,13 @@ on('POST', '/setup', async ({ db, request }) => {
   await grantBadge(db, id, 'founder', id);
   await run(db, "INSERT OR IGNORE INTO admin_roles (user_id, role) VALUES (?, 'owner')", id);
   await audit(db, id, 'setup', 'users:' + id);
-  return login(db, id);
+  return login(db, id, request);
 });
 
-async function login(db, userId) {
+async function login(db, userId, request) {
   const token = randomToken(32);
   const exp = new Date(Date.now() + 30 * 86400000).toISOString().replace('T', ' ').slice(0, 19);
-  await run(db, 'INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,?)', token, userId, exp);
+  await run(db, 'INSERT INTO sessions (token, user_id, expires_at, ua) VALUES (?,?,?,?)', token, userId, exp, deviceOf(request?.headers?.get('user-agent')) || null);
   await run(db, "UPDATE users SET last_seen_at = datetime('now') WHERE id = ?", userId);
   return jsonWithCookies({ ok: true }, [sessionCookie(token), markCookie(true)]);
 }
@@ -175,7 +179,7 @@ on('POST', '/auth/register', async ({ db, request }) => {
     const ref = await one(db, 'SELECT id FROM users WHERE nickname = ? OR email = ?', form.referrer, form.referrer);
     if (ref) await run(db, 'INSERT INTO notifications (user_id, title, body) VALUES (?,?,?)', ref.id, '추천한 분이 가입했습니다', '온보딩을 마치고 챌린저가 되면 추천 포인트가 적립됩니다.');
   }
-  return login(db, id);
+  return login(db, id, request);
 });
 
 const LOGIN_WINDOW = "datetime('now','-15 minutes')";
@@ -194,7 +198,7 @@ on('POST', '/auth/login', async ({ db, request }) => {
   }
   if (u.status === 'removed') throw forbid('이용이 제한된 계정입니다');
   await run(db, 'DELETE FROM login_attempts WHERE email = ?', email);
-  return login(db, u.id);
+  return login(db, u.id, request);
 });
 
 on('POST', '/auth/logout', async ({ db, request }) => {
@@ -651,6 +655,7 @@ registerAdminRoutes(on, { purgeOldApplications, levelProgress });
 // 이용 통계 수집(/t)과 KPI(/admin/kpi/*)는 _lib/kpi-routes.js 에 있다.
 registerKpiRoutes(on);
 registerCommunityRoutes(on);
+registerOwnerRoutes(on);
 
 on('POST', '/admin/applications/:id', async ({ db, request, user, params }) => {
   requireStaff(user); const b = await readJson(request);
@@ -673,7 +678,7 @@ on('POST', '/admin/users/:id', async ({ db, request, user, params }) => {
     if (b.role === 'member') {
       const ownerRow = await one(db, "SELECT 1 AS x FROM admin_roles WHERE user_id = ? AND role = 'owner'", target.id);
       const owners = (await one(db, "SELECT COUNT(*) AS c FROM admin_roles r JOIN users u ON u.id = r.user_id WHERE r.role = 'owner' AND u.role = 'staff' AND u.status = 'active'"))?.c || 0;
-      if (ownerRow && owners <= 1) throw bad('마지막 운영자는 해제할 수 없습니다');
+      if (ownerRow && owners <= 1) throw bad('마지막 총괄관리자는 해제할 수 없습니다');
       await run(db, 'DELETE FROM admin_roles WHERE user_id = ?', target.id);
     }
     await run(db, 'UPDATE users SET role = ? WHERE id = ?', b.role, target.id); }

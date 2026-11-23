@@ -383,6 +383,7 @@ console.log('v1.1 동의·로그인 제한·내보내기·탈퇴·파기 ok');
   const old = new FakeD1();
   old.db.exec(`CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
     CREATE TABLE users (id INTEGER PRIMARY KEY, nickname TEXT, level TEXT, status TEXT DEFAULT 'active');
+    CREATE TABLE sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT NOT NULL);
     CREATE TABLE rounds (id INTEGER PRIMARY KEY, name TEXT);
     CREATE TABLE comments (id INTEGER PRIMARY KEY, body TEXT);
     CREATE TABLE analytics_events (id INTEGER PRIMARY KEY, day TEXT);
@@ -695,5 +696,71 @@ console.log('v1.3 이용 통계·KPI ok');
   const au3 = await expectOk(c.get('/admin/audit?action=chat', { as: 'admin' }));
   ok(au3.rows.some(r => r.action === 'chat.post') && au3.rows.some(r => r.action === 'chat.remind'), 'chat actions audited');
   console.log('v2.1 단체카톡방·신규 회원 정착 ok');
+}
+// ───────── v2.2 총괄 관리 (/admin) ─────────
+{
+  const { deviceOf } = await import('../functions/_lib/owner-routes.js');
+  eq(deviceOf('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 KAKAOTALK 10.4.5'), '카카오톡 인앱 · iPhone', 'device summary kakao');
+  eq(deviceOf('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'), 'Chrome · Windows', 'device summary chrome');
+  // 총괄 현황
+  await expectFail(c.get('/admin/overview', { as: 'b' }), 403, 'overview owner only');
+  const ov = await expectOk(c.get('/admin/overview', { as: 'admin' }));
+  ok(ov.queues.length === 6 && ov.staff.length >= 2 && ov.members.total >= 3 && ov.checklist.length >= 7 && ov.system.cleanup.length === 3, 'overview shape');
+  ok(ov.checklist.some(x => /총괄관리자/.test(x.title)) && ov.checklist.some(x => /백업/.test(x.title)) && ov.checklist.some(x => /운영 주체/.test(x.title)), 'owner checklist covers owners, backup, operator info');
+  // 담당 영역
+  const B = (await expectOk(c.get('/admin/staff', { as: 'admin' }))).rows.find(r => r.email === 'b@test.kr');
+  ok(B && B.scopes === null, 'staff starts with all scopes');
+  await expectFail(c.post(`/admin/staff/${B.id}/scopes`, { scopes: ['comms'] }, { as: 'b' }), 403, 'only owner sets scopes');
+  await expectOk(c.post(`/admin/staff/${B.id}/scopes`, { scopes: ['comms', 'nope'] }, { as: 'admin' }));
+  eq((await expectOk(c.get('/admin/counts', { as: 'b' }))).scopes.join(), 'comms', 'counts expose scopes');
+  await expectOk(c.get('/admin/chat', { as: 'b' }), 'in-scope chat');
+  await expectOk(c.get('/admin/events', { as: 'b' }), 'in-scope events');
+  await expectFail(c.get('/admin/applications', { as: 'b' }), 403, 'out of scope blocked');
+  await expectFail(c.get('/admin/kpi/summary', { as: 'b' }), 403, 'kpi out of scope');
+  await expectFail(c.post(`/admin/users/${C.id}/leader`, { on: 1, reason: 't' }, { as: 'b' }), 403, 'leader grant needs groups scope');
+  await expectOk(c.get('/admin/users', { as: 'b' }), 'reading members allowed');
+  await expectOk(c.get(`/admin/users/${C.id}`, { as: 'b' }), 'reading member detail allowed');
+  await expectFail(c.post(`/admin/users/${C.id}`, { status: 'dormant', reason: 't' }, { as: 'b' }), 403, 'member changes out of scope');
+  await expectOk(c.get('/admin/dashboard', { as: 'b' }), 'dashboard always open');
+  await expectOk(c.get('/admin/search?q=' + encodeURIComponent('메이커'), { as: 'b' }), 'search always open');
+  await expectOk(c.post(`/admin/staff/${B.id}/scopes`, { scopes: [] }, { as: 'admin' }));
+  await expectFail(c.get('/admin/chat', { as: 'b' }), 403, 'no scopes blocks scoped menus');
+  await expectOk(c.post(`/admin/staff/${B.id}/scopes`, { scopes: null }, { as: 'admin' }));
+  await expectOk(c.get('/admin/applications', { as: 'b' }), 'all scopes restored');
+  eq((await expectOk(c.get('/admin/counts', { as: 'b' }))).scopes, null, 'null scopes means everything');
+  await expectFail(c.post(`/admin/staff/${admin.id}/scopes`, { scopes: ['comms'] }, { as: 'admin' }), 400, 'owner keeps every scope');
+  // 보안·접속
+  await expectFail(c.post('/auth/login', { email: 'b@test.kr', password: 'wrong-one' }, { as: 'x' }), 401, 'failed staff login');
+  await expectFail(c.get('/admin/security', { as: 'b' }), 403, 'security owner only');
+  const sec = await expectOk(c.get('/admin/security', { as: 'admin' }));
+  ok(sec.failures.by_email.some(r => r.email === 'b@test.kr' && r.is_staff) && sec.sessions.some(s => s.current) && sec.staff.length >= 2, 'security overview');
+  ok(sec.sessions.some(s => s.user_id === B.id), 'staff sessions listed');
+  await expectFail(c.post('/admin/security/revoke', { sid: sec.sessions.find(s => s.current).sid }, { as: 'admin' }), 400, 'current session protected');
+  ok((await expectOk(c.post('/admin/security/revoke', { user_id: B.id }, { as: 'admin' }))).revoked >= 1, 'revoke staff sessions');
+  await expectFail(c.get('/admin/dashboard', { as: 'b' }), 401, 'revoked staff is logged out');
+  await expectOk(c.post('/auth/login', { email: 'b@test.kr', password: 'password1' }, { as: 'b' }));
+  // 사이트 운영
+  ok((await expectOk(c.get('/public/notice'))).applications.open, 'applications open by default');
+  await expectFail(c.put('/admin/site', { applications_open: false, reason: 'x' }, { as: 'b' }), 403, 'site owner only');
+  await expectFail(c.put('/admin/site', { applications_open: false }, { as: 'admin' }), 400, 'site needs reason');
+  await expectFail(c.put('/admin/site', { reason: 'x', banner: { enabled: true, text: '공지', link: 'javascript:alert(1)' } }, { as: 'admin' }), 400, 'banner link checked');
+  await expectOk(c.put('/admin/site', { reason: '모집 마감', applications_open: false, applications_closed_message: '1월 모집은 12월 15일에 열립니다', banner: { enabled: true, text: '12월 정기모임 신청 중', link: '/app/#/events', audience: 'all' } }, { as: 'admin' }));
+  const nt = await expectOk(c.get('/public/notice'));
+  ok(!nt.applications.open && nt.applications.message.includes('12월 15일') && nt.banner.text === '12월 정기모임 신청 중' && nt.banner.audience === 'all' && nt.banner.v > 0, 'notice reflects site settings');
+  await expectFail(c.post('/apply', { name: '닫힘', email: 'closed@test.kr', consent_privacy: true, consent_public: true }), 400, 'apply refused while closed');
+  ok((await expectOk(c.get('/admin/site', { as: 'b' }))).site.applications_open === false, 'staff can read site settings');
+  await expectOk(c.put('/admin/site', { reason: '기한 지난 공지', applications_open: true, banner: { enabled: true, text: '지난 공지', until: '2020-01-01' } }, { as: 'admin' }));
+  const nt2 = await expectOk(c.get('/public/notice'));
+  ok(nt2.banner === null && nt2.applications.open, 'expired banner hidden, applications reopened');
+  await expectOk(c.put('/admin/site', { reason: '정리', applications_open: true, banner: { enabled: false } }, { as: 'admin' }));
+  // 데이터 정리
+  await db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES ('old-token-1', ?, '2020-01-01 00:00:00')").bind(E.id).run();
+  const cu = await expectOk(c.get('/admin/cleanup', { as: 'admin' }));
+  ok(cu.tasks.find(t => t.key === 'sessions').count >= 1, 'cleanup counts');
+  await expectFail(c.post('/admin/cleanup', { task: 'sessions' }, { as: 'admin' }), 400, 'cleanup needs reason');
+  await expectFail(c.post('/admin/cleanup', { task: 'sessions', reason: 'x' }, { as: 'b' }), 403, 'cleanup owner only');
+  ok((await expectOk(c.post('/admin/cleanup', { task: 'sessions', reason: '월말 정리' }, { as: 'admin' }))).removed >= 1, 'cleanup removes expired sessions');
+  ok((await expectOk(c.get('/admin/audit?action=cleanup', { as: 'admin' }))).rows.length >= 1 && (await expectOk(c.get('/admin/audit?action=staff.scopes', { as: 'admin' }))).rows.length >= 3, 'owner actions audited');
+  console.log('v2.2 총괄 관리 ok');
 }
 console.log('\nAPI 전체 흐름 테스트 통과 ✔');

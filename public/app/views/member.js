@@ -204,7 +204,7 @@ export async function notifications() {
     <div class="card">${rows.length ? rows.map(n => `<a class="noti ${n.read_at ? '' : 'unread'}" href="${n.link || '#/dashboard'}" data-act="open" data-id="${n.id}" style="color:inherit"><div class="grow"><div class="t">${esc(n.title)}</div>${n.body ? `<div class="b">${esc(n.body)}</div>` : ''}<div class="muted small">${ago(n.created_at)}</div></div></a>`).join('') : empty('알림이 없습니다')}</div></div>`;
   return { html, mount(root) { bindActions(root, {
     async readall() { await post('/me/notifications/read', { all: true }); await state.refreshMe(); reload(); },
-    async open(el) { await post('/me/notifications/read', { id: el.dataset.id }); await state.refreshMe(); go(el.getAttribute('href')); },
+    async open(el) { await post('/me/notifications/read', { id: el.dataset.id }); await state.refreshMe(); const h = el.getAttribute('href') || '#/dashboard'; if (h.startsWith('#')) go(h); else location.href = h; },
   }); } };
 }
 

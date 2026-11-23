@@ -40,9 +40,9 @@ export async function register() {
 
 export async function setup() {
   const st = await api('/public/status');
-  if (!st.setup_needed) return `<div class="wrap auth"><div class="card"><h2>이미 설정이 끝났습니다</h2><p class="muted">운영자 계정이 있습니다. <a href="#/login">로그인</a>으로 이동하세요.</p><p class="small muted">공개 홈페이지는 <a href="/">여기</a>에 있습니다.</p></div></div>`;
-  const html = `<div class="wrap auth"><div class="auth-art"><img src="/assets/img/act-workshop-sm.webp" width="480" height="300" alt="화이트보드 앞에서 계획을 함께 정리하는 사람들"></div><div class="card"><h2>마챌 초기 설정</h2><p class="muted small">첫 운영자(마스터 · 운영진) 계정을 만듭니다. 이 화면은 한 번만 열립니다.</p><form class="form" data-form="setup">
+  if (!st.setup_needed) return `<div class="wrap auth"><div class="card"><h2>이미 설정이 끝났습니다</h2><p class="muted">총괄관리자 계정이 있습니다. <a href="#/login">로그인</a>으로 이동하세요.</p><p class="small muted">공개 홈페이지는 <a href="/">여기</a>에 있습니다.</p></div></div>`;
+  const html = `<div class="wrap auth"><div class="auth-art"><img src="/assets/img/act-workshop-sm.webp" width="480" height="300" alt="화이트보드 앞에서 계획을 함께 정리하는 사람들"></div><div class="card"><h2>마챌 초기 설정</h2><p class="muted small">첫 총괄관리자(마스터 · 운영진) 계정을 만듭니다. 이 화면은 한 번만 열립니다.</p><form class="form" data-form="setup">
     ${field('이름', input('name', { required: true }))}${field('닉네임', input('nickname', { placeholder: '운영본부' }))}${field('이메일', input('email', { type: 'email', required: true }))}${field('비밀번호 (8자 이상)', input('password', { type: 'password', required: true }))}
-    <div class="form-error error"></div><button class="btn primary block" type="submit">운영자 계정 만들기</button></form></div></div>`;
-  return { html, mount(root) { bindForms(root, { async setup(d) { await post('/setup', d); await state.refreshMe(); toast('운영자 계정이 만들어졌습니다'); go('#/admin'); } }); } };
+    <div class="form-error error"></div><button class="btn primary block" type="submit">총괄관리자 계정 만들기</button></form></div></div>`;
+  return { html, mount(root) { bindForms(root, { async setup(d) { await post('/setup', d); await state.refreshMe(); toast('총괄관리자 계정이 만들어졌습니다'); location.href = '/admin/'; } }); } };
 }

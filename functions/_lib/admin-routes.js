@@ -52,6 +52,8 @@ export const MIGRATIONS = [
   ['2026-11-23-nudges', "CREATE TABLE IF NOT EXISTS nudges (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, step TEXT NOT NULL, title TEXT NOT NULL, sent_by INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')))"],
   ['2026-11-23-nudges-idx', 'CREATE INDEX IF NOT EXISTS idx_nudges_user ON nudges(user_id, created_at)'],
   ['2026-11-23-chat-posts', "CREATE TABLE IF NOT EXISTS chat_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, body TEXT NOT NULL, member_ids TEXT, posted_by INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')))"],
+  ['2026-11-24-users-staff-scopes', 'ALTER TABLE users ADD COLUMN staff_scopes TEXT'],
+  ['2026-11-24-sessions-ua', 'ALTER TABLE sessions ADD COLUMN ua TEXT'],
 ];
 export async function runMigrations(db) {
   const done = new Set((await all(db, 'SELECT id FROM schema_migrations')).map(r => r.id));
@@ -62,8 +64,8 @@ export async function runMigrations(db) {
   }
 }
 
-// ───────────────────────── 운영자(최고 관리자) ─────────────────────────
-// 운영자가 한 명도 없으면 가장 먼저 만든 운영진을 운영자로 삼는다(초기 설정 계정).
+// ───────────────────────── 총괄관리자(최고 관리자) ─────────────────────────
+// 총괄관리자가 한 명도 없으면 가장 먼저 만든 운영진을 총괄관리자로 삼는다(초기 설정 계정).
 export async function isOwner(db, user) {
   if (!user || user.role !== 'staff') return false;
   const any = await one(db, 'SELECT COUNT(*) AS c FROM admin_roles');
@@ -75,7 +77,7 @@ export async function isOwner(db, user) {
 }
 export async function requireOwner(db, user) {
   requireStaff(user);
-  if (!(await isOwner(db, user))) throw forbid('운영자만 할 수 있습니다. 운영진 관리 화면에서 운영자를 확인하세요');
+  if (!(await isOwner(db, user))) throw forbid('총괄관리자만 할 수 있습니다. 운영진 관리 화면에서 총괄관리자를 확인하세요');
   return user;
 }
 
@@ -246,7 +248,8 @@ export function registerAdminRoutes(on, h) {
       (SELECT COUNT(*) FROM posts WHERE reported > 0 AND hidden = 0) AS community,
       (SELECT COUNT(*) FROM event_presentations p JOIN events e ON e.id = p.event_id WHERE p.status = 'applied' AND e.status <> 'cancelled') AS presentations,
       (SELECT COUNT(*) FROM users WHERE role = 'member' AND status = 'active' AND chat_status = 'joined') AS chat`);
-    return { ...row, is_owner: await isOwner(db, user) };
+    const owner = await isOwner(db, user);
+    return { ...row, is_owner: owner, scopes: owner || user.staff_scopes == null ? null : String(user.staff_scopes).split(',').filter(Boolean) };
   });
 
   // ─────────────────────────────── 통합 검색 ───────────────────────────────
@@ -366,7 +369,7 @@ export function registerAdminRoutes(on, h) {
   on('DELETE', '/admin/notes/:id', async ({ db, user, params }) => {
     requireStaff(user);
     const n = await one(db, 'SELECT * FROM admin_notes WHERE id = ?', params.id); if (!n) throw notfound();
-    if (n.author_id !== user.id && !(await isOwner(db, user))) throw forbid('메모는 쓴 사람이나 운영자만 지울 수 있습니다');
+    if (n.author_id !== user.id && !(await isOwner(db, user))) throw forbid('메모는 쓴 사람이나 총괄관리자만 지울 수 있습니다');
     await run(db, 'DELETE FROM admin_notes WHERE id = ?', n.id);
     return { ok: true };
   });
@@ -378,9 +381,11 @@ export function registerAdminRoutes(on, h) {
     const rows = await all(db, `SELECT u.id, u.nickname, u.name, u.email, u.level, u.last_seen_at, u.created_at,
       EXISTS (SELECT 1 FROM admin_roles r WHERE r.user_id = u.id AND r.role = 'owner') AS is_owner,
       (SELECT COUNT(*) FROM audit_logs a WHERE a.actor_id = u.id AND a.created_at >= datetime('now','-30 days')) AS actions_30d,
-      (SELECT MAX(created_at) FROM audit_logs a WHERE a.actor_id = u.id) AS last_action_at
+      (SELECT MAX(created_at) FROM audit_logs a WHERE a.actor_id = u.id) AS last_action_at,
+      (SELECT MAX(created_at) FROM sessions s WHERE s.user_id = u.id) AS last_login_at,
+      (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > datetime('now')) AS devices, u.staff_scopes
       FROM users u WHERE u.role = 'staff' AND u.status = 'active' ORDER BY is_owner DESC, u.id`);
-    return { me: { is_owner: meOwner, id: user.id }, rows: rows.map(r => ({ ...r, is_owner: !!r.is_owner })) };
+    return { me: { is_owner: meOwner, id: user.id }, rows: rows.map(({ staff_scopes, ...r }) => ({ ...r, is_owner: !!r.is_owner, scopes: r.is_owner || staff_scopes == null ? null : String(staff_scopes).split(',').filter(Boolean) })) };
   });
   on('POST', '/admin/staff', async ({ db, request, user }) => {
     await requireOwner(db, user); const b = await readJson(request);
@@ -394,16 +399,17 @@ export function registerAdminRoutes(on, h) {
     } else if (b.action === 'revoke') {
       if (target.id === user.id) throw bad('자기 자신의 운영진 권한은 해제할 수 없습니다');
       const wasOwner = await one(db, "SELECT 1 AS x FROM admin_roles WHERE user_id = ? AND role = 'owner'", target.id);
-      if (wasOwner && (await owners()) <= 1) throw bad('마지막 운영자는 해제할 수 없습니다');
-      await run(db, "UPDATE users SET role = 'member' WHERE id = ?", target.id);
+      if (wasOwner && (await owners()) <= 1) throw bad('마지막 총괄관리자는 해제할 수 없습니다');
+      await run(db, "UPDATE users SET role = 'member', staff_scopes = NULL WHERE id = ?", target.id);
       await run(db, 'DELETE FROM admin_roles WHERE user_id = ?', target.id);
       await notify(db, target.id, '운영진 권한이 해제됐습니다', null, '#/me');
     } else if (b.action === 'make_owner') {
-      if (target.role !== 'staff') throw bad('운영진만 운영자로 지정할 수 있습니다');
+      if (target.role !== 'staff') throw bad('운영진만 총괄관리자로 지정할 수 있습니다');
       await run(db, "INSERT OR IGNORE INTO admin_roles (user_id, role, granted_by) VALUES (?, 'owner', ?)", target.id, user.id);
-      await notify(db, target.id, '운영자로 지정됐습니다', '규칙 설정·운영진 관리·개인정보 내려받기를 할 수 있습니다', '#/admin/staff');
+      await run(db, 'UPDATE users SET staff_scopes = NULL WHERE id = ?', target.id);
+      await notify(db, target.id, '총괄관리자로 지정됐습니다', '규칙 설정·운영진 관리·개인정보 내려받기를 할 수 있습니다', '#/admin/staff');
     } else if (b.action === 'remove_owner') {
-      if ((await owners()) <= 1) throw bad('운영자는 최소 한 명 있어야 합니다');
+      if ((await owners()) <= 1) throw bad('총괄관리자는 최소 한 명 있어야 합니다');
       await run(db, 'DELETE FROM admin_roles WHERE user_id = ?', target.id);
     } else throw bad('action은 grant, revoke, make_owner, remove_owner 중 하나');
     await audit(db, user.id, 'staff.' + b.action, 'users:' + target.id);

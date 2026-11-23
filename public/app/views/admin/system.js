@@ -1,5 +1,5 @@
 // 설정 — 규칙 설정(입력 양식), 감사 로그, 데이터·백업
-import { api, put, esc, toast, reload, field, input, select, bindForms, bindActions, num, fmtDate, LEVEL_NAMES, LEVELS, state } from '../../core.js';
+import { api, post, put, esc, toast, reload, field, input, select, bindForms, bindActions, num, fmtDate, LEVEL_NAMES, LEVELS, state } from '../../core.js';
 import { getCounts, askReason, qs, actionLabel, ACTION_GROUPS, targetLink, fmtDetail } from './shared.js';
 
 const intIn = (name, v, unit = '', min = 0) => `<div class="unit-input"><input type="number" name="${name}" value="${v}" step="1" min="${min}"><span>${unit}</span></div>`;
@@ -33,7 +33,7 @@ export const system = {
       ${card('vis', '열람 권한', '각 기능을 몇 등급부터 쓸 수 있는지', ['visibility'], `<div class="form-cols">${VIS.map(([k, l]) => field(l, select('v_' + k, LEVELS.slice(1).map(x => [x, `${x} ${LEVEL_NAMES[x]} 이상`]), s.visibility[k]))).join('')}</div>`)}
       </div>
       ${card('points', '활동 포인트', '하루 상한이 0이면 제한 없음', ['points'], `<div class="table-wrap"><table class="tbl compact"><thead><tr><th>활동</th><th class="num">포인트</th><th class="num">하루 상한</th></tr></thead><tbody>${Object.entries(s.points).map(([k, v]) => `<tr><td>${esc(v.label)} <small class="muted">${k}</small></td><td class="num"><input class="mini-input num" type="number" name="p_${k}" value="${v.points}" min="0" step="1"></td><td class="num"><input class="mini-input num" type="number" name="c_${k}" value="${v.daily_cap}" min="0" step="1"></td></tr>`).join('')}</tbody></table></div>`)}
-      <section class="card"><div class="card-head"><h3>최근 규칙 변경</h3><a class="small" href="#/admin/audit?action=settings">전체 보기</a></div><div class="list">${hist.rows.map(r => { let det = {}; try { det = JSON.parse(r.detail || '{}'); } catch {} return `<div class="list-item"><div class="grow"><div class="title">${esc(actionLabel(r.action))} · ${esc(String(r.target || '').replace('settings:', ''))}</div><div class="meta">${esc(r.nickname || '-')} · ${fmtDate(r.created_at, true)}${det.reason ? ' · ' + esc(det.reason) : ''}</div></div></div>`; }).join('') || '<p class="muted small">아직 바꾼 적이 없습니다.</p>'}</div></section>`;
+      <section class="card"><div class="card-head"><h3>최근 규칙 변경</h3><a class="small" href="#/audit?action=settings">전체 보기</a></div><div class="list">${hist.rows.map(r => { let det = {}; try { det = JSON.parse(r.detail || '{}'); } catch {} return `<div class="list-item"><div class="grow"><div class="title">${esc(actionLabel(r.action))} · ${esc(String(r.target || '').replace('settings:', ''))}</div><div class="meta">${esc(r.nickname || '-')} · ${fmtDate(r.created_at, true)}${det.reason ? ' · ' + esc(det.reason) : ''}</div></div></div>`; }).join('') || '<p class="muted small">아직 바꾼 적이 없습니다.</p>'}</div></section>`;
 
     const save = async (pairs) => {
       const changed = pairs.filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(s[k]));
@@ -66,13 +66,13 @@ export const system = {
   async audit({ query }) {
     const d = await api('/admin/audit' + qs({ actor: query.actor, action: query.action, q: query.q, limit: 100 }));
     const row = r => { const det = fmtDetail(r.detail, 220); return `<tr><td><small>${fmtDate(r.created_at, true)}</small></td><td>${esc(r.nickname || '-')}</td><td><b>${esc(actionLabel(r.action))}</b><br><small class="muted">${esc(r.action)}</small></td><td><small>${targetLink(r.target)}</small></td><td><small class="muted detail-cell" title="${esc(r.detail || '')}">${esc(det)}</small></td></tr>`; };
-    const body = `<form class="filters adm-filters" data-form="f">${select('actor', [['', '모든 사람'], ...d.actors.map(a => [a.id, a.nickname])], query.actor || '')}${select('action', ACTION_GROUPS, query.action || '')}<input type="search" name="q" value="${esc(query.q || '')}" placeholder="대상·내용 검색 (예: users:12)"><button class="btn sm primary" type="submit">적용</button>${query.actor || query.action || query.q ? '<a class="btn sm ghost" href="#/admin/audit">초기화</a>' : ''}</form>
+    const body = `<form class="filters adm-filters" data-form="f">${select('actor', [['', '모든 사람'], ...d.actors.map(a => [a.id, a.nickname])], query.actor || '')}${select('action', ACTION_GROUPS, query.action || '')}<input type="search" name="q" value="${esc(query.q || '')}" placeholder="대상·내용 검색 (예: users:12)"><button class="btn sm primary" type="submit">적용</button>${query.actor || query.action || query.q ? '<a class="btn sm ghost" href="#/audit">초기화</a>' : ''}</form>
       <section class="card flush"><div class="table-wrap"><table class="tbl"><thead><tr><th>일시</th><th>처리한 사람</th><th>행동</th><th>대상</th><th>내용</th></tr></thead><tbody id="audit-body">${d.rows.map(row).join('') || '<tr><td colspan="5" class="muted">기록이 없습니다.</td></tr>'}</tbody></table></div></section>
       ${d.next_before ? '<div style="text-align:center;margin-top:12px"><button class="btn" data-act="more">더 보기</button></div>' : ''}
       <p class="small muted" style="margin-top:10px">감사 로그는 지울 수 없습니다. 돈·등급·권한·개인정보와 관련된 모든 처리가 남습니다.</p>`;
     let before = d.next_before;
     return { title: '감사 로그', sub: '누가 언제 무엇을 처리했는지 기록합니다.', body, mount(root) {
-      bindForms(root, { f(v) { location.hash = '#/admin/audit' + qs(v); } });
+      bindForms(root, { f(v) { location.hash = '#/audit' + qs(v); } });
       bindActions(root, { async more(el) { const r = await api('/admin/audit' + qs({ actor: query.actor, action: query.action, q: query.q, limit: 100, before })); root.querySelector('#audit-body').insertAdjacentHTML('beforeend', r.rows.map(row).join('')); before = r.next_before; if (!before) el.remove(); } });
     } };
   },
@@ -80,22 +80,35 @@ export const system = {
   async data() {
     const [sys, counts] = await Promise.all([api('/admin/system'), getCounts(true)]);
     const owner = !!counts.is_owner;
+    const cl = owner ? await api('/admin/cleanup') : null;
+    const backupDays = cl?.last_backup_at ? Math.floor((Date.now() - Date.parse(cl.last_backup_at.replace(' ', 'T') + 'Z')) / 864e5) : null;
     const T = { users: '회원', applications: '가입 신청', challenges: '그룹', group_members: '그룹원', group_sessions: '그룹 모임', session_attendance: '모임 출석', group_warnings: '출석 경고', group_logs: '도전 기록', log_cheers: '응원', group_results: '성과 기록', milestones: '마일스톤', leader_applications: '그룹리더 신청', event_presentations: '발표 신청', papers: '페이퍼', posts: '게시글', comments: '댓글', events: '정기모임·일정', registrations: '일정 신청', notifications: '알림', points_ledger: '포인트', badges: '배지', audit_logs: '감사 로그', consents: '동의 기록', broadcasts: '단체 알림', admin_notes: '내부 메모', rounds: '시즌' };
     const exports = [['groups', '그룹'], ['members', '그룹원'], ['sessions', '그룹 모임'], ['attendance', '모임 출석'], ['results', '성과 기록'], ['papers', '페이퍼'], ['points', '포인트'], ['users', '회원', 1], ['applications', '가입 신청', 1], ['consents', '동의 기록', 1]];
     const body = `<div class="adm-two">
       <section class="card"><div class="card-head"><h3>CSV 내려받기</h3><span class="muted small">엑셀에서 바로 열립니다</span></div>
-        <div class="btn-row">${exports.map(([k, l, pii]) => pii && !owner ? `<span class="btn sm" aria-disabled="true" title="운영자만 내려받을 수 있습니다" style="opacity:.5;cursor:not-allowed">${l} · 운영자 전용</span>` : `<a class="btn sm" href="/api/admin/export?table=${k}" download>${l}${pii ? ' <small class="muted">개인정보</small>' : ''}</a>`).join('')}</div>
-        <p class="small muted" style="margin:10px 0 0">개인정보가 담긴 파일(회원, 가입 신청, 동의 기록)은 운영자만 내려받습니다. 내려받은 기록은 감사 로그에 남고, 쓴 뒤에는 바로 지워 주세요.</p>
+        <div class="btn-row">${exports.map(([k, l, pii]) => pii && !owner ? `<span class="btn sm" aria-disabled="true" title="총괄관리자만 내려받을 수 있습니다" style="opacity:.5;cursor:not-allowed">${l} · 총괄관리자 전용</span>` : `<a class="btn sm" href="/api/admin/export?table=${k}" download>${l}${pii ? ' <small class="muted">개인정보</small>' : ''}</a>`).join('')}</div>
+        <p class="small muted" style="margin:10px 0 0">개인정보가 담긴 파일(회원, 가입 신청, 동의 기록)은 총괄관리자만 내려받습니다. 내려받은 기록은 감사 로그에 남고, 쓴 뒤에는 바로 지워 주세요.</p>
       </section>
       <section class="card"><div class="card-head"><h3>전체 백업</h3></div>
         <p class="small" style="margin:0 0 10px">모든 표를 JSON 파일 하나로 받습니다. 비밀번호 해시, 로그인 세션, 열람 기록은 빠집니다. 시즌이 끝날 때마다 한 번씩 받아 안전한 곳에 보관하세요.</p>
-        ${owner ? '<a class="btn primary sm" href="/api/admin/backup" download>백업 파일 받기</a>' : '<span class="muted small">운영자만 받을 수 있습니다.</span>'}
+        ${owner ? `<div class="row"><a class="btn primary sm" href="/api/admin/backup" download data-backup>백업 파일 받기</a><span class="small ${backupDays == null || backupDays > 30 ? 'error' : 'muted'}">${cl.last_backup_at ? `마지막 백업 ${fmtDate(cl.last_backup_at, true)} (${backupDays}일 전)` : '아직 받은 기록이 없습니다'}</span></div>` : '<span class="muted small">총괄관리자만 받을 수 있습니다.</span>'}
         <p class="small muted" style="margin:10px 0 0">Cloudflare D1 자체도 30일 동안 시점 복구(Time Travel)를 지원합니다. 큰 사고가 나면 대시보드에서 복구할 수 있습니다.</p>
       </section></div>
+      ${owner ? `<section class="card" style="margin-top:14px"><div class="card-head"><h3>데이터 정리</h3><span class="muted small">총괄관리자 · 지운 기록은 되돌릴 수 없습니다</span></div>
+        <div class="list">${cl.tasks.map(t => `<div class="list-item"><div class="grow"><b>${esc(t.name)}</b> <span class="chip ${t.count ? 'amber' : ''}">${num(t.count)}건</span><div class="meta">${esc(t.note)}</div></div>${t.count ? `<button class="btn sm" data-act="clean" data-task="${t.key}" data-name="${esc(t.name)}" data-n="${t.count}">정리하기</button>` : ''}</div>`).join('')}</div>
+        ${cl.history.length ? `<details style="margin-top:8px"><summary class="small"><b>정리 기록</b> <span class="muted">${cl.history.length}건</span></summary><div class="list" style="margin-top:6px">${cl.history.map(h => `<div class="list-item small"><div class="grow">${esc(fmtDetail(h.detail))}<div class="meta">${esc(h.actor || '-')} · ${fmtDate(h.created_at, true)}</div></div></div>`).join('')}</div></details>` : ''}
+        <p class="small muted" style="margin:8px 0 0">가입하지 않은 신청서는 처리 후 6개월이 지나면 운영 현황을 열 때 자동으로 파기됩니다. 이용 통계는 13개월이 지나면 자동으로 지웁니다.</p>
+      </section>` : ''}
       <section class="card flush" style="margin-top:14px"><div class="card-head pad"><h3>데이터 현황</h3><span class="muted small">표 ${sys.tables.length}개 · 규칙 변경 ${sys.settings_overrides}개 적용 중</span></div>
         <div class="table-wrap"><table class="tbl compact"><thead><tr><th>표</th><th class="num">행</th><th>표</th><th class="num">행</th></tr></thead><tbody>${(() => { const list = sys.tables.filter(t => t.rows || T[t.name]); const half = Math.ceil(list.length / 2); return Array.from({ length: half }, (_, i) => { const a = list[i], b = list[i + half]; const cell = t => t ? `<td>${esc(T[t.name] || t.name)} <small class="muted">${t.name}</small></td><td class="num">${num(t.rows)}</td>` : '<td></td><td></td>'; return `<tr>${cell(a)}${cell(b)}</tr>`; }).join(''); })()}</tbody></table></div>
       </section>
       <section class="card soft small" style="margin-top:14px"><b>보관 기간</b> · 가입하지 않은 신청서는 처리 후 6개월이 지나면 운영 현황을 열 때 자동으로 파기됩니다. 탈퇴한 회원의 이름·연락처는 바로 지우고, 그룹에 함께 남긴 출석·기록·성과는 이름 없이 남깁니다.<br><b>적용된 구조 변경</b> · ${sys.migrations.map(m => `<span class="kbd">${esc(m.id)}</span>`).join(' ') || '없음'}</section>`;
-    return { title: '데이터·백업', sub: '내려받기, 백업, 보관 정책', body };
+    return { title: '데이터·백업', sub: '내려받기, 백업, 데이터 정리, 보관 정책', body, mount(root) {
+      bindActions(root, { async clean(el) {
+        const reason = await askReason(`${el.dataset.name} ${num(Number(el.dataset.n))}건 정리`, { label: '정리하는 이유', hint: '지운 기록은 되돌릴 수 없습니다. 정리한 사실은 감사 로그에 남습니다.', button: '정리하기', danger: true, placeholder: '예: 월말 정기 정리' });
+        if (!reason) return;
+        const r = await post('/admin/cleanup', { task: el.dataset.task, reason }); toast(`${num(r.removed)}건을 정리했습니다`); reload();
+      } });
+    } };
   },
 };

@@ -91,7 +91,7 @@ export async function currentUser(db, request) {
   const s = await one(db, 'SELECT user_id, expires_at FROM sessions WHERE token = ?', token);
   if (!s) return null;
   if (s.expires_at < nowIso()) { await run(db, 'DELETE FROM sessions WHERE token = ?', token); return null; }
-  const u = await one(db, 'SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, bio, onboarded, asset_diag, can_lead, leader_since, chat_status, created_at FROM users WHERE id = ?', s.user_id);
+  const u = await one(db, 'SELECT id, email, name, nickname, phone, level, role, status, has_business, interests, bio, onboarded, asset_diag, can_lead, leader_since, chat_status, staff_scopes, created_at FROM users WHERE id = ?', s.user_id);
   if (!u || u.status === 'removed') return null;
   return u;
 }

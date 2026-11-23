@@ -107,10 +107,33 @@
     }).catch(() => {});
   }
 
+  // 공지 띠와 회원 신청 상태 (운영본부 → 사이트 운영에서 정한다)
+  const notice = getJson('/public/notice').catch(() => null);
+  notice.then(n => {
+    const b = n && n.banner;
+    if (!b || b.audience !== 'all') return;
+    const key = 'machal_notice_closed';
+    try { if (localStorage.getItem(key) === String(b.v)) return; } catch {}
+    const bar = document.createElement('div');
+    bar.className = 'site-notice'; bar.setAttribute('role', 'status');
+    const safeLink = /^(\/|https:\/\/)/.test(b.link || '') ? b.link : '';
+    bar.innerHTML = `<span>${escH(b.text)}</span>${safeLink ? ` <a href="${escH(safeLink)}">자세히</a>` : ''}<button type="button" class="site-notice-close" aria-label="공지 닫기">×</button>`;
+    bar.querySelector('button').addEventListener('click', () => { bar.remove(); try { localStorage.setItem(key, String(b.v)); } catch {} });
+    document.body.prepend(bar);
+  });
+
   // 가입 신청서
   const form = $('#apply-form');
   if (form) {
     const msg = $('.form-msg', form);
+    notice.then(n => {
+      if (!n || n.applications.open) return;
+      const box = document.createElement('div');
+      box.className = 'apply-closed';
+      box.innerHTML = `<b>지금은 회원 신청을 받지 않습니다</b><p>${escH(n.applications.message)}</p>`;
+      form.before(box);
+      form.querySelectorAll('input, textarea, select, button').forEach(el => { el.disabled = true; });
+    });
     const KEY = 'machal_apply_draft';
     // 쓰다 만 내용은 이 브라우저에만 임시 저장한다
     try { const d = JSON.parse(localStorage.getItem(KEY) || 'null'); if (d) for (const [k, v] of Object.entries(d)) { const els = form.elements[k]; if (!els) continue; if (els.length && els[0] && els[0].type === 'checkbox') $$(`[name="${k}"]`, form).forEach(c => { c.checked = (v || []).includes(c.value); }); else if (els.type !== 'checkbox') els.value = v; } } catch {}

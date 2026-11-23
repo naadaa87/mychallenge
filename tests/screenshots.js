@@ -33,7 +33,7 @@ async function shot(target, name, { full = false } = {}) {
   const hash = target;
   await send('Page.navigate', { url: 'about:blank' }); await new Promise(r => setTimeout(r, 150));
   events.length = 0;
-  await send('Page.navigate', { url: BASE + (target.startsWith('/') ? target : '/app/' + target) });
+  await send('Page.navigate', { url: BASE + (target.startsWith('/') ? target : target.startsWith('#/admin') ? '/admin/' + target.replace(/^#\/admin\/?/, '#/') : '/app/' + target) });
   await new Promise(r => setTimeout(r, 1200));
   // 로딩이 끝날 때까지 잠깐 더
   for (let i = 0; i < 15; i++) { if (!(await evalJs('!!document.querySelector("#app .spinner")'))) break; await new Promise(r => setTimeout(r, 300)); }
@@ -69,6 +69,7 @@ if (process.argv.includes('--site-only')) { ws.close(); chrome.kill(); if (error
 await shot('#/levels', 'app-levels-redirect');
 await shot('#/login', 'login');
 await shot('#/register', 'register');
+await shot('/admin/', 'admin-login');
 await login('admin@machal.kr', 'adminpass1');
 await shot('#/admin', 'admin-home', { full: true });
 for (const [h, n, full] of [
@@ -79,6 +80,7 @@ for (const [h, n, full] of [
   ['#/admin/broadcast', 'admin-broadcast'], ['#/admin/community?view=recent', 'admin-community'], ['#/admin/events?when=past', 'admin-events'], ['#/admin/events/1', 'admin-event'],
   ['#/admin/settings', 'admin-settings', true], ['#/admin/audit', 'admin-audit'], ['#/admin/data', 'admin-data'],
   ['#/admin/kpi', 'admin-kpi', true], ['#/admin/kpi?tab=traffic', 'admin-kpi-traffic', true], ['#/admin/kpi?tab=content', 'admin-kpi-content', true],
+  ['#/admin/overview', 'admin-overview', true], ['#/admin/security', 'admin-security', true], ['#/admin/site', 'admin-site', true], ['#/admin/data', 'admin-data-owner', true],
   ['#/admin/chat', 'admin-chat', true], ['#/admin/chat?tab=compose&kind=groups', 'admin-chat-compose', true], ['#/admin/chat?tab=settings', 'admin-chat-settings', true], ['#/admin/onboarding?days=365', 'admin-onboarding', true],
   ['#/admin/kpi?tab=members', 'admin-kpi-members', true], ['#/admin/kpi?tab=groups', 'admin-kpi-groups', true], ['#/admin/kpi?tab=community', 'admin-kpi-community', true],
 ]) await shot(h, n, { full: !!full });

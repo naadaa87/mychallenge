@@ -31,7 +31,7 @@ export function period(query) {
   const bucket = range <= 31 ? 'day' : range <= 120 ? 'week' : 'month';
   return { range, start, end, prevStart, prevEnd, bucket, custom };
 }
-// 수집 여부: 운영자가 끄거나 시작일 전이면 모으지 않는다 (개인정보처리방침 시행일을 지키기 위해)
+// 수집 여부: 총괄관리자가 끄거나 시작일 전이면 모으지 않는다 (개인정보처리방침 시행일을 지키기 위해)
 export function collecting(settings) {
   const a = settings.analytics || {};
   return a.enabled !== false && !(a.start && kstDate() < a.start);
@@ -468,7 +468,7 @@ export function registerKpiRoutes(on) {
     };
   });
 
-  // ─────────────────────── 월 목표·수집 설정 (운영자) ───────────────────────
+  // ─────────────────────── 월 목표·수집 설정 (총괄관리자) ───────────────────────
   const saveSetting = (db, key, val, uid) => run(db, `INSERT INTO settings (key, value, version, updated_by) VALUES (?,?,1,?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, version = settings.version + 1, updated_by = excluded.updated_by, updated_at = datetime('now')`, key, J(val), uid);
   on('PUT', '/admin/kpi/settings', async ({ db, request, user, settings }) => {

@@ -1,30 +1,41 @@
 // 운영본부 화면 공통 — 레이아웃(사이드 메뉴), 숫자 막대, 메모, 감사 로그 문구
 import { api, post, esc, nl2br, ago, fmtDate, num, toast, modal, closeModal, bindForms, bindActions, field, textarea, reload } from '../../core.js';
 
-// 사이드 메뉴 — [키, 이름, 묶음, 개수 키]
+// 사이드 메뉴 — [키, 이름, 묶음, 개수 키, 보이는 조건]
+// 보이는 조건: 'owner'면 총괄관리자만, 그 밖의 값은 운영진 담당 영역(members·groups·comms·community·data)
 export const MENU = [
   ['home', '현황', null],
-  ['kpi', 'KPI 지표', '분석'],
-  ['applications', '가입 신청', '받은 일', 'applications'],
-  ['leaders', '그룹리더 신청', '받은 일', 'leaders'],
-  ['results', '매출 확인', '받은 일', 'results'],
-  ['presentations', '발표 신청', '받은 일', 'presentations'],
-  ['papers', '페이퍼 검토', '받은 일', 'papers'],
-  ['promotions', '승급 심사', '받은 일', 'promotions'],
-  ['disputes', '이의·신고', '받은 일', 'disputes'],
+  ['kpi', 'KPI 지표', '분석', null, 'data'],
+  ['applications', '가입 신청', '받은 일', 'applications', 'members'],
+  ['leaders', '그룹리더 신청', '받은 일', 'leaders', 'groups'],
+  ['results', '매출 확인', '받은 일', 'results', 'groups'],
+  ['presentations', '발표 신청', '받은 일', 'presentations', 'comms'],
+  ['papers', '페이퍼 검토', '받은 일', 'papers', 'groups'],
+  ['promotions', '승급 심사', '받은 일', 'promotions', 'members'],
+  ['disputes', '이의·신고', '받은 일', 'disputes', 'community'],
   ['users', '회원', '사람'],
-  ['onboarding', '신규 회원 정착', '사람'],
-  ['staff', '운영진', '사람'],
+  ['onboarding', '신규 회원 정착', '사람', null, 'members'],
   ['groups', '그룹 현황', '그룹'],
-  ['rounds', '시즌', '그룹'],
-  ['events', '정기모임·일정', '소통'],
-  ['broadcast', '단체 알림', '소통'],
-  ['chat', '단체카톡방', '소통', 'chat'],
-  ['community', '커뮤니티 관리', '소통', 'community'],
-  ['settings', '규칙 설정', '설정'],
-  ['audit', '감사 로그', '설정'],
-  ['data', '데이터·백업', '설정'],
+  ['rounds', '시즌', '그룹', null, 'groups'],
+  ['events', '정기모임·일정', '소통', null, 'comms'],
+  ['broadcast', '단체 알림', '소통', null, 'comms'],
+  ['chat', '단체카톡방', '소통', 'chat', 'comms'],
+  ['community', '커뮤니티 관리', '소통', 'community', 'community'],
+  ['overview', '총괄 현황', '총괄 관리', null, 'owner'],
+  ['staff', '운영진·권한', '총괄 관리'],
+  ['site', '사이트 운영', '총괄 관리'],
+  ['security', '보안·접속', '총괄 관리', null, 'owner'],
+  ['settings', '규칙 설정', '총괄 관리'],
+  ['audit', '감사 로그', '총괄 관리'],
+  ['data', '데이터·백업', '총괄 관리'],
 ];
+// 이 운영진에게 메뉴를 보여 줄지 (counts: /admin/counts 응답)
+export function canSee(key, counts) {
+  const m = MENU.find(x => x[0] === key); const cond = m?.[4];
+  if (!cond) return true;
+  if (cond === 'owner') return !!counts.is_owner;
+  return counts.is_owner || !counts.scopes || counts.scopes.includes(cond);
+}
 export const labelOf = key => MENU.find(m => m[0] === key)?.[1] || key;
 
 let countsCache = null, countsAt = 0;
@@ -37,10 +48,10 @@ export function invalidateCounts() { countsAt = 0; }
 
 function sideHtml(active, counts) {
   let html = ''; let group = undefined;
-  for (const [k, l, g, ck] of MENU) {
+  for (const [k, l, g, ck] of MENU.filter(m => canSee(m[0], counts))) {
     if (g !== group) { if (group !== undefined) html += '</div>'; html += `<div class="adm-group">${g ? `<div class="adm-group-title">${g}</div>` : ''}`; group = g; }
     const n = ck ? counts[ck] || 0 : 0;
-    html += `<a href="${k === 'home' ? '#/admin' : '#/admin/' + k}" class="${k === active ? 'active' : ''}"><span>${l}</span>${n ? `<span class="adm-count${g === '받은 일' ? ' hot' : ''}">${n > 99 ? '99+' : n}</span>` : ''}</a>`;
+    html += `<a href="${k === 'home' ? '#/' : '#/' + k}" class="${k === active ? 'active' : ''}"><span>${l}</span>${n ? `<span class="adm-count${g === '받은 일' ? ' hot' : ''}">${n > 99 ? '99+' : n}</span>` : ''}</a>`;
   }
   return html + '</div>';
 }
@@ -48,10 +59,10 @@ function sideHtml(active, counts) {
 // 운영본부 화면 틀. body는 HTML 문자열, mount는 선택
 export async function shell(active, { title, sub = '', actions = '', crumbs = null }, body) {
   const counts = await getCounts();
-  const inbox = ['applications', 'leaders', 'results', 'presentations', 'papers', 'promotions', 'disputes'].reduce((s, k) => s + (counts[k] || 0), 0);
+  const inbox = ['applications', 'leaders', 'results', 'presentations', 'papers', 'promotions', 'disputes'].filter(k => canSee(k, counts)).reduce((s, k) => s + (counts[k] || 0), 0);
   return `<div class="adm">
     <aside class="adm-side" aria-label="운영본부 메뉴">
-      <div class="adm-side-head"><b>운영본부</b><span class="chip ${counts.is_owner ? 'ink' : ''}">${counts.is_owner ? '운영자' : '운영진'}</span></div>
+      <div class="adm-side-head"><b>운영본부</b><span class="chip ${counts.is_owner ? 'ink' : ''}">${counts.is_owner ? '총괄관리자' : '운영진'}</span></div>
       ${sideHtml(active, counts)}
     </aside>
     <div class="adm-main">
@@ -81,9 +92,9 @@ export function mountShell(root) {
       let r; try { r = await api('/admin/search?q=' + encodeURIComponent(v)); } catch { return; }
       if (my !== seq) return;
       const sec = (title, items) => items.length ? `<div class="adm-sr-title">${title}</div>${items.join('')}` : '';
-      const html = sec('회원', r.users.map(u => `<a href="#/admin/users/${u.id}"><b>${esc(u.nickname)}</b><small>${esc(u.name)} · ${esc(u.email)} · ${u.level}${u.status !== 'active' ? ' · ' + ({ dormant: '휴면', removed: '제명' }[u.status] || u.status) : ''}</small></a>`))
-        + sec('그룹', r.challenges.map(c => `<a href="#/admin/groups/${c.id}"><b>${esc(c.title)}</b><small>${{ study: '학습그룹', challenge: '도전그룹' }[c.type] || '그룹'} · ${esc(stageName(c.stage))}</small></a>`))
-        + sec('가입 신청', r.applications.map(a => `<a href="#/admin/applications?status=${a.status}&q=${encodeURIComponent(a.email)}"><b>${esc(a.name)}</b><small>${esc(a.email)} · ${{ pending: '대기', approved: '승인', joined: '가입 완료', rejected: '반려' }[a.status] || a.status}</small></a>`));
+      const html = sec('회원', r.users.map(u => `<a href="#/users/${u.id}"><b>${esc(u.nickname)}</b><small>${esc(u.name)} · ${esc(u.email)} · ${u.level}${u.status !== 'active' ? ' · ' + ({ dormant: '휴면', removed: '제명' }[u.status] || u.status) : ''}</small></a>`))
+        + sec('그룹', r.challenges.map(c => `<a href="#/groups/${c.id}"><b>${esc(c.title)}</b><small>${{ study: '학습그룹', challenge: '도전그룹' }[c.type] || '그룹'} · ${esc(stageName(c.stage))}</small></a>`))
+        + sec('가입 신청', r.applications.map(a => `<a href="#/applications?status=${a.status}&q=${encodeURIComponent(a.email)}"><b>${esc(a.name)}</b><small>${esc(a.email)} · ${{ pending: '대기', approved: '승인', joined: '가입 완료', rejected: '반려' }[a.status] || a.status}</small></a>`));
       box.innerHTML = html || '<div class="adm-sr-empty">찾는 결과가 없습니다</div>';
       box.hidden = false;
     }, 220);
@@ -172,10 +183,11 @@ export const ACTION_LABELS = {
   'presentation.confirmed': '발표 확정', 'presentation.presented': '발표 완료', 'presentation.declined': '발표 반려', 'presentation.applied': '발표 확정 취소',
   'paper.approve': '페이퍼 승인', 'paper.return': '페이퍼 보완 요청',
   'promotion.approve': '승급 승인', 'promotion.hold': '승급 보류', 'promotion.reject': '승급 반려',
-  'dispute.update': '이의 처리', 'user.update': '회원 정보 변경', 'staff.grant': '운영진 지정', 'staff.revoke': '운영진 해제', 'staff.make_owner': '운영자 지정', 'staff.remove_owner': '운영자 해제',
+  'dispute.update': '이의 처리', 'user.update': '회원 정보 변경', 'staff.grant': '운영진 지정', 'staff.revoke': '운영진 해제', 'staff.make_owner': '총괄관리자 지정', 'staff.remove_owner': '총괄관리자 해제',
   'settings.update': '규칙 변경', 'settings.reset': '규칙 기본값 복원', 'round.create': '시즌 만들기', 'round.update': '시즌 수정',
   'event.create': '일정 생성', 'event.update': '일정 수정', 'event.cancel': '일정 취소', 'event.attend.mark': '출석 처리', 'event.attend.unmark': '출석 취소',
   'broadcast.send': '단체 알림 발송', 'post.hide': '게시물 숨김', 'post.update': '게시물 처리', 'comment.hide': '댓글 숨김', 'comment.show': '댓글 다시 보이기',
+  'staff.scopes': '운영진 담당 영역 변경', 'login.revoke': '로그인 강제 종료', 'site.update': '사이트 운영 설정 변경', 'cleanup.run': '데이터 정리',
   'chat.status': '단체카톡방 참여 상태 변경', 'chat.remind': '단체카톡방 참여 안내', 'chat.post': '단체카톡방 공지 기록', 'onboarding.nudge': '정착 단계 안내',
   'user.withdraw': '회원 탈퇴', 'member.withdraw': '회원 탈퇴', 'kpi.settings': 'KPI 목표·수집 설정', export: 'CSV 내려받기', 'backup.download': '전체 백업',
   // v1 기록 (예전 로그 표시용)
@@ -185,16 +197,16 @@ export const ACTION_LABELS = {
   'member.accept': '(예전) 그룹원 수락', 'member.reject': '(예전) 그룹원 거절', 'member.remove': '(예전) 그룹원 이탈', 'member.role': '(예전) 역할 변경', 'hq.expense.add': '(예전) 재원 기록', 'hq.expense.delete': '(예전) 재원 기록 삭제',
 };
 export const actionLabel = a => ACTION_LABELS[a] || a;
-export const ACTION_GROUPS = [['', '전체 행동'], ['application', '가입'], ['group', '그룹'], ['session', '모임·출석'], ['leader', '그룹리더'], ['group_result', '매출 확인'], ['presentation', '발표'], ['paper', '페이퍼'], ['promotion', '승급'], ['user', '회원'], ['staff', '운영진'], ['settings', '규칙'], ['event', '일정'], ['broadcast', '알림'], ['chat', '단체카톡방'], ['onboarding', '신규 회원 정착'], ['post', '커뮤니티']];
+export const ACTION_GROUPS = [['', '전체 행동'], ['application', '가입'], ['group', '그룹'], ['session', '모임·출석'], ['leader', '그룹리더'], ['group_result', '매출 확인'], ['presentation', '발표'], ['paper', '페이퍼'], ['promotion', '승급'], ['user', '회원'], ['staff', '운영진'], ['settings', '규칙'], ['event', '일정'], ['broadcast', '알림'], ['chat', '단체카톡방'], ['onboarding', '신규 회원 정착'], ['site', '사이트 운영'], ['login', '로그인'], ['cleanup', '데이터 정리'], ['post', '커뮤니티']];
 export function targetLink(target) {
   const m = String(target || '').match(/^(users|challenges|applications|events|posts|papers|leader_applications|group_results|event_presentations):(\d+)/);
   if (!m) return esc(target || '');
-  const href = { users: `#/admin/users/${m[2]}`, challenges: `#/admin/groups/${m[2]}`, applications: '#/admin/applications', events: `#/admin/events/${m[2]}`, posts: `#/community/posts/${m[2]}`, papers: '#/admin/papers', leader_applications: '#/admin/leaders?view=decided', group_results: '#/admin/results?view=all', event_presentations: '#/admin/presentations' }[m[1]];
+  const href = { users: `#/users/${m[2]}`, challenges: `#/groups/${m[2]}`, applications: '#/applications', events: `#/events/${m[2]}`, posts: `/app/#/community/posts/${m[2]}`, papers: '#/papers', leader_applications: '#/leaders?view=decided', group_results: '#/results?view=all', event_presentations: '#/presentations' }[m[1]];
   const name = { users: '회원', challenges: '그룹', applications: '신청서', events: '일정', posts: '게시물', papers: '페이퍼', leader_applications: '그룹리더 신청', group_results: '성과 기록', event_presentations: '발표' }[m[1]];
   return `<a href="${href}">${name} #${m[2]}</a>`;
 }
 // 감사 로그 상세(JSON)를 읽기 쉬운 한 줄로
-const DETAIL_KEYS = { reason: '사유', note: '메모', from: '이전', to: '변경', stage: '단계', status: '상태', level: '등급', role: '역할', badge: '배지', evidence: '증빙', amount: '금액', category: '항목', recipients: '받는 사람', rows: '행 수', tables: '표 수', decision: '결정', total: '합계', bulk: '일괄', action: '동작', title: '제목', type: '유형', sent: '보냄', skipped: '건너뜀', kind: '종류', members: '소개한 회원', step: '단계' };
+const DETAIL_KEYS = { reason: '사유', note: '메모', from: '이전', to: '변경', stage: '단계', status: '상태', level: '등급', role: '역할', badge: '배지', evidence: '증빙', amount: '금액', category: '항목', recipients: '받는 사람', rows: '행 수', tables: '표 수', decision: '결정', total: '합계', bulk: '일괄', action: '동작', title: '제목', type: '유형', sent: '보냄', skipped: '건너뜀', sessions: '로그인', task: '항목', banner: '공지 띠', applications_open: '회원 신청 받기', kind: '종류', members: '소개한 회원', step: '단계' };
 export function fmtDetail(detail, max = 200) {
   if (!detail) return '';
   let o; try { o = JSON.parse(detail); } catch { return String(detail).slice(0, max); }
@@ -203,7 +215,7 @@ export function fmtDetail(detail, max = 200) {
   for (const [k, v] of Object.entries(o)) {
     if (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)) continue;
     if (k === 'scores' || k === 'value' || k === 'segment' || k === 'ids') { parts.push(`${DETAIL_KEYS[k] || k}: ${Array.isArray(v) ? v.length + '건' : '…'}`); continue; }
-    parts.push(`${DETAIL_KEYS[k] || k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);
+    parts.push(`${DETAIL_KEYS[k] || k}: ${typeof v === 'boolean' ? (v ? '예' : '아니요') : typeof v === 'object' ? JSON.stringify(v) : v}`);
   }
   const t = parts.join(' · ');
   return t.length > max ? t.slice(0, max) + '…' : t;

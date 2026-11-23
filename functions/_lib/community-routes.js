@@ -128,7 +128,7 @@ export function registerCommunityRoutes(on) {
     return { sent, skipped };
   });
 
-  // 단체카톡방 설정 (운영자만, 바꾸는 이유를 남긴다)
+  // 단체카톡방 설정 (총괄관리자만, 바꾸는 이유를 남긴다)
   on('PUT', '/admin/chat/settings', async ({ db, settings, request, user }) => {
     await requireOwner(db, user); const b = await readJson(request);
     const reason = str(b.reason, 300); if (!reason) throw bad('바꾸는 이유를 적어 주세요. 변경 이력으로 남습니다');

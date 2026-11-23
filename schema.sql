@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
   chat_status TEXT,                          -- 단체카톡방: NULL | clicked | joined | verified | left (v2.1)
   chat_at TEXT,
   welcomed_at TEXT,                          -- 단체카톡방 환영 인사에 소개한 때
+  staff_scopes TEXT,                         -- 운영진 담당 영역 (쉼표 구분). NULL = 전체 (v2.2)
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_seen_at TEXT
 );
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL,
   expires_at TEXT NOT NULL,
+  ua TEXT,                                   -- 로그인 기기 요약 (예: Chrome · Windows)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

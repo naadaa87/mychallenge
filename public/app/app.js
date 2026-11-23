@@ -3,8 +3,13 @@ import * as pub from './views/public.js';
 import * as member from './views/member.js';
 import * as group from './views/group.js';
 import * as community from './views/community.js';
-import * as admin from './views/admin.js';
 import { state, api, esc, toast, navActive, closeModal } from './core.js';
+
+function toAdmin({ path, query }) {
+  const qs = new URLSearchParams(query).toString();
+  location.replace('/admin/#' + (path.replace(/^\/admin/, '') || '/') + (qs ? '?' + qs : ''));
+  return '';
+}
 
 const routes = [
   // 공개 소개 페이지는 사이트(/, /levels/, /apply/ …)로 옮겼다. 회원 공간은 /app/ 아래에서만 돈다.
@@ -19,7 +24,8 @@ const routes = [
   ['/community', community.feed, 'user'], ['/community/new', community.newPost, 'user'], ['/community/posts/:id', community.post, 'user'], ['/community/board/:board', community.boardView, 'user'],
   ['/events', community.events, 'user'], ['/members', community.members, 'user'],
   // 운영
-  ['/admin', admin.home, 'staff'], ['/admin/:section', admin.section, 'staff'], ['/admin/:section/:id', admin.section, 'staff'],
+  // 운영본부는 /admin 으로 옮겼다 (예전 알림 링크 #/admin/… 은 그대로 이어 준다)
+  ['/admin', toAdmin, 'any'], ['/admin/:section', toAdmin, 'any'], ['/admin/:section/:id', toAdmin, 'any'],
 ];
 
 function parseHash() {
@@ -62,9 +68,9 @@ function renderChrome() {
     right.innerHTML = `<a class="btn sm" href="#/login">로그인</a><a class="btn sm primary" href="/apply/">회원 신청</a>`;
     bottom.innerHTML = '';
   } else {
-    nav.innerHTML = `<a href="#/dashboard">홈</a><a href="#/groups">그룹</a><a href="#/events">정기모임·일정</a><a href="#/community">커뮤니티</a><a href="#/papers">페이퍼</a>${me.role === 'staff' ? '<a href="#/admin">운영</a>' : ''}`;
+    nav.innerHTML = `<a href="#/dashboard">홈</a><a href="#/groups">그룹</a><a href="#/events">정기모임·일정</a><a href="#/community">커뮤니티</a><a href="#/papers">페이퍼</a>${me.role === 'staff' ? '<a href="/admin/">운영본부</a>' : ''}`;
     right.innerHTML = `<a class="bell" href="#/notifications" aria-label="알림">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>'}${me.unread ? `<span class="dot">${me.unread > 9 ? '9+' : me.unread}</span>` : ''}</a><a class="avatar" href="#/me" title="${esc(me.nickname)}">${esc((me.nickname || '?').slice(0, 1))}</a>`;
-    bottom.innerHTML = `<a href="#/dashboard">${ic.home}홈</a><a href="#/groups">${ic.flag}그룹</a><a href="#/events">${ic.cal}일정</a><a href="#/community">${ic.chat}커뮤니티</a>${me.role === 'staff' ? `<a href="#/admin">${ic.desk}운영</a>` : `<a href="#/me">${ic.user}나</a>`}`;
+    bottom.innerHTML = `<a href="#/dashboard">${ic.home}홈</a><a href="#/groups">${ic.flag}그룹</a><a href="#/events">${ic.cal}일정</a><a href="#/community">${ic.chat}커뮤니티</a>${me.role === 'staff' ? `<a href="/admin/">${ic.desk}운영</a>` : `<a href="#/me">${ic.user}나</a>`}`;
   }
   navActive();
 }
@@ -119,9 +125,22 @@ async function route() {
 export async function refreshMe() { await loadMe(); renderChrome(); }
 state.refreshMe = refreshMe;
 
+// 공지 띠 (운영본부 → 사이트 운영). 회원이 닫으면 문구가 바뀌기 전까지 다시 보이지 않는다.
+async function showNotice() {
+  let n; try { n = await api('/public/notice'); } catch { return; }
+  const b = n && n.banner; if (!b) return;
+  try { if (localStorage.getItem('machal_notice_closed') === String(b.v)) return; } catch {}
+  const bar = document.createElement('div');
+  bar.className = 'site-notice'; bar.setAttribute('role', 'status');
+  const link = /^(#\/|\/|https:\/\/)/.test(b.link || '') ? b.link : '';
+  bar.innerHTML = `<span>${esc(b.text)}</span>${link ? ` <a href="${esc(link)}">자세히</a>` : ''}<button type="button" class="site-notice-close" aria-label="공지 닫기">×</button>`;
+  bar.querySelector('button').addEventListener('click', () => { bar.remove(); try { localStorage.setItem('machal_notice_closed', String(b.v)); } catch {} });
+  document.body.prepend(bar);
+}
+
 window.addEventListener('hashchange', route);
 window.addEventListener('load', async () => {
   // 초기 설정이 안 된 사이트면 /setup 으로
   try { const s = await api('/public/status'); if (s.setup_needed && location.hash !== '#/setup') { location.hash = '#/setup'; } } catch {}
-  await loadMe(); renderChrome(); route();
+  await loadMe(); renderChrome(); route(); showNotice();
 });
