@@ -8,7 +8,7 @@ import {
   addPoints, pointsOf, maybeAutoPromote, setLevel, grantBadge, badgeCount, notify, notifyStaff, audit,
   str, must, intv, getCookie, COOKIE, HttpError as HttpErr, markCookie, jsonWithCookies,
 } from '../_lib/util.js';
-import { POLICY_VERSION } from '../_site/config.js';
+import { POLICY_VERSION, SITE } from '../_site/config.js';
 import { SCHEMA_STATEMENTS, SCHEMA_TABLES } from '../_lib/schema.generated.js';
 import { LEVELS, LEVEL_NAMES, FIELDS, BADGE_NAMES, BOARDS, EVENT_TYPES, EVENT_TOPICS, GROUP_TYPES, GOAL_METRICS, LEGACY_POINT_LABELS, levelIndex, quarterOf, normalizePolicy } from '../_lib/rules.js';
 import { registerGroupRoutes, myGroupsSummary, loadGroup, membership, activeMembers, isActive, isManagerOf, isLeaderOf, groupAttendance, emptyStats, band, kstNow } from '../_lib/group-routes.js';
@@ -236,7 +236,7 @@ async function meSummary(db, settings, u) {
   const groups = (await all(db, "SELECT c.id, c.title, c.stage, c.type, c.field_code, gm.role, gm.status AS member_status FROM group_members gm JOIN challenges c ON c.id = gm.challenge_id WHERE gm.user_id = ? AND gm.status IN ('active','applied') AND c.stage IN ('recruiting','active') ORDER BY c.updated_at DESC", u.id))
     .map(g => ({ ...g, type_name: GROUP_TYPES[g.type] || g.type }));
   const progress = await levelProgress(db, settings, u, pts, badges);
-  return { ...u, can_lead: !!u.can_lead || u.role === 'staff', asset_diag: parseJ(u.asset_diag, null), level_name: levelName(u.level), points: pts, badges: badges.map(b => ({ ...b, name: BADGE_NAMES[b.code] || b.code })), unread: unread?.c || 0, groups, progress, is_owner: u.role === 'staff' ? await isOwner(db, u) : false };
+  return { ...u, community_chat: SITE.communityChat || null, can_lead: !!u.can_lead || u.role === 'staff', asset_diag: parseJ(u.asset_diag, null), level_name: levelName(u.level), points: pts, badges: badges.map(b => ({ ...b, name: BADGE_NAMES[b.code] || b.code })), unread: unread?.c || 0, groups, progress, is_owner: u.role === 'staff' ? await isOwner(db, u) : false };
 }
 
 async function levelProgress(db, settings, u, pts, badges) {

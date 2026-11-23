@@ -91,8 +91,8 @@ export const FAQ = [
   ['가입과 참여', [
     ['마이챌린지는 어떤 모임인가요?', '사이드프로젝트와 새로운 수익에 관심 있는 사람들이 모이는 커뮤니티입니다. 정기모임에서 사업 아이디어, 시장, 트렌드, AI 활용, 사이드프로젝트 사례를 함께 살펴보고, 그중 관심이 맞는 사람끼리 학습그룹이나 도전그룹을 만들어 목표에 도전합니다. 과정은 홈페이지에 기록하고, 결과는 성과발표회에서 나눕니다.'],
     ['누가 가입할 수 있나요?', '사이드프로젝트를 실제로 해 보려는 직장인, 프리랜서, 자영업자, 학생 모두 신청할 수 있습니다. 경력이나 실적은 심사 기준이 아닙니다. 다만 쓸 수 있는 시간을 솔직하게 적어 주셔야 하고, 수익을 보장하지 않는다는 원칙에 동의해야 합니다. 만 14세 미만은 가입할 수 없습니다.'],
-    ['가입 절차는 어떻게 되나요?', '가입 신청서를 내면 운영진이 3일 안에 확인하고 이메일로 초대 코드를 보내 드립니다. 초대 코드로 계정을 만든 뒤 5분 정도 걸리는 오리엔테이션(원칙 확인 3문항)을 마치면 챌린저(L1)가 되고, 바로 그룹에 참여할 수 있습니다.'],
-    ['비용이 드나요?', '가입 신청과 오리엔테이션에는 비용이 들지 않습니다. 정기 멤버십이나 모임 참가비를 받게 되면 금액과 환불 기준을 모집 공지에 숫자로 적어 미리 안내합니다. "전액 환급", "사실상 무료" 같은 표현은 쓰지 않습니다.'],
+    ['가입 절차는 어떻게 되나요?', '회원 신청서를 내면 운영진이 3일 안에 확인하고 이메일로 초대 코드를 보내 드립니다. 초대 코드로 계정을 만든 뒤 5분 정도 걸리는 오리엔테이션(원칙 확인 3문항)을 마치면 챌린저(L1)가 되고, 바로 그룹에 참여할 수 있습니다.'],
+    ['비용이 드나요?', '회원 신청과 오리엔테이션에는 비용이 들지 않습니다. 정기 멤버십이나 모임 참가비를 받게 되면 금액과 환불 기준을 모집 공지에 숫자로 적어 미리 안내합니다. "전액 환급", "사실상 무료" 같은 표현은 쓰지 않습니다.'],
     ['사이드프로젝트를 해 본 적이 전혀 없어도 되나요?', '괜찮습니다. 처음에는 정기모임에 나와 이야기를 듣고, 학습그룹에서 한 분야를 함께 공부하는 것부터 시작하면 됩니다. 자기 자산 진단으로 내가 가진 기술과 경험을 정리해 두면 맞는 도전그룹을 찾기 쉽습니다.'],
     ['온라인으로만 참여할 수 있나요?', '그룹마다 다릅니다. 그룹리더가 온라인으로만 모이는 그룹도 있고, 오프라인 모임을 섞는 그룹도 있습니다. 정기모임과 성과발표회는 오프라인이 중심이지만 온라인 참여 링크를 함께 여는 경우가 많습니다. 메이커(L2)가 되려면 정기모임이나 세미나에 한 번은 참석해야 합니다.'],
   ]],
@@ -145,7 +145,7 @@ export function staticPages() {
       <p class="eyebrow"><span class="dot"></span>사이드프로젝트 커뮤니티</p>
       <h1>함께 배우고,<br>그룹으로 도전해서<br><em>성과까지</em></h1>
       <p class="lead">마이챌린지(마챌)는 정기모임에서 사업 아이디어와 시장, 트렌드, AI 활용을 함께 살펴보고, 관심이 맞는 사람끼리 학습그룹과 도전그룹을 만들어 목표에 도전하는 커뮤니티입니다. 도전은 홈페이지에 기록하고, 결과는 성과발표회에서 나눕니다.</p>
-      <div class="hero-actions"><a class="btn btn-primary btn-lg" href="/apply/">가입 신청하기</a><a class="btn btn-line btn-lg" href="/goals/">수익목표 보기</a></div>
+      <div class="hero-actions"><a class="btn btn-primary btn-lg" href="/apply/">회원 신청하기</a><a class="btn btn-line btn-lg" href="/goals/">수익목표 보기</a></div>
       <p class="round-note" data-live="round" hidden></p>
       <ul class="hero-facts"><li><b>월 1회 이상</b>정기모임</li><li><b>2가지</b>학습그룹 · 도전그룹</li><li><b>모임마다</b>출석 체크</li></ul>
     </div>
@@ -295,7 +295,7 @@ ${h.figure('act-content-video', '한 사람은 카메라로 촬영하고, 한 �
 ${fieldGrid()}
 
 <h2 id="hq">운영진이 하는 일</h2>
-<p>운영본부는 운영자와 위촉된 운영진으로 이루어집니다. 정기모임과 성과발표회를 열고, 가입 신청과 그룹리더 신청을 확인하고, 그룹이 멈추지 않도록 살피고, 매출 기록을 확인하고, 프로젝트 페이퍼와 승급을 검토하고, 이의를 조정합니다. 처리는 홈페이지의 운영 화면에서 하고, 모든 결정은 감사 기록으로 남깁니다.</p>
+<p>운영본부는 운영자와 위촉된 운영진으로 이루어집니다. 정기모임과 성과발표회를 열고, 회원 신청과 그룹리더 신청을 확인하고, 그룹이 멈추지 않도록 살피고, 매출 기록을 확인하고, 프로젝트 페이퍼와 승급을 검토하고, 이의를 조정합니다. 처리는 홈페이지의 운영 화면에서 하고, 모든 결정은 감사 기록으로 남깁니다.</p>
 <p>운영진이 그룹에 주는 지원은 <a href="/goals/#support">수익목표 페이지</a>에 정리했습니다. 그룹 프로젝트에서 생긴 수익을 어떻게 나눌지는 아직 정하지 않았고, 실제 수익이 나는 그룹이 생기면 그 그룹과 함께 정해 미리 공개합니다.</p>
 ${SITE.operator.company ? `<p class="small muted">운영 주체: ${esc(SITE.operator.company)}${SITE.operator.ceo ? ` (대표 ${esc(SITE.operator.ceo)})` : ''}</p>` : ''}
 
@@ -309,7 +309,7 @@ ${h.sources([
 </article>
 <aside class="side">
   <div class="side-box"><b>더 알아보기</b><ul><li><a href="/how-it-works/">함께하는 방식</a></li><li><a href="/goals/">수익목표</a></li><li><a href="/programs/">정기모임·프로그램</a></li><li><a href="/levels/">등급과 포인트</a></li><li><a href="/faq/">자주 묻는 질문</a></li></ul></div>
-  <div class="side-box side-cta"><b>함께해 볼까요?</b><p>신청서는 10분이면 씁니다.</p><a class="btn btn-primary" href="/apply/">가입 신청</a></div>
+  <div class="side-box side-cta"><b>함께해 볼까요?</b><p>신청서는 10분이면 씁니다.</p><a class="btn btn-primary" href="/apply/">회원 신청</a></div>
 </aside>
 </div>
 ${h.cta('각자의 챌린지를 함께 끝까지', '가입하면 다음 정기모임부터 함께할 수 있습니다. 마음에 드는 그룹이 있으면 바로 신청해도 됩니다.')}`,
@@ -411,7 +411,7 @@ ${h.figure('spot-sharing', '', '', 'fig-spot fig-right')}
 </article>
 <aside class="side">
   <div class="side-box"><b>함께 읽기</b><ul><li><a href="/goals/">수익목표</a></li><li>${guideLink('why-group')}</li><li>${guideLink('weekly-checkin')}</li><li>${guideLink('first-sale-12-weeks')}</li></ul></div>
-  <div class="side-box side-cta"><b>정기모임부터 시작하기</b><p>가입 신청 후 챌린저가 되면 바로 그룹에 참여할 수 있습니다.</p><a class="btn btn-primary" href="/apply/">가입 신청</a></div>
+  <div class="side-box side-cta"><b>정기모임부터 시작하기</b><p>회원 신청 후 챌린저가 되면 바로 그룹에 참여할 수 있습니다.</p><a class="btn btn-primary" href="/apply/">회원 신청</a></div>
 </aside>
 </div>
 ${h.cta('혼자 미뤄 둔 프로젝트가 있다면', '정기모임에서 함께할 사람을 만나고, 그룹으로 끝까지 가 보세요.', undefined, ['/goals/', '수익목표 보기'])}`,
@@ -427,7 +427,7 @@ ${h.cta('혼자 미뤄 둔 프로젝트가 있다면', '정기모임에서 함�
     body: `${h.pageHero('수익목표', '함께 도전하는 최종 목표는 성과와 수익입니다', '배우는 데서 멈추지 않고, 만들고, 보여 주고, 팔아 보는 데까지 함께 갑니다. 운영진은 그 과정을 곁에서 돕습니다.', goalsCrumbs, '', { name: 'spot-building', alt: '', frame: false, cls: 'ph-spot' })}
 <div class="wrap article-layout goal-before">
 <article class="prose">
-<div class="callout"><strong>먼저 밝혀 둡니다</strong><p>마이챌린지는 수익을 보장하지 않습니다. 회원에게서 출자금이나 투자금을 받지 않고, 원금이나 수익을 약속하지 않습니다. 수익목표는 그룹이 스스로 세우고 함께 도전하는 목표이며, 결과는 각 그룹이 만든 기록과 숫자로만 이야기합니다.</p></div>
+<div class="callout"><strong>마이챌린지 목표</strong><p>마이챌린지는 교육과정이 아니라, 다양한 트렌드와 프로젝트를 함께 학습하고 관심사가 같은 회원들끼리 함께 도전해 성과를 만들어 보는 모임입니다. 백 마디 말보다 한 번의 작은 도전이 더 중요합니다. 마챌에서 함께 도전해 보세요!</p></div>
 
 <nav class="toc" aria-label="이 페이지의 내용"><b>이 페이지의 내용</b><ol><li><a href="#ladder">여섯 단계</a></li><li><a href="#set">목표를 숫자로 세우기</a></li><li><a href="#study">학습그룹의 목표</a></li><li><a href="#support">운영진의 지원</a></li><li><a href="#verify">성과를 확인하는 기준</a></li><li><a href="#revenue">수익이 생기면</a></li></ol></nav>
 
@@ -478,7 +478,7 @@ ${supportCards}
 </ol>
 </article>
 <aside class="side">
-  <div class="side-box side-cta"><b>함께 도전해 볼까요?</b><p>가입하면 모집 중인 그룹에 바로 신청할 수 있습니다.</p><a class="btn btn-primary" href="/apply/">가입 신청</a></div>
+  <div class="side-box side-cta"><b>함께 도전해 볼까요?</b><p>가입하면 모집 중인 그룹에 바로 신청할 수 있습니다.</p><a class="btn btn-primary" href="/apply/">회원 신청</a></div>
   <div class="side-box"><b>함께 읽기</b><ul><li><a href="/how-it-works/">함께하는 방식</a></li><li>${guideLink('first-sale-12-weeks')}</li><li>${guideLink('side-job-ideas')}</li><li>${guideLink('side-income-tax')}</li></ul></div>
   <div class="side-box"><b>도전그룹 목표 예시</b><p class="small">8주 안에 첫 유료 고객 3명, 매출 30만 원 · 6주 동안 뉴스레터 구독자 200명 · 4주 안에 전자책 판매 10건</p><p class="small muted">그룹을 만들 때 참고하도록 넣은 예시입니다. 실제 목표는 그룹이 정합니다.</p></div>
 </aside>
@@ -529,7 +529,7 @@ ${badgeGrid()}
 </article>
 <aside class="side">
   <div class="side-box"><b>함께 읽기</b><ul><li><a href="/how-it-works/">함께하는 방식</a></li><li><a href="/goals/">수익목표</a></li><li><a href="/programs/">정기모임·프로그램</a></li><li>${guideLink('side-project-start')}</li></ul></div>
-  <div class="side-box side-cta"><b>챌린저부터 시작</b><p>신청 후 초대 코드로 가입하면 오리엔테이션을 거쳐 챌린저가 됩니다.</p><a class="btn btn-primary" href="/apply/">가입 신청</a></div>
+  <div class="side-box side-cta"><b>챌린저부터 시작</b><p>신청 후 초대 코드로 가입하면 오리엔테이션을 거쳐 챌린저가 됩니다.</p><a class="btn btn-primary" href="/apply/">회원 신청</a></div>
 </aside>
 </div>`,
   });
@@ -572,7 +572,7 @@ ${h.cta('다음 정기모임에서 만나요', '가입하면 정기모임·일�
     description: '마이챌린지 가입 절차와 비용, 정기모임과 학습·도전그룹, 그룹리더, 출석 체크와 경고·퇴출, 수익목표와 매출 확인, 회사 겸업과 개인정보, 탈퇴까지 자주 묻는 질문을 모았습니다.',
     crumbs: faqCrumbs,
     jsonld: [faqLd],
-    body: `${h.pageHero('자주 묻는 질문', '신청 전에 궁금한 것들', '찾는 답이 없다면 가입 신청서의 마지막 칸에 질문을 남겨 주세요. 운영진이 확인할 때 함께 답해 드립니다.', faqCrumbs, '', { name: 'ph-faq', alt: '마이크 앞에 마주 앉아 질문하고 답하는 두 사람' })}
+    body: `${h.pageHero('자주 묻는 질문', '신청 전에 궁금한 것들', '찾는 답이 없다면 회원 신청서의 마지막 칸에 질문을 남겨 주세요. 운영진이 확인할 때 함께 답해 드립니다.', faqCrumbs, '', { name: 'ph-faq', alt: '마이크 앞에 마주 앉아 질문하고 답하는 두 사람' })}
 <div class="wrap narrow faq-page">
 ${FAQ.map(([group, qs], i) => `<section class="faq-group" id="faq-${i + 1}"><h2>${group}</h2><div class="faq">${qs.map(faqItem).join('')}</div></section>`).join('')}
 <p class="faq-links">더 자세한 내용: <a href="/how-it-works/">함께하는 방식</a> · <a href="/goals/">수익목표</a> · <a href="/levels/">등급과 포인트</a> · ${guideLink('side-job-company-rules')} · ${guideLink('side-income-tax')} · <a href="/privacy/">개인정보처리방침</a></p>
@@ -580,24 +580,24 @@ ${FAQ.map(([group, qs], i) => `<section class="faq-group" id="faq-${i + 1}"><h2>
 ${h.cta('궁금한 게 풀렸다면', '신청서는 10분이면 씁니다. 경력이나 실적은 심사 기준이 아닙니다.')}`,
   });
 
-  // ── 가입 신청
-  const applyCrumbs = [['홈', '/'], ['가입 신청', '/apply/']];
+  // ── 회원 신청
+  const applyCrumbs = [['홈', '/'], ['회원 신청', '/apply/']];
   const interestChecks = Object.entries(FIELDS).map(([k, v]) => `<label class="chk"><input type="checkbox" name="interests" value="${k}"><span>${v}</span></label>`).join('');
   pages.push({
     path: '/apply/', slug: 'apply',
-    title: '가입 신청: 사이드프로젝트 커뮤니티 마이챌린지에 함께하기',
-    description: '마이챌린지(마챌) 가입 신청 페이지입니다. 신청서를 보내면 운영진이 3일 안에 확인하고 초대 코드를 이메일로 보내 드립니다. 경력이나 실적은 심사 기준이 아닙니다.',
+    title: '회원 신청: 사이드프로젝트 커뮤니티 마이챌린지에 함께하기',
+    description: '마이챌린지(마챌) 회원 신청 페이지입니다. 신청서를 보내면 운영진이 3일 안에 확인하고 초대 코드를 이메일로 보내 드립니다. 경력이나 실적은 심사 기준이 아닙니다.',
     crumbs: applyCrumbs,
-    body: `${h.pageHero('가입 신청', '마이챌린지 가입 신청', '솔직하게 적어 주세요. 경력이나 실적은 심사 기준이 아니고, 쓸 수 있는 시간과 함께하는 방식에 대한 생각을 봅니다.', applyCrumbs, '', { name: 'ph-apply', alt: '운영진이 문을 열고 노트를 든 새 회원들을 맞이하는 모습' })}
+    body: `${h.pageHero('회원 신청', '마이챌린지 회원 신청', '솔직하게 적어 주세요. 경력이나 실적은 심사 기준이 아니고, 쓸 수 있는 시간과 함께하는 방식에 대한 생각을 봅니다.', applyCrumbs, '', { name: 'ph-apply', alt: '운영진이 문을 열고 노트를 든 새 회원들을 맞이하는 모습' })}
 <div class="wrap apply-layout">
 <div class="apply-main">
   <p class="round-note" data-live="round" hidden></p>
-  <ol class="apply-steps"><li><b>신청서 제출</b><span>10분</span></li><li><b>운영진 확인</b><span>3일 안</span></li><li><b>초대 코드 이메일</b><span>승인 시</span></li><li><b>가입·오리엔테이션</b><span>5분</span></li></ol>
+  <ol class="apply-steps"><li><b>신청서 제출</b><span>10분</span></li><li><b>운영진 확인</b><span>3일 안</span></li><li><b>초대 코드 이메일</b><span>승인 시</span></li><li><b>가입·오리엔테이션</b><span>5분</span></li><li><b>단체카톡방 참여</b><span>가입 후</span></li></ol>
   <form class="apply-form" id="apply-form" novalidate>
     <fieldset><legend>기본 정보</legend>
       <div class="f-row">
         <label class="f"><span>이름 <i>*</i></span><input name="name" required autocomplete="name" placeholder="실명"></label>
-        <label class="f"><span>이메일 <i>*</i></span><input name="email" type="email" required autocomplete="email" placeholder="초대 코드를 받을 이메일"><small>가입할 때 같은 이메일을 씁니다</small></label>
+        <label class="f"><span>이메일 <i>*</i></span><input name="email" type="email" required autocomplete="email" placeholder="example@email.com"><small>가입할 때 같은 이메일을 씁니다</small></label>
       </div>
       <div class="f-row">
         <label class="f"><span>연락처</span><input name="phone" autocomplete="tel" placeholder="010-0000-0000"></label>
@@ -627,17 +627,18 @@ ${h.cta('궁금한 게 풀렸다면', '신청서는 10분이면 씁니다. 경�
       <div class="privacy-summary">
         <b>개인정보 수집·이용 안내</b>
         <dl><dt>목적</dt><dd>가입 심사, 초대 코드 발송, 신청 관련 연락</dd><dt>항목</dt><dd>(필수) 이름, 이메일 (선택) 연락처, 추천인, 하는 일, 가능 시간, 관심 분야, 신청서 답변</dd><dt>보유 기간</dt><dd>가입하면 회원 정보로 옮겨 탈퇴 시까지, 가입하지 않으면 처리 후 6개월이 지나면 파기</dd></dl>
-        <p>동의하지 않을 수 있으며, 이 경우 가입 신청을 할 수 없습니다. 자세한 내용은 <a href="/privacy/" target="_blank" rel="noopener">개인정보처리방침</a>을 확인해 주세요.</p>
+        <p>동의하지 않을 수 있으며, 이 경우 회원 신청을 할 수 없습니다. 자세한 내용은 <a href="/privacy/" target="_blank" rel="noopener">개인정보처리방침</a>을 확인해 주세요.</p>
       </div>
       <label class="chk chk-block"><input type="checkbox" name="consent_privacy" required><span>만 14세 이상이며, 위 개인정보 수집·이용에 동의합니다. <i>(필수)</i></span></label>
       <label class="chk chk-block"><input type="checkbox" name="consent_public" required><span>그룹을 마치고 프로젝트 페이퍼를 내면 매출 유무, 고객 수 구간, 들인 시간이 공개될 수 있다는 점에 동의합니다. <i>(필수)</i></span></label>
     </fieldset>
+    <div class="chat-note"><b>💬 회원가입 후 마챌 단체카톡방에 참여할 수 있습니다</b><p>가입과 오리엔테이션을 마치면 회원 공간에서 카카오톡 오픈채팅방 주소와 참여 방법을 안내해 드립니다. 정기모임 일정, 새 그룹 소식, 운영진 공지를 대화방에서 함께 받아 보세요.</p></div>
     <p class="form-msg" role="alert" aria-live="assertive"></p>
     <button class="btn btn-primary btn-lg btn-block" type="submit">신청서 보내기</button>
   </form>
   <div class="apply-done" hidden>
     <h2>신청서를 받았습니다</h2>
-    <p>운영진이 3일 안에 확인한 뒤 이메일로 초대 코드를 보내 드립니다. 코드를 받으면 <a href="/app/#/register">초대 코드로 가입</a>에서 계정을 만드세요.</p>
+    <p>운영진이 3일 안에 확인한 뒤 이메일로 초대 코드를 보내 드립니다. 코드를 받으면 <a href="/app/#/register">초대 코드로 가입</a>에서 계정을 만드세요. 가입을 마치면 마챌 단체카톡방 참여 방법을 안내해 드립니다.</p>
     <p>기다리는 동안 <a href="/goals/">수익목표</a>나 <a href="/guide/">가이드</a>를 읽어 보셔도 좋습니다.</p>
   </div>
 </div>

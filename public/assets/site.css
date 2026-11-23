@@ -606,3 +606,7 @@ img { max-width: 100%; height: auto; }
 .article-layout.goal-before { padding-bottom: 20px; }
 .goal-wrap { margin: 0 auto; }
 .article-layout.goal-after { padding-top: 32px; }
+@media (min-width: 720px) { .apply-steps { grid-template-columns: repeat(5, 1fr); } }
+.chat-note { border: 1px solid var(--blue-100); background: var(--blue-50); border-radius: 14px; padding: 16px 18px; margin: 6px 0 16px; }
+.chat-note b { display: block; color: var(--blue-700); margin-bottom: 4px; }
+.chat-note p { margin: 0; font-size: .93rem; color: var(--ink-2); }

@@ -1,5 +1,5 @@
 // 자동 생성 파일입니다. 직접 고치지 말고 node scripts/build-site.mjs 를 실행하세요.
-export const ASSET_VERSION = "e73e80b7";
+export const ASSET_VERSION = "2a4a1878";
 export const ROUTES = [
  {
   "path": "/",

@@ -1,9 +1,32 @@
 import { fmtLocal, api, post, put, esc, nl2br, state, toast, go, reload, field, input, textarea, select, check, bindForms, bindActions, stat, num, pct, fmtDate, ago, won, LEVEL_NAMES, FIELDS, EVENT_TYPES, BADGES, ROLES, TYPE, attendChip, lvChip, stageChip, typeChip, pageHead, empty, progressBar, tabs, modal, closeModal } from '../core.js';
 
+// ---------------- 마챌 단체카톡방 안내 ----------------
+const CHAT_KEY = 'machal_chat_joined';
+const chatJoined = () => { try { return localStorage.getItem(CHAT_KEY) === '1'; } catch { return false; } };
+const markChatJoined = () => { try { localStorage.setItem(CHAT_KEY, '1'); } catch {} };
+export function chatSteps(me) {
+  return `<ol class="steps-list small">
+    <li>아래 <b>단체카톡방 들어가기</b>를 누르면 카카오톡 오픈채팅방이 열립니다. 휴대폰은 카카오톡 앱으로, PC는 카카오톡 PC 앱이나 휴대폰으로 이어서 들어갑니다.</li>
+    <li>대화방 프로필 이름은 마챌 닉네임 <b>${esc(me.nickname)}</b>(으)로 맞춰 주세요. 운영진과 다른 회원이 누구인지 알아보기 쉽습니다.</li>
+    <li>들어오면 짧게 인사를 남겨 주세요. 관심 분야와 해 보고 싶은 것 한 가지면 충분합니다.</li>
+    <li>대화방에서는 정기모임 일정, 새 그룹 소식, 운영진 공지를 빠르게 받습니다. 그룹 참여, 출석, 기록은 홈페이지 회원 공간에서 합니다.</li>
+  </ol>
+  <p class="small muted" style="margin:8px 0 0">광고, 투자 권유, 다른 모임 홍보는 올릴 수 없습니다. 대화방 주소는 회원끼리만 나눠 주세요.</p>`;
+}
+function chatCard(me, { compact = false } = {}) {
+  const c = me.community_chat; if (!c?.url) return '';
+  if (compact) return `<div class="card soft chat-card"><div class="card-head"><h3>💬 ${esc(c.name)}</h3><a class="btn sm" href="${esc(c.url)}" target="_blank" rel="noopener">들어가기</a></div><p class="small muted" style="margin:0">정기모임 일정, 새 그룹 소식, 운영진 공지를 대화방에서 빠르게 받아 보세요.</p></div>`;
+  return `<div class="card chat-card is-new"><div class="card-head"><h3>💬 ${esc(c.name)}에 참여해 주세요</h3><span class="chip blue">회원 전용</span></div>
+    <p class="small" style="margin:0 0 8px">마챌 회원이 모두 모여 있는 카카오톡 오픈채팅방입니다. 참여 방법은 이렇습니다.</p>
+    ${chatSteps(me)}
+    <div class="btn-row" style="margin-top:12px"><a class="btn primary" href="${esc(c.url)}" target="_blank" rel="noopener" data-act="chatgo">단체카톡방 들어가기</a><button class="btn" data-act="chatdone">참여했어요</button></div></div>`;
+}
+const chatActions = () => ({ chatgo() { /* 링크는 그대로 열리고, 표시는 '참여했어요'에서 바꾼다 */ }, chatdone() { markChatJoined(); toast('고맙습니다. 대화방에서 만나요'); reload(); } });
+
 export async function onboarding({ me }) {
   if (me.onboarded) { go('#/dashboard'); return ''; }
   const html = `<div class="wrap page" style="max-width:720px">
-    ${pageHead('오리엔테이션', `${esc(me.nickname)}님, 환영합니다. 마챌의 원칙 세 가지를 읽고 확인 문항에 답하면 챌린저(L1)가 되어 그룹에 참여할 수 있습니다. 5분이면 됩니다.`)}
+    ${pageHead('오리엔테이션', `${esc(me.nickname)}님, 환영합니다. 마챌의 원칙 세 가지를 읽고 확인 문항에 답하면 챌린저(L1)가 되어 그룹에 참여할 수 있습니다. 5분이면 되고, 마치면 마챌 단체카톡방 참여 방법을 안내해 드립니다.`)}
     <div class="stack">
       <div class="card"><h3>원칙 1. 수익을 보장하지 않습니다</h3><p>마챌은 "이렇게 하면 월 얼마 번다"는 약속을 하지 않고, 회원끼리도 그런 표현을 쓰지 않습니다. 도전그룹의 최종 목표는 성과와 수익이지만, 그 결과는 각 그룹이 직접 만들어 숫자로 기록합니다. 잘 안된 도전도 기록으로 남기고, 성공 사례만 골라 보여 주지 않습니다.</p></div>
       <div class="card"><h3>원칙 2. 실행한 사람이 발언합니다</h3><p>등급은 결제나 연차가 아니라 실행 기록으로 오릅니다. 정기모임과 그룹 모임 출석, 도전 기록, 그룹 완주, 성과 기록이 쌓이면 등급이 오르고 할 수 있는 일이 늘어납니다. 그룹을 이끄는 그룹리더는 운영진이 승인합니다.</p></div>
@@ -18,7 +41,14 @@ export async function onboarding({ me }) {
         <button class="btn primary lg block" type="submit">오리엔테이션 마치기</button>
       </form>
     </div></div>`;
-  return { html, mount(root) { bindForms(root, { async ob(d) { await post('/me/onboarding', { agree: d.agree, quiz: { q1: d.q1, q2: d.q2, q3: d.q3 } }); await state.refreshMe(); toast('챌린저가 되셨습니다. 환영합니다!'); go('#/dashboard'); } }); } };
+  return { html, mount(root) { bindForms(root, { async ob(d) { await post('/me/onboarding', { agree: d.agree, quiz: { q1: d.q1, q2: d.q2, q3: d.q3 } }); await state.refreshMe(); toast('챌린저가 되셨습니다. 환영합니다!');
+    const c = (state.me || me).community_chat;
+    if (!c?.url) { go('#/dashboard'); return; }
+    modal(`<h3>환영합니다! 이제 ${esc(c.name)}에 참여해 주세요</h3><p class="small">마챌 회원이 모두 모여 정기모임 일정, 새 그룹 소식, 운영진 공지를 나누는 카카오톡 오픈채팅방입니다.</p>${chatSteps(state.me || me)}
+      <div class="btn-row" style="margin-top:14px"><a class="btn primary" href="${esc(c.url)}" target="_blank" rel="noopener" data-act="go">단체카톡방 들어가기</a><button class="btn" type="button" data-act="later">나중에 할게요</button></div>
+      <p class="small muted" style="margin:8px 0 0">나중에 들어가도 괜찮습니다. 대시보드와 내 정보 화면에서 언제든 다시 볼 수 있습니다.</p>`,
+      { onMount(mm) { bindActions(mm, { go() { markChatJoined(); closeModal(); go('#/dashboard'); }, later() { closeModal(); go('#/dashboard'); } }); } });
+  } }); } };
 }
 
 export async function dashboard() {
@@ -32,6 +62,7 @@ export async function dashboard() {
     <div class="page-head"><div><h1>${esc(me.nickname)}님, 이번 주도 한 칸</h1><p>${lvChip(me.level)} · 포인트 ${num(me.points.total)}점 (이번 분기 ${num(me.points.quarter)}점)${me.can_lead ? ' · <span class="chip ink">그룹리더</span>' : ''}</p></div>
       <div class="btn-row">${canLead ? '<a class="btn primary" href="#/groups/new">그룹 만들기</a>' : ''}<a class="btn ${canLead ? '' : 'primary'}" href="#/groups">그룹 둘러보기</a><a class="btn" href="#/events">정기모임</a></div></div>
 
+    ${chatJoined() ? '' : `<div class="section" style="margin-top:0;margin-bottom:14px">${chatCard(me)}</div>`}
     ${d.tasks.length ? `<div class="section" style="margin-top:0"><div class="stack">${d.tasks.map(t => `<div class="task-item ${t.type === 'warning' ? 'warn' : ''}"><span>${taskIc[t.type] || '·'} ${esc(t.text)}</span><a href="${t.link}">바로 가기 →</a></div>`).join('')}</div></div>` : ''}
 
     <div class="grid grid-2">
@@ -45,11 +76,12 @@ export async function dashboard() {
         ${prog && prog.next ? `<div class="card"><div class="card-head"><h3 class="h-ic"><img src="/assets/img/lv-${prog.next}.webp" width="30" height="30" alt="">다음 등급 · ${esc(prog.next_name)}</h3><a class="small" href="#/me">자세히</a></div><div class="stack">${prog.items.map(i => `<div><div class="row between small"><span>${i.done ? '✅' : '◻️'} ${esc(i.label)}</span><span class="muted">${i.manual ? '심사 시 확인' : `${num(i.cur)}/${num(i.goal)}`}</span></div>${i.manual ? '' : progressBar(i.cur, i.goal)}</div>`).join('')}</div></div>` : ''}
       </div>
       <div class="stack">
+        ${chatJoined() ? chatCard(me, { compact: true }) : ''}
         <div class="card"><div class="card-head"><h3>정기모임·일정</h3><a class="small" href="#/events">전체</a></div>${d.events.length ? `<div class="list">${d.events.map(e => `<a class="list-item" href="#/events" style="color:inherit"><div class="grow"><div class="title">${esc(e.title)}</div><div class="meta">${esc(e.type_name || EVENT_TYPES[e.type] || '')} · ${fmtLocal(e.starts_at)}${e.location ? ' · ' + esc(e.location) : ''}</div></div></a>`).join('')}</div>` : '<p class="muted small" style="margin:0">예정된 일정이 없습니다.</p>'}</div>
         <div class="card"><div class="card-head"><h3>커뮤니티 피드</h3><a class="small" href="#/community">더 보기</a></div>${d.feed.length ? d.feed.map(feedRow).join('') : '<p class="muted small" style="margin:0">아직 조용합니다. 그룹에서 첫 기록을 남기고 공유해 보세요.</p>'}</div>
       </div>
     </div></div>`;
-  return html;
+  return { html, mount(root) { bindActions(root, chatActions()); } };
 }
 
 export function feedRow(f) {
@@ -73,6 +105,7 @@ export async function me({ me: cached }) {
       </div>
       <div class="stack">
         <div class="card"><div class="card-head"><h3>배지</h3></div>${me.badges.length ? `<div class="badge-grid">${me.badges.map(b => `<div class="badge-tile"><img class="badge-img" src="/assets/img/badge-${esc(b.code)}.webp" width="56" height="56" alt="" loading="lazy"><span>${esc(b.name)}</span><small class="muted">${fmtDate(b.created_at)}</small></div>`).join('')}</div>` : '<p class="muted small" style="margin:0">아직 배지가 없습니다. 첫 배지는 보통 "그룹 완주"나 "첫 매출"입니다.</p>'}</div>
+        ${chatCard(me, { compact: true })}
         <div class="card"><div class="card-head"><h3>그룹리더</h3><a class="small" href="#/me/leader">${me.can_lead ? '내 그룹' : '신청'}</a></div><p class="small muted" style="margin:0">${me.can_lead ? `그룹리더로 승인되었습니다${me.leader_since ? ` (${fmtDate(me.leader_since)})` : ''}. 언제든 학습그룹이나 도전그룹을 만들 수 있습니다.` : '운영진의 승인을 받으면 직접 그룹을 만들고 이끌 수 있습니다.'}</p></div>
         <div class="card"><div class="card-head"><h3>포인트 내역</h3><a class="small" href="#/me/points">전체</a></div><p class="small muted" style="margin:0">정기모임·그룹 모임 출석, 도전 기록, 성과 기록, 글·댓글, 발제·발표, 페이퍼 제출로 쌓입니다. 하루 상한이 있습니다.</p></div>
         <div class="card"><h3>프로필</h3><div class="small"><div><b>이름</b> · ${esc(me.name)}</div><div><b>관심 분야</b> · ${esc((me.interests || '').split(',').filter(Boolean).map(k => FIELDS[k] || k).join(', ') || '-')}</div><div><b>사업자</b> · ${me.has_business ? '있음' : '없음'}</div>${me.bio ? `<div style="margin-top:6px">${nl2br(me.bio)}</div>` : ''}</div></div>

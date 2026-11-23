@@ -622,4 +622,8 @@ await expectOk(c.put('/admin/kpi/settings', { analytics: { enabled: true, start:
 ok((await expectOk(c.get('/admin/audit?action=kpi', { as: 'admin' }))).rows.length >= 4, 'kpi settings audited');
 console.log('v1.3 이용 통계·KPI ok');
 
+{ const mm = await expectOk(c.get('/me', { as: 'e' }));
+  ok(mm.community_chat && /^https:\/\/open\.kakao\.com\//.test(mm.community_chat.url), 'members get the community chat link');
+  const pub = await expectOk(c.get('/session', { as: 'nobody' }));
+  ok(pub.user === null, 'guests get no member data (chat link stays inside the member area)'); }
 console.log('\nAPI 전체 흐름 테스트 통과 ✔');

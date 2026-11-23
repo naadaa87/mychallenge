@@ -17,7 +17,7 @@ export function paperCard(p) {
 }
 
 export async function login() {
-  const html = `<div class="wrap auth"><div class="auth-art"><img src="/assets/img/act-kickoff-sm.webp" width="480" height="300" alt="그룹원들이 테이블에 모여 계획을 세우는 모습"></div><div class="card"><h2>로그인</h2><form class="form" data-form="login">${field('이메일', input('email', { type: 'email', required: true }))}${field('비밀번호', input('password', { type: 'password', required: true }))}<div class="form-error error"></div><button class="btn primary block" type="submit">로그인</button></form><div class="divider"></div><p class="small muted" style="margin:0">아직 계정이 없나요? <a href="#/register">초대 코드로 가입</a> · <a href="/apply/">가입 신청</a></p></div></div>`;
+  const html = `<div class="wrap auth"><div class="auth-art"><img src="/assets/img/act-kickoff-sm.webp" width="480" height="300" alt="그룹원들이 테이블에 모여 계획을 세우는 모습"></div><div class="card"><h2>로그인</h2><form class="form" data-form="login">${field('이메일', input('email', { type: 'email', required: true }))}${field('비밀번호', input('password', { type: 'password', required: true }))}<div class="form-error error"></div><button class="btn primary block" type="submit">로그인</button></form><div class="divider"></div><p class="small muted" style="margin:0">아직 계정이 없나요? <a href="#/register">초대 코드로 가입</a> · <a href="/apply/">회원 신청</a></p></div></div>`;
   return { html, mount(root) { bindForms(root, { async login(d) { await post('/auth/login', d); await state.refreshMe(); const after = sessionStorage.getItem('machal_after_login'); sessionStorage.removeItem('machal_after_login'); go(after && after !== '#/login' ? after : '#/dashboard'); } }); } };
 }
 

@@ -59,7 +59,7 @@ function renderChrome() {
   };
   if (!me) {
     nav.innerHTML = `<a href="/about/">마챌 소개</a><a href="/how-it-works/">운영 방식</a><a href="/goals/">수익목표</a><a href="/papers/">프로젝트 페이퍼</a><a href="/guide/">가이드</a>`;
-    right.innerHTML = `<a class="btn sm" href="#/login">로그인</a><a class="btn sm primary" href="/apply/">가입 신청</a>`;
+    right.innerHTML = `<a class="btn sm" href="#/login">로그인</a><a class="btn sm primary" href="/apply/">회원 신청</a>`;
     bottom.innerHTML = '';
   } else {
     nav.innerHTML = `<a href="#/dashboard">홈</a><a href="#/groups">그룹</a><a href="#/events">정기모임·일정</a><a href="#/community">커뮤니티</a><a href="#/papers">페이퍼</a>${me.role === 'staff' ? '<a href="#/admin">운영</a>' : ''}`;

@@ -17,7 +17,7 @@ export const NAV = [
 
 export const FOOT = [
   ['마이챌린지', [['/about/', '마챌 소개'], ['/how-it-works/', '함께하는 방식'], ['/goals/', '수익목표'], ['/programs/', '정기모임·프로그램'], ['/levels/', '등급과 포인트']]],
-  ['시작하기', [['/apply/', '가입 신청'], ['/faq/', '자주 묻는 질문'], ['/papers/', '프로젝트 페이퍼'], ['/app/#/login', '회원 로그인']]],
+  ['시작하기', [['/apply/', '회원 신청'], ['/faq/', '자주 묻는 질문'], ['/papers/', '프로젝트 페이퍼'], ['/app/#/login', '회원 로그인']]],
   ['가이드', [['/guide/side-project-start/', '사이드프로젝트 시작하기'], ['/guide/why-group/', '그룹으로 하면 달라지는 것'], ['/guide/side-income-tax/', '부업 소득 세금'], ['/guide/', '전체 글 보기']]],
 ];
 
@@ -45,14 +45,14 @@ function header(path) {
     <a class="brand" href="/" title="마이챌린지 홈">${logo}<span class="brand-name">마이챌린지<small>마챌</small></span></a>
     <nav class="sh-nav" aria-label="주요 메뉴">${links}</nav>
     <div class="sh-cta">
-      <span class="auth-guest"><a class="btn btn-quiet" href="/app/#/login">로그인</a><a class="btn btn-primary" href="/apply/">가입 신청</a></span>
+      <span class="auth-guest"><a class="btn btn-quiet" href="/app/#/login">로그인</a><a class="btn btn-primary" href="/apply/">회원 신청</a></span>
       <span class="auth-member" hidden><a class="btn btn-primary" href="/app/#/dashboard">내 대시보드</a></span>
     </div>
     <details class="mnav">
       <summary aria-label="메뉴 열기"><span></span><span></span><span></span></summary>
       <div class="mnav-panel">
         <nav aria-label="모바일 메뉴">${links}<a href="/levels/">등급과 포인트</a><a href="/faq/">자주 묻는 질문</a></nav>
-        <div class="mnav-cta auth-guest"><a class="btn btn-line" href="/app/#/login">로그인</a><a class="btn btn-primary" href="/apply/">가입 신청</a></div>
+        <div class="mnav-cta auth-guest"><a class="btn btn-line" href="/app/#/login">로그인</a><a class="btn btn-primary" href="/apply/">회원 신청</a></div>
         <div class="mnav-cta auth-member" hidden><a class="btn btn-primary" href="/app/#/dashboard">내 대시보드</a></div>
       </div>
     </details>
@@ -188,7 +188,7 @@ export const h = {
     const pic = typeof art === 'string' ? art : img(art.name, art.alt || '', { eager: true, cls: art.cls });
     return `<section class="page-hero has-art"><div class="wrap ph-in"><div class="ph-copy">${copy}</div><div class="ph-art${art.frame === false ? '' : ' framed'}">${pic}</div></div></section>`;
   },
-  cta: (title, text, primary = ['/apply/', '가입 신청하기'], secondary = ['/how-it-works/', '운영 방식 보기'], art = null) => {
+  cta: (title, text, primary = ['/apply/', '회원 신청하기'], secondary = ['/how-it-works/', '운영 방식 보기'], art = null) => {
     const actions = `<div class="cta-actions"><a class="btn btn-white btn-lg" href="${primary[0]}">${primary[1]}</a>${secondary ? `<a class="btn btn-ghost-white btn-lg" href="${secondary[0]}">${secondary[1]}</a>` : ''}</div>`;
     if (!art) return `<section class="cta"><div class="wrap"><div class="cta-box"><div><h2>${title}</h2><p>${text}</p></div>${actions}</div></div></section>`;
     return `<section class="cta"><div class="wrap"><div class="cta-box has-art"><div class="cta-copy"><h2>${title}</h2><p>${text}</p>${actions}</div><div class="cta-art">${img(art.name, art.alt || '', { sizes: '(min-width: 900px) 420px, 90vw' })}</div></div></div></section>`;

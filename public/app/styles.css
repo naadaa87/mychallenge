@@ -625,3 +625,5 @@ details.card[open] > summary::after { content: '접기'; }
   .seg { width: 100%; }
   .seg button { flex: 1; }
 }
+.chat-card.is-new { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(36,87,245,.08); background: var(--blue-tint); }
+.chat-card .steps-list { margin-top: 4px; }
